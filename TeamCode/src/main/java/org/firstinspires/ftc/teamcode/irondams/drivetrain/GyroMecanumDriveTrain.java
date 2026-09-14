@@ -1,12 +1,10 @@
 package org.firstinspires.ftc.teamcode.irondams.drivetrain;
 
-import com.qualcomm.hardware.bosch.BNO055IMU;
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.IMU;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.AxesOrder;
-import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
-import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
 
 /**
  * Field-centric (Field-Relative) Mecanum drivetrain implementation.
@@ -18,11 +16,7 @@ public class GyroMecanumDriveTrain implements IDriveTrain {
     private double currentVertical = 0;
     private double currentPivot = 0;
 
-    private final BNO055IMU imu;
-    private final BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
-
-    private Orientation angles = new Orientation();
-    private double initYaw;
+    public final IMU imu;
 
     private final FourWheelDriveTrain driveTrain;
 
@@ -35,12 +29,7 @@ public class GyroMecanumDriveTrain implements IDriveTrain {
     public GyroMecanumDriveTrain(LinearOpMode opMode, FourWheelDriveTrain driveTrain) {
         this.driveTrain = driveTrain;
 
-        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
-        parameters.mode = BNO055IMU.SensorMode.IMU;
-        parameters.accelUnit = BNO055IMU.AccelUnit.METERS_PERSEC_PERSEC;
-        parameters.loggingEnabled = false;
-
-        imu = opMode.hardwareMap.get(BNO055IMU.class, "imu2");
+        imu = opMode.hardwareMap.get(IMU.class, "imu2");
 
         initImu();
     }
@@ -50,16 +39,22 @@ public class GyroMecanumDriveTrain implements IDriveTrain {
      * Establishes the current orientation heading as the reference zero (Forward).
      */
     public void initImu() {
-        imu.initialize(parameters);
-        angles = imu.getAngularOrientation(AxesReference.INTRINSIC, AxesOrder.ZYX, AngleUnit.DEGREES);
-        initYaw = angles.firstAngle;
+        RevHubOrientationOnRobot.LogoFacingDirection logoDirection =
+                RevHubOrientationOnRobot.LogoFacingDirection.UP;
+        RevHubOrientationOnRobot.UsbFacingDirection usbDirection =
+                RevHubOrientationOnRobot.UsbFacingDirection.RIGHT;
+
+        RevHubOrientationOnRobot orientationOnRobot = new
+                RevHubOrientationOnRobot(logoDirection, usbDirection);
+        imu.initialize(new IMU.Parameters(orientationOnRobot));
+        imu.resetYaw();
     }
 
     /**
      * Resets the gyroscope orientation heading, setting the robot's current heading as the new 'Forward'.
      */
     public void reset() {
-        initImu();
+        imu.resetYaw();
     }
 
     /**
@@ -99,32 +94,35 @@ public class GyroMecanumDriveTrain implements IDriveTrain {
         turn = newPivot;
         currentPivot = newPivot;
 
-        angles = imu.getAngularOrientation(AxesReference.INTRINSIC, AxesOrder.ZYX, AngleUnit.DEGREES);
+        // Field-centric transform: rotate the driver input by -yaw so that
+        // pushing the stick away from you always drives away from you,
+        // regardless of which way the robot is facing.
+        // yaw = 0 means the robot is facing the field-forward direction set by resetYaw().
+        double yaw = imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
 
-        double zeroedYaw = -initYaw + angles.firstAngle;
-        double theta = Math.atan2(y, x) * 180 / Math.PI; // aka angle
-        double realTheta = (360 - zeroedYaw) + theta;
-        double power = Math.hypot(x, y);
-        double sin = Math.sin((realTheta * (Math.PI / 180)) - (Math.PI / 4));
-        double cos = Math.cos((realTheta * (Math.PI / 180)) - (Math.PI / 4));
-        double maxSinCos = Math.max(Math.abs(sin), Math.abs(cos));
-        double leftFront = (power * cos / maxSinCos + turn);
-        double rightFront = (power * sin / maxSinCos - turn);
-        double leftBack = (power * sin / maxSinCos + turn);
-        double rightBack = (power * cos / maxSinCos - turn);
+        double rotX = x * Math.cos(-yaw) - y * Math.sin(-yaw);
+        double rotY = x * Math.sin(-yaw) + y * Math.cos(-yaw);
 
-        if ((power + Math.abs(turn)) > 1) {
-            leftFront /= power + turn;
-            rightFront /= power - turn;
-            leftBack /= power + turn;
-            rightBack /= power - turn;
+        // Same robot-relative mixing as MecanumDriveTrain so both modes agree.
+        // rotX = strafe (right +), rotY = forward (+), turn = rotate (CCW +).
+        double leftFront = rotY + rotX + turn;
+        double rightFront = rotY - rotX - turn;
+        double leftBack = rotY - rotX + turn;
+        double rightBack = rotY + rotX - turn;
+
+        // Normalize so no power exceeds 1.0 while keeping direction proportions.
+        double max = Math.max(Math.max(Math.abs(leftFront), Math.abs(rightFront)),
+                Math.max(Math.abs(leftBack), Math.abs(rightBack)));
+        if (max > 1.0) {
+            leftFront /= max;
+            rightFront /= max;
+            leftBack /= max;
+            rightBack /= max;
         }
 
         driveTrain.getLeftFrontDrive().setPower(leftFront);
         driveTrain.getRightFrontDrive().setPower(rightFront);
         driveTrain.getLeftBackDrive().setPower(leftBack);
         driveTrain.getRightBackDrive().setPower(rightBack);
-
-//        reset();
     }
 }
