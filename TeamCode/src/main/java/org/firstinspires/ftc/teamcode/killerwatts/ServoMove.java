@@ -1,9 +1,9 @@
-package org.firstinspires.ftc.teamcode.irondams.killerwatts;
+package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.teamcode.irondams.killerwatts.lib.SubsystemBase;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 
 public class ServoMove extends SubsystemBase {
     FtcDashboard dashboard = FtcDashboard.getInstance();

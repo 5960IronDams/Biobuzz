@@ -1,22 +1,23 @@
 package org.firstinspires.ftc.teamcode;
 
-import static org.firstinspires.ftc.teamcode.irondams.killerwatts.lib.SubsystemBase.RunPeriodic;
+import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 
-import org.firstinspires.ftc.teamcode.irondams.drivetrain.GyroMecanumDriveTrain;
-import org.firstinspires.ftc.teamcode.irondams.killerwatts.Drivetrain;
-import org.firstinspires.ftc.teamcode.irondams.killerwatts.ServoMove;
+import org.firstinspires.ftc.teamcode.killerwatts.Drivetrain;
+import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
+import org.firstinspires.ftc.teamcode.killerwatts.ServoMove;
 
-@TeleOp
+@TeleOp(name = "JowByTeleOp", group = "Robot")
 
 public class JowByTeleOp extends LinearOpMode {
 
     //private GyroMecanumDriveTrain DamDrive;
     private ServoMove servermovetest;
     private Drivetrain DT;
+    private GoBildaPinpoint PinOdo;
     @Override
     public void runOpMode() {;
         //DamDrive = new GyroMecanumDriveTrain(this,)
@@ -25,6 +26,7 @@ public class JowByTeleOp extends LinearOpMode {
         //build subsystems
         servermovetest = new ServoMove();
         DT = new Drivetrain(this);
+        PinOdo = new GoBildaPinpoint(this);
         // Wait for the game to start (driver presses PLAY)
         waitForStart();
 
