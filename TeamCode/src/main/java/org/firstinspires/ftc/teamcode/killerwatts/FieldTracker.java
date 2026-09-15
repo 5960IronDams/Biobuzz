@@ -5,6 +5,7 @@ import com.acmerobotics.dashboard.config.Config;
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.FieldPoseMapper;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.PoseKalmanFilter;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
@@ -16,19 +17,26 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Supplier;
 
 /**
- * Subsystem copy of {@code FieldVersatilityOpMode} overlay logic, reworked for
- * live robot tracking.
+ * Field-frame pose owner for the whole robot. See {@link FieldPoseMapper} for
+ * the frame contract: everything in/out of here is FIRST field frame
+ * (X = left/right from the red wall, Y = forward/back up-field, H = CCW+,
+ * inches, origin at field center).
  *
  * <p>Fuses (in priority order):
  * <ol>
- *   <li>goBILDA Pinpoint odometry (position + velocity) — primary motion model</li>
+ *   <li>goBILDA Pinpoint odometry — read as a delta from its boot zero
+ *       (robot frame), rotated once by the start heading into field frame</li>
  *   <li>Control-Hub IMU yaw (optional, via {@link #setImuYawSupplier}) — heading assist
  *       when Pinpoint is missing/unplugged</li>
  *   <li>Vision (future Limelight 3A) via {@link #addVisionMeasurement} — absolute
- *       corrections fused with per-sample std-dev through the Kalman filter</li>
+ *       field-frame corrections fused with per-sample std-dev through the Kalman filter</li>
  * </ol>
- * Default pose is 0,0,0 (field center, facing +X). Dashboard shows the fused
+ * Default pose is 0,0,0 (field center, facing +Y up-field). Dashboard shows the fused
  * pose on the field overlay every {@link #Periodic()} call.
+ *
+ * <p>Downstream path followers (Road Runner, Pedro) must consume
+ * {@link #getPose2D()} / {@link #getXIn()} / {@link #getYIn()} /
+ * {@link #getHeadingRad()} directly — never Pinpoint's raw robot-frame pose.</p>
  */
 @Config
 public class FieldTracker extends SubsystemBase {
@@ -56,9 +64,18 @@ public class FieldTracker extends SubsystemBase {
     public static double AXIS_LEGEND_LEN_IN = 16;
 
     // ---- Pose filter tuning (dashboard-tunable) ----
+    // Start pose = where the robot physically sits at init, in FIELD frame.
+    // Auton will set these (or Limelight will seed them); Pinpoint's own zero
+    // is captured automatically as the delta reference, never hand-entered.
     public static double START_X_IN = 0;
     public static double START_Y_IN = 0;
+    // 0 deg = facing +Y (up-field, away from red wall), CCW+.
     public static double START_HEADING_DEG = 0;
+    /** Set true if the Pinpoint yaw sign disagrees with field CCW+ (mount/IMU
+     * dependent). Flip from the dashboard: nose hash should point AWAY from
+     * the red wall at heading 0; if it points AT the red wall, toggle this.
+     * Changing this forces the Pinpoint zero to re-capture next loop. */
+    public static boolean PINPOINT_INVERT_HEADING = false;
     /** Pinpoint trust: lower = trust pinpoint more. Inches, 1-sigma. */
     public static double PINPOINT_XY_STD_IN = 0.75;
     /** Pinpoint heading trust: radians, 1-sigma. ~2 deg default. */
@@ -94,6 +111,17 @@ public class FieldTracker extends SubsystemBase {
     private double lastStartX = START_X_IN;
     private double lastStartY = START_Y_IN;
     private double lastStartH = START_HEADING_DEG;
+    private boolean lastInvertH = PINPOINT_INVERT_HEADING;
+
+    // Pinpoint boot-zero reference (robot frame, inches + rad). Captured on the
+    // first Periodic with valid data so later reads are start-anchored deltas.
+    private boolean zeroCaptured = false;
+    private double zeroFwdIn, zeroLeftIn, zeroH;
+
+    /** Field-frame pose as Pose2D (inches, radians) for path followers. */
+    public Pose2D getPose2D() {
+        return FieldPoseMapper.fieldInToPose2D(getXIn(), getYIn(), getHeadingRad());
+    }
 
     public FieldTracker() { }
 
@@ -126,11 +154,12 @@ public class FieldTracker extends SubsystemBase {
         manualOmega = omegaRadPerSec;
     }
 
-    /** Reset fused pose to the dashboard START_* values (and Pinpoint to 0 if attached). */
+    /** Reset fused pose to the dashboard START_* values; re-captures Pinpoint zero. */
     public void resetPose() {
         filter.reset(START_X_IN, START_Y_IN, Math.toRadians(START_HEADING_DEG),
                 PINPOINT_XY_STD_IN, Math.toRadians(PINPOINT_HEADING_STD_DEG));
         visionQueue.clear();
+        zeroCaptured = false;
         lastNano = -1;
     }
 
@@ -147,11 +176,13 @@ public class FieldTracker extends SubsystemBase {
 
     @Override
     public void Periodic() {
-        // Pick up dashboard edits to START_* as a live reset.
-        if (START_X_IN != lastStartX || START_Y_IN != lastStartY || START_HEADING_DEG != lastStartH) {
+        // Pick up dashboard edits to START_* / invert flag as a live reset.
+        if (START_X_IN != lastStartX || START_Y_IN != lastStartY || START_HEADING_DEG != lastStartH
+                || PINPOINT_INVERT_HEADING != lastInvertH) {
             lastStartX = START_X_IN;
             lastStartY = START_Y_IN;
             lastStartH = START_HEADING_DEG;
+            lastInvertH = PINPOINT_INVERT_HEADING;
             resetPose();
         }
 
@@ -162,16 +193,34 @@ public class FieldTracker extends SubsystemBase {
 
         boolean havePinpoint = pinpoint != null && pinpoint.pos != null && pinpoint.vel != null;
 
+        double startH = Math.toRadians(START_HEADING_DEG);
         if (havePinpoint) {
-            double[] fPose = FieldPoseMapper.pinpointToFieldIn(pinpoint.pos);
-            double[] fVel = FieldPoseMapper.pinpointVelToField(pinpoint.vel);
+            double[] delta = FieldPoseMapper.pinpointPoseToDeltaIn(pinpoint.pos);
+            double[] vDelta = FieldPoseMapper.pinpointVelToDelta(pinpoint.vel);
+            // Some mounts/IMUs report yaw CW+ or with a boot offset; normalize
+            // once so downstream math stays pure field-frame CCW+.
+            double hSign = PINPOINT_INVERT_HEADING ? -1.0 : 1.0;
+            double hNow = hSign * delta[2];
+            double wNow = hSign * vDelta[2];
+            if (!zeroCaptured) {
+                zeroFwdIn = delta[0];
+                zeroLeftIn = delta[1];
+                zeroH = hNow;
+                zeroCaptured = true;
+                filter.reset(START_X_IN, START_Y_IN, startH,
+                        PINPOINT_XY_STD_IN, Math.toRadians(PINPOINT_HEADING_STD_DEG));
+            }
+            double dFwd = delta[0] - zeroFwdIn;
+            double dLeft = delta[1] - zeroLeftIn;
+            double dH = PoseKalmanFilter.angleDiff(hNow, zeroH);
+            double[] field = FieldPoseMapper.pinpointDeltaToField(
+                    dFwd, dLeft, dH, START_X_IN, START_Y_IN, startH);
+            double[] fieldVel = FieldPoseMapper.robotVelToField(vDelta[0], vDelta[1], startH);
 
-            // Predict with pinpoint velocity, then correct with pinpoint absolute pose.
-            filter.predict(fVel[0], fVel[1], fVel[2], dt);
-            double startH = Math.toRadians(START_HEADING_DEG);
-            filter.updateXY(START_X_IN + fPose[0], START_Y_IN + fPose[1], PINPOINT_XY_STD_IN);
-            filter.updateHeading(startH + fPose[2],
-                    Math.toRadians(PINPOINT_HEADING_STD_DEG));
+            // Predict with field-frame velocity, then correct with field-frame absolute.
+            filter.predict(fieldVel[0], fieldVel[1], wNow, dt);
+            filter.updateXY(field[0], field[1], PINPOINT_XY_STD_IN);
+            filter.updateHeading(field[2], Math.toRadians(PINPOINT_HEADING_STD_DEG));
         } else {
             // No odometry: hold with manual/fallback velocity + optional IMU heading.
             double vx = manualVx != 0 || manualVy != 0 || manualOmega != 0
@@ -183,7 +232,8 @@ public class FieldTracker extends SubsystemBase {
             filter.predict(vx, vy, om, dt);
             if (imuYawRadSupplier != null) {
                 try {
-                    filter.updateHeading(Math.toRadians(START_HEADING_DEG) + imuYawRadSupplier.get(),
+                    // IMU yaw is a delta from ITS reset; anchor with the start heading.
+                    filter.updateHeading(startH + imuYawRadSupplier.get(),
                             Math.toRadians(IMU_HEADING_STD_DEG));
                 } catch (Exception ignored) { }
             }
@@ -219,22 +269,31 @@ public class FieldTracker extends SubsystemBase {
     private void sendFieldPacket(double rxIn, double ryIn, double headingRad) {
         TelemetryPacket packet = new TelemetryPacket(DRAW_DEFAULT_FIELD);
 
-        // Robot rectangle corners (centered), rotated by heading, translated to pose.
+        // Glyph geometry in FIELD frame: heading rh is CCW+ measured from +Y.
+        // Robot forward = (-sin rh, cos rh), robot right = (cos rh, sin rh).
+        // At rh=0: nose points +Y (up-field, away from red wall). Corners are
+        // (fwd,right) combos so hl lies along the nose axis, hw across it.
+        double fx = -Math.sin(headingRad);
+        double fy = Math.cos(headingRad);
+        double gx = Math.cos(headingRad);
+        double gy = Math.sin(headingRad);
         double hl = ROBOT_LENGTH_IN / 2.0;
         double hw = ROBOT_WIDTH_IN / 2.0;
-        double[] cx = {hl, hl, -hl, -hl};
-        double[] cy = {hw, -hw, -hw, hw};
-        double[] px = new double[4];
-        double[] py = new double[4];
-        double c = Math.cos(headingRad);
-        double s = Math.sin(headingRad);
-        for (int i = 0; i < 4; i++) {
-            px[i] = rxIn + cx[i] * c - cy[i] * s;
-            py[i] = ryIn + cx[i] * s + cy[i] * c;
-        }
-        // Heading tick: center -> nose.
-        double noseX = rxIn + hl * c;
-        double noseY = ryIn + hl * s;
+        double[] px = {
+                rxIn + hl * fx + hw * gx, // front-right x
+                rxIn + hl * fx - hw * gx, // front-left x
+                rxIn - hl * fx - hw * gx, // back-left x
+                rxIn - hl * fx + hw * gx, // back-right x
+        };
+        double[] py = {
+                ryIn + hl * fy + hw * gy, // front-right y
+                ryIn + hl * fy - hw * gy, // front-left y
+                ryIn - hl * fy - hw * gy, // back-left y
+                ryIn - hl * fy + hw * gy, // back-right y
+        };
+        // Heading tick: center -> nose (along robot forward).
+        double noseX = rxIn + hl * fx;
+        double noseY = ryIn + hl * fy;
 
         // Axis legend anchor: -X/-Y field corner (bottom-right in browser).
         double legX = -72 + AXIS_LEGEND_MARGIN_IN;

@@ -81,9 +81,9 @@ public class GoBildaPinpoint extends SubsystemBase {
         X (forward) odometry pod is. Left of the center is a positive number,
         right of center is a negative number. the Y pod offset refers to how far forwards from
         the tracking point the Y (strafe) odometry pod is. forward of center is a positive number,
-        backwards is a negative number.
+        backwards is a negative number. (these are in mm?)
          */
-        odo.setOffsets(-84.0, -168.0); //these are tuned for 3110-0002-0001 Product Insight #1
+        odo.setOffsets(0, 0); //these are tuned for 3110-0002-0001 Product Insight #1
 
         /*
         Set the kind of pods used by your robot. If you're using goBILDA odometry pods, select either
@@ -98,7 +98,7 @@ public class GoBildaPinpoint extends SubsystemBase {
         /*
         Set the direction that each of the two odometry pods count. The X (forward) pod should
         increase when you move the robot forward. And the Y (strafe) pod should increase when
-        you move the robot to the left.
+        you move the robot to the left. (pay attention: these are robot centric and not field centric Coordinates)
          */
         odo.setEncoderDirections(GoBildaPinpointDriver.EncoderDirection.FORWARD, GoBildaPinpointDriver.EncoderDirection.FORWARD);
 

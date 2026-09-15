@@ -44,10 +44,11 @@ public class Drivetrain extends SubsystemBase {
         double turn = gamepad1.right_stick_x;
         GMDT.drive(strafe, fwd, turn);
         if (fieldTracker != null) {
-            // Rough commanded-velocity feed for dead-reckoning when pinpoint is absent.
-            // Scale: full stick ~= MAX_CMD_VEL_IN_PER_SEC. Tune to taste on dashboard.
-            fieldTracker.noteVelocity(fwd * MAX_CMD_VEL_IN_PER_SEC,
-                    -strafe * MAX_CMD_VEL_IN_PER_SEC,
+            // Commanded-velocity feed for dead-reckoning when pinpoint is absent.
+            // FieldTracker.noteVelocity takes FIELD frame at start heading 0:
+            // fwd+ -> +Y (up-field), strafe-right+ -> +X (east, right from red wall).
+            fieldTracker.noteVelocity(strafe * MAX_CMD_VEL_IN_PER_SEC,
+                    fwd * MAX_CMD_VEL_IN_PER_SEC,
                     -turn * Math.toRadians(MAX_CMD_OMEGA_DEG_PER_SEC));
         }
         telemetry.addData("drivetrain loop", loop);
