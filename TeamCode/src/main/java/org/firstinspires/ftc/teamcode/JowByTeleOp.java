@@ -10,6 +10,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.killerwatts.Drivetrain;
 import org.firstinspires.ftc.teamcode.killerwatts.FieldTracker;
 import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
+import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.ServoMove;
 
 @TeleOp(name = "JowByTeleOp", group = "Robot")
@@ -21,6 +22,7 @@ public class JowByTeleOp extends LinearOpMode {
     private Drivetrain DT;
     private GoBildaPinpoint PinOdo;
     private FieldTracker tracker;
+    private Intake intake;
 
     @Override
     public void runOpMode() {
@@ -33,6 +35,7 @@ public class JowByTeleOp extends LinearOpMode {
         DT = new Drivetrain(this);
         PinOdo = new GoBildaPinpoint(this);
         tracker = new FieldTracker();
+        intake = new Intake(this);
         tracker.setPinpoint(PinOdo);
         // Heading assist if pinpoint drops: Control-Hub IMU yaw (radians CCW+).
         tracker.setImuYawSupplier(() ->
