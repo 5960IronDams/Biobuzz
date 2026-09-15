@@ -11,8 +11,11 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.GoBildaPinpointDriver;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.VisionMeasurement;
 
 import java.util.Locale;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Supplier;
 
 /*
@@ -44,7 +47,7 @@ For support, contact tech@gobilda.com
 
 public class GoBildaPinpoint extends SubsystemBase {
 
-    GoBildaPinpointDriver odo; // Declare OpMode member for the Odometry Computer
+    public GoBildaPinpointDriver odo; // Declare OpMode member for the Odometry Computer
     FtcDashboard dashboard = FtcDashboard.getInstance();
     Telemetry telemetry = dashboard.getTelemetry();
     public Gamepad gamepad1;
@@ -52,6 +55,17 @@ public class GoBildaPinpoint extends SubsystemBase {
     double oldTime = 0;
     public Pose2D pos = new Pose2D(DistanceUnit.MM,0,0,AngleUnit.DEGREES,0); //current Position (x & y in mm, and heading in degrees) of the robot
     public Pose2D vel = new Pose2D(DistanceUnit.MM,0,0,AngleUnit.DEGREES,0); //current Velocity (x & y in mm/sec and heading in degrees/sec)
+    private final Queue<Pose2D> pendingVision = new ConcurrentLinkedQueue<>();
+
+    /** Limelight 3A (or any absolute source) calls this; applied via odo.setPosition(). */
+    public void correctWithVision(Pose2D fieldAlignedPinpointPose) {
+        if (fieldAlignedPinpointPose != null) pendingVision.offer(fieldAlignedPinpointPose);
+    }
+
+    /** Forward vision into the FieldTracker Kalman path (inches/deg + std dev). */
+    public void correctTrackerWithVision(FieldTracker tracker, VisionMeasurement m) {
+        if (tracker != null && m != null) tracker.addVisionMeasurement(m);
+    }
     public GoBildaPinpoint(LinearOpMode opMode)
     {
         gamepad1 = opMode.gamepad1;
@@ -105,10 +119,8 @@ public class GoBildaPinpoint extends SubsystemBase {
     @Override
     public void Periodic() {
         telemetry.addData("PinPointStatus", "Running");
-        telemetry.addData("X offset", odo.getXOffset());
-        telemetry.addData("Y offset", odo.getYOffset());
-        telemetry.addData("Device Version Number:", odo.getDeviceVersion());
-        telemetry.addData("Device Scalar", odo.getYawScalar());
+        // NOTE: getXOffset/getYOffset/getDeviceVersion each do their own I2C read —
+        // keep them out of the hot loop. Read once below only when needed for debug.
         /*
         Request an update from the Pinpoint odometry computer. This checks almost all outputs
         from the device in a single I2C read.
@@ -128,6 +140,12 @@ public class GoBildaPinpoint extends SubsystemBase {
 
         if (gamepad1.b){
             odo.recalibrateIMU(); //recalibrates the IMU without resetting position
+        }
+
+        // Apply any pending absolute corrections (Limelight 3A path) BEFORE reading pos.
+        Pose2D correction;
+        while ((correction = pendingVision.poll()) != null) {
+            odo.setPosition(correction);
         }
 
         /*

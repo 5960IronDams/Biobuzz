@@ -13,10 +13,16 @@ public abstract class SubsystemBase {
      */
     public static void RunPeriodic()
     {
-        for(SubsystemBase item:subsystemBaseList)
+        // Copy to tolerate a subsystem registering late mid-loop.
+        for(SubsystemBase item:new ArrayList<>(subsystemBaseList))
         {
             item.Periodic();
         }
+    }
+
+    /** Call once at the top of runOpMode so re-runs don't double-register. */
+    public static void clearAll() {
+        subsystemBaseList.clear();
     }
     public SubsystemBase()
     {

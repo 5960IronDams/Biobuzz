@@ -16,6 +16,16 @@ public class Drivetrain extends SubsystemBase {
     public FourWheelDriveTrain FWDT;
     public GyroMecanumDriveTrain GMDT;
     public Gamepad gamepad1;
+
+    /** Optional velocity feed so FieldTracker can dead-reckon without pinpoint. */
+    public static double MAX_CMD_VEL_IN_PER_SEC = 40.0;
+    public static double MAX_CMD_OMEGA_DEG_PER_SEC = 180.0;
+    private FieldTracker fieldTracker;
+
+    /** Wire after constructing both: dt.setFieldTracker(tracker). */
+    public void setFieldTracker(FieldTracker tracker) {
+        this.fieldTracker = tracker;
+    }
     public Drivetrain(LinearOpMode opMode)
     {
         FWDT = new FourWheelDriveTrain(opMode.hardwareMap);
@@ -28,8 +38,18 @@ public class Drivetrain extends SubsystemBase {
         if(gamepad1.a){GMDT.reset();}
         // GMDT.drive expects (strafeRight+, forward+, turnCCW+).
         // left_stick_y up is negative, so forward = -left_stick_y.
-        // right_stick_x right is positive, clockwise should be negative turn.
-        GMDT.drive(gamepad1.left_stick_x, -gamepad1.left_stick_y, gamepad1.right_stick_x);
+        // FieldTracker listens via these hooks; set it with setFieldTracker().
+        double strafe = gamepad1.left_stick_x;
+        double fwd = -gamepad1.left_stick_y;
+        double turn = gamepad1.right_stick_x;
+        GMDT.drive(strafe, fwd, turn);
+        if (fieldTracker != null) {
+            // Rough commanded-velocity feed for dead-reckoning when pinpoint is absent.
+            // Scale: full stick ~= MAX_CMD_VEL_IN_PER_SEC. Tune to taste on dashboard.
+            fieldTracker.noteVelocity(fwd * MAX_CMD_VEL_IN_PER_SEC,
+                    -strafe * MAX_CMD_VEL_IN_PER_SEC,
+                    -turn * Math.toRadians(MAX_CMD_OMEGA_DEG_PER_SEC));
+        }
         telemetry.addData("drivetrain loop", loop);
         telemetry.addData("IMUYawAngle", GMDT.imu.getRobotYawPitchRollAngles().getYaw());
         loop++;
