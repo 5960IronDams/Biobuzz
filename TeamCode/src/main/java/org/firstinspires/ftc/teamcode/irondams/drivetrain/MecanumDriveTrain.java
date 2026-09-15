@@ -6,6 +6,15 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
  * Robot-Centric Mecanum drivetrain implementation.
  * Directs movement relative to the robot's internal frame (Forward is always where the front of the robot faces).
  * Includes motor-specific scaling for autonomous modes and input slew-rate limiting (ramping).
+ *
+ * <p>Input chain: raw stick -> {@link DriveConstants#conditionStick} (deadband/expo) ->
+ * per-axis gain (STRAFE/FWD/TURN) -> slew ramp -> mecanum mix -> normalize ->
+ * {@link FourWheelDriveTrain#setWheelPowers} (kS boost + per-wheel trims,
+ * or velocity-PID when enabled).
+ *
+ * <p>No per-axis clamp: the mix normalize below preserves the boosted strafe/forward
+ * ratio and caps magnitude without distorting diagonal direction.
+ * (Robot-centric stick frame == robot frame, so gains apply directly.)
  */
 public class MecanumDriveTrain implements IDriveTrain {
     private double currentHorizontal = 0;
@@ -59,17 +68,23 @@ public class MecanumDriveTrain implements IDriveTrain {
      * @param deltaTimeSec Exact time duration elapsed in seconds since the last loop iteration.
      */
     public void driveWithTime(double horizontal, double vertical, double pivot, double deltaTimeSec) {
-        double maxDeltaPerSec = 3.0; // Adjustable ramp speed
+        // Condition FIRST (deadband/expo on raw stick), then per-axis gain, then
+        // ramp the shaped value. Stick frame == robot frame here, so gains apply directly.
+        horizontal = DriveConstants.conditionStick(horizontal) * DriveConstants.STRAFE_GAIN;
+        vertical = DriveConstants.conditionStick(vertical) * DriveConstants.FWD_GAIN;
+        pivot = DriveConstants.conditionStick(pivot) * DriveConstants.TURN_GAIN;
 
-        double newHorizontal = Acceleration.rampPower(currentHorizontal, horizontal, maxDeltaPerSec, deltaTimeSec);
+        double rate = DriveConstants.RAMP_RATE;
+
+        double newHorizontal = Acceleration.rampPower(currentHorizontal, horizontal, rate, deltaTimeSec);
         horizontal = newHorizontal;
         currentHorizontal = newHorizontal;
 
-        double newVertical = Acceleration.rampPower(currentVertical, vertical, maxDeltaPerSec, deltaTimeSec);
+        double newVertical = Acceleration.rampPower(currentVertical, vertical, rate, deltaTimeSec);
         vertical = newVertical;
         currentVertical = newVertical;
 
-        double newPivot = Acceleration.rampPower(currentPivot, pivot, maxDeltaPerSec, deltaTimeSec);
+        double newPivot = Acceleration.rampPower(currentPivot, pivot, rate, deltaTimeSec);
         pivot = newPivot;
         currentPivot = newPivot;
 
@@ -84,10 +99,17 @@ public class MecanumDriveTrain implements IDriveTrain {
             rrp *= 0.96;
         }
 
-        DRIVE_TRAIN.getLeftBackDrive().setPower(rlp);
-        DRIVE_TRAIN.getRightBackDrive().setPower(rrp);
-        DRIVE_TRAIN.getLeftFrontDrive().setPower(flp);
-        DRIVE_TRAIN.getRightFrontDrive().setPower(frp);
+        // Normalize before the kS boost so direction proportions are preserved.
+        double max = Math.max(Math.max(Math.abs(flp), Math.abs(frp)),
+                Math.max(Math.abs(rlp), Math.abs(rrp)));
+        if (max > 1.0) {
+            flp /= max;
+            frp /= max;
+            rlp /= max;
+            rrp /= max;
+        }
+
+        DRIVE_TRAIN.setWheelPowers(flp, frp, rlp, rrp);
     }
 
     /**
