@@ -7,10 +7,12 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.teamcode.killerwatts.ContinuousServo;
 import org.firstinspires.ftc.teamcode.killerwatts.Drivetrain;
 import org.firstinspires.ftc.teamcode.killerwatts.FieldTracker;
 import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
+import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 import org.firstinspires.ftc.teamcode.killerwatts.ServoMove;
 
 @TeleOp(name = "JowByTeleOp", group = "Robot")
@@ -18,11 +20,13 @@ import org.firstinspires.ftc.teamcode.killerwatts.ServoMove;
 public class JowByTeleOp extends LinearOpMode {
 
     //private GyroMecanumDriveTrain DamDrive;
-    private ServoMove servermovetest;
+    //private ServoMove servermovetest;
     private Drivetrain DT;
     private GoBildaPinpoint PinOdo;
     private FieldTracker tracker;
     private Intake intake;
+    private PositionalServo PosServ;
+    private ContinuousServo ContServ;
 
     @Override
     public void runOpMode() {
@@ -31,7 +35,7 @@ public class JowByTeleOp extends LinearOpMode {
         telemetry.addData("Status", "Initializing");
         telemetry.update();
         //build subsystems — order matters: pinpoint before tracker (tracker reads pinpoint.pos).
-        servermovetest = new ServoMove();
+        //servermovetest = new ServoMove();
         DT = new Drivetrain(this);
         PinOdo = new GoBildaPinpoint(this);
         tracker = new FieldTracker();
@@ -41,6 +45,9 @@ public class JowByTeleOp extends LinearOpMode {
         tracker.setImuYawSupplier(() ->
                 DT.GMDT.imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS));
         DT.setFieldTracker(tracker);
+
+        PosServ = new PositionalServo(this);
+        //ContServ = new ContinuousServo(this);
         // Wait for the game to start (driver presses PLAY)
         waitForStart();
 
