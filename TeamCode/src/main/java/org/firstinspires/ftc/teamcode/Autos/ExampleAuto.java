@@ -1,4 +1,4 @@
-package Autos;
+package org.firstinspires.ftc.teamcode.Autos;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.pedropathing.follower.Follower;
@@ -6,11 +6,8 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.SharedObjects;
-import org.firstinspires.ftc.teamcode.killerwatts.Drivetrain;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
-import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.DashboardFieldRenderer;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import com.pedropathing.api.PoseFactory;
@@ -29,7 +26,7 @@ import static com.pedropathing.ivy.groups.Groups.sequential;
 import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
-@Autonomous(name = "ExampleAuto1", group = "Autos")
+@Autonomous(name = "ExampleAuto1", group = "org/firstinspires/ftc/teamcode/Autos")
 public class ExampleAuto extends OpMode {
     //ROBOT BOILERPLATE -- doesnt change between OpModes
     public FtcDashboard dashboard = SharedObjects.dashboard;

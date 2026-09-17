@@ -1,11 +1,10 @@
-package Autos;
+package org.firstinspires.ftc.teamcode.Autos;
 
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
 import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
-import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -16,7 +15,7 @@ import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 
-@TeleOp(name = "JowByAuton1", group = "Autos")
+@TeleOp(name = "JowByAuton1", group = "org/firstinspires/ftc/teamcode/Autos")
 @Disabled
 public class JowByAuton1 extends LinearOpMode {
 
