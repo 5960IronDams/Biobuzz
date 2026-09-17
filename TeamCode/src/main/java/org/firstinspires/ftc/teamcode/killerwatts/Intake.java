@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.Gamepad;
@@ -35,7 +36,7 @@ public class Intake extends SubsystemBase {
     public static double kI = 0;
     public static double kD = 0;
     public static double kF = 12;
-    public static boolean MOTOR_REVERSED = false;
+    public static boolean MOTOR_REVERSED = true;
     public static double TRIGGER_THRESHOLD = 0.2;
     public static String MOTOR_NAME = "intake";
 
@@ -48,7 +49,7 @@ public class Intake extends SubsystemBase {
     private double lastF = Double.NaN;
     private boolean lastReversed = false;
 
-    public Intake(LinearOpMode opMode) {
+    public Intake(OpMode opMode) {
         motor = opMode.hardwareMap.get(DcMotorEx.class, MOTOR_NAME);
         gamepad1 = opMode.gamepad1;
 

@@ -12,14 +12,13 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 public class Drivetrain extends SubsystemBase {
     FtcDashboard dashboard = FtcDashboard.getInstance();
     Telemetry telemetry = dashboard.getTelemetry();
-    public int loop = 0;
     public FourWheelDriveTrain FWDT;
     public GyroMecanumDriveTrain GMDT;
     public Gamepad gamepad1;
 
     /** Optional velocity feed so FieldTracker can dead-reckon without pinpoint. */
     public static double MAX_CMD_VEL_IN_PER_SEC = 40.0;
-    public static double MAX_CMD_OMEGA_DEG_PER_SEC = 180.0;
+    public static double MAX_CMD_OMEGA_DEG_PER_SEC = 120.0;//default 180
     private FieldTracker fieldTracker;
 
     /** Wire after constructing both: dt.setFieldTracker(tracker). */
@@ -51,9 +50,7 @@ public class Drivetrain extends SubsystemBase {
                     fwd * MAX_CMD_VEL_IN_PER_SEC,
                     -turn * Math.toRadians(MAX_CMD_OMEGA_DEG_PER_SEC));
         }
-        telemetry.addData("drivetrain loop", loop);
         telemetry.addData("IMUYawAngle", GMDT.imu.getRobotYawPitchRollAngles().getYaw());
-        loop++;
         telemetry.update();
     }
 }

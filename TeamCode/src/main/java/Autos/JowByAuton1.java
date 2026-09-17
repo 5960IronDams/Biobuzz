@@ -1,9 +1,11 @@
-package org.firstinspires.ftc.teamcode;
+package Autos;
 
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -13,11 +15,10 @@ import org.firstinspires.ftc.teamcode.killerwatts.FieldTracker;
 import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
-import org.firstinspires.ftc.teamcode.killerwatts.ServoMove;
 
-@TeleOp(name = "JowByTeleOp", group = "Robot")
-
-public class JowByTeleOp extends LinearOpMode {
+@TeleOp(name = "JowByAuton1", group = "Autos")
+@Disabled
+public class JowByAuton1 extends LinearOpMode {
 
     //private GyroMecanumDriveTrain DamDrive;
     //private ServoMove servermovetest;
@@ -27,9 +28,8 @@ public class JowByTeleOp extends LinearOpMode {
     private Intake intake;
     private PositionalServo PosServ;
     private ContinuousServo ContServ;
-
-    @Override
-    public void runOpMode() {
+    private void SetupRobotBoilerPlate()
+    {
         clearAll(); // avoid double-registration on re-run
         //DamDrive = new GyroMecanumDriveTrain(this,)
         telemetry.addData("Status", "Initializing");
@@ -48,6 +48,11 @@ public class JowByTeleOp extends LinearOpMode {
 
         PosServ = new PositionalServo(this);
         //ContServ = new ContinuousServo(this);
+    }
+
+    @Override
+    public void runOpMode() {
+        SetupRobotBoilerPlate();
         // Wait for the game to start (driver presses PLAY)
         waitForStart();
 

@@ -48,7 +48,7 @@ public final class DriveConstants {
     // raise STRAFE_GAIN until times match. Start ~1.3.
     public static double STRAFE_GAIN = 1.3;
     public static double FWD_GAIN = 1.0;
-    public static double TURN_GAIN = 1.0;
+    public static double TURN_GAIN = .75;
 
     // ---- Stiction breakaway (kS), per surface ----
     // Tune: raise from 0.05 until the robot just creeps.
