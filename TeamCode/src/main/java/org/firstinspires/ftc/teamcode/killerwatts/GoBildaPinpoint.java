@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Gamepad;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
@@ -66,7 +67,7 @@ public class GoBildaPinpoint extends SubsystemBase {
     public void correctTrackerWithVision(FieldTracker tracker, VisionMeasurement m) {
         if (tracker != null && m != null) tracker.addVisionMeasurement(m);
     }
-    public GoBildaPinpoint(LinearOpMode opMode)
+    public GoBildaPinpoint(OpMode opMode)
     {
         gamepad1 = opMode.gamepad1;
         getruntime = opMode::getRuntime;

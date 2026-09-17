@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Gamepad;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
@@ -25,7 +26,7 @@ public class Drivetrain extends SubsystemBase {
     public void setFieldTracker(FieldTracker tracker) {
         this.fieldTracker = tracker;
     }
-    public Drivetrain(LinearOpMode opMode)
+    public Drivetrain(OpMode opMode)
     {
         FWDT = new FourWheelDriveTrain(opMode.hardwareMap);
         GMDT = new GyroMecanumDriveTrain(opMode,FWDT);

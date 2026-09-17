@@ -2,10 +2,10 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
-import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.DashboardFieldRenderer;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.FieldPoseMapper;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.PoseKalmanFilter;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
@@ -41,27 +41,10 @@ import java.util.function.Supplier;
 @Config
 public class FieldTracker extends SubsystemBase {
 
-    // ---- Field overlay config ----
-    // Pose (0,0,0) == dashboard field center. Leave offsets at 0 so the robot
-    // overlay starts in the middle of the field; auton/vision seed the start pose.
-    public static double ORIGIN_OFFSET_X = 0;
-    public static double ORIGIN_OFFSET_Y = 0;
-    public static boolean RED_ALLIANCE = true;
-    // Custom field background served from TeamCode/src/main/assets/images/.
-    // webp is browser-supported; biobuzz-field.png is the fallback if webp fails.
-    public static String FIELD_IMAGE = "/images/biobuzz-field.webp";
-    public static boolean USE_CUSTOM_FIELD_IMAGE = true;
-    // Rotation was baked into the asset itself (1080x1080 CCW) so the draw call
-    // stays a plain full-field blit — dashboard's image theta/pivot convention
-    // moved the blit off-center, this avoids that entirely.
-    public static boolean DRAW_DEFAULT_FIELD = false;
-    public static double SCALEX = 1.0;
-    public static double SCALEY = 1.0;
-    public static boolean DRAW_GRID = false;
-    /** Axis legend anchor: inset (inches) from the -X/-Y field corner, which is
-     * bottom-right as seen in the browser (field is 144x144in, corner at -72,-72). */
-    public static double AXIS_LEGEND_MARGIN_IN = 4;
-    public static double AXIS_LEGEND_LEN_IN = 16;
+    /** Pose-agnostic dashboard renderer. All field-overlay config now lives on
+     * {@link DashboardFieldRenderer} (@Config) — tune image/origin/size there.
+     * Exposed via {@link #getRenderer()} so callers can draw extra poses. */
+    private final DashboardFieldRenderer renderer = new DashboardFieldRenderer();
 
     // ---- Pose filter tuning (dashboard-tunable) ----
     // Start pose = where the robot physically sits at init, in FIELD frame.
@@ -89,8 +72,6 @@ public class FieldTracker extends SubsystemBase {
     public static double FALLBACK_VX_IN_PER_SEC = 0;
     public static double FALLBACK_VY_IN_PER_SEC = 0;
     public static double FALLBACK_OMEGA_DEG_PER_SEC = 0;
-    public static double ROBOT_LENGTH_IN = 14;
-    public static double ROBOT_WIDTH_IN = 14;
 
     private final FtcDashboard dashboard = FtcDashboard.getInstance();
     private final Telemetry telemetry = dashboard.getTelemetry();
@@ -124,6 +105,11 @@ public class FieldTracker extends SubsystemBase {
     }
 
     public FieldTracker() { }
+
+    /** Direct access to the dashboard renderer (e.g. to draw a second Pedro pose). */
+    public DashboardFieldRenderer getRenderer() {
+        return renderer;
+    }
 
     /** Attach after construction. Call before first Periodic; order matters. */
     public void setPinpoint(GoBildaPinpoint pinpoint) {
@@ -263,77 +249,6 @@ public class FieldTracker extends SubsystemBase {
         telemetry.addData("FieldTracker src", havePinpoint ? "pinpoint" : "dead-reckon/imu");
         telemetry.update();
 
-        sendFieldPacket(rx, ry, rh);
-    }
-
-    private void sendFieldPacket(double rxIn, double ryIn, double headingRad) {
-        TelemetryPacket packet = new TelemetryPacket(DRAW_DEFAULT_FIELD);
-
-        // Glyph geometry in FIELD frame: heading rh is CCW+ measured from +Y.
-        // Robot forward = (-sin rh, cos rh), robot right = (cos rh, sin rh).
-        // At rh=0: nose points +Y (up-field, away from red wall). Corners are
-        // (fwd,right) combos so hl lies along the nose axis, hw across it.
-        double fx = -Math.sin(headingRad);
-        double fy = Math.cos(headingRad);
-        double gx = Math.cos(headingRad);
-        double gy = Math.sin(headingRad);
-        double hl = ROBOT_LENGTH_IN / 2.0;
-        double hw = ROBOT_WIDTH_IN / 2.0;
-        double[] px = {
-                rxIn + hl * fx + hw * gx, // front-right x
-                rxIn + hl * fx - hw * gx, // front-left x
-                rxIn - hl * fx - hw * gx, // back-left x
-                rxIn - hl * fx + hw * gx, // back-right x
-        };
-        double[] py = {
-                ryIn + hl * fy + hw * gy, // front-right y
-                ryIn + hl * fy - hw * gy, // front-left y
-                ryIn - hl * fy - hw * gy, // back-left y
-                ryIn - hl * fy + hw * gy, // back-right y
-        };
-        // Heading tick: center -> nose (along robot forward).
-        double noseX = rxIn + hl * fx;
-        double noseY = ryIn + hl * fy;
-
-        // Axis legend anchor: -X/-Y field corner (bottom-right in browser).
-        double legX = -72 + AXIS_LEGEND_MARGIN_IN;
-        double legY = -72 + AXIS_LEGEND_MARGIN_IN;
-
-        packet.fieldOverlay()
-                .setAlpha(1.0)
-                .setStrokeWidth(1);
-        if (USE_CUSTOM_FIELD_IMAGE && FIELD_IMAGE != null && !FIELD_IMAGE.isEmpty()) {
-            // Plain full-field page-frame blit: 144x144in square, stays put.
-            // (Rotation is pre-baked into the image file, not the draw call.)
-            packet.fieldOverlay().drawImage(FIELD_IMAGE, 0, 0, 144, 144);
-        }
-        if (DRAW_GRID) {
-            packet.fieldOverlay().drawGrid(0, 0, 144, 144, 7, 7);
-        }
-        packet.fieldOverlay()
-                .setRotation(RED_ALLIANCE ? 0 : Math.PI)
-                .setTranslation(ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y * (RED_ALLIANCE ? -1 : 1))
-                .setScale(SCALEX, SCALEY)
-                // Axis legend in the field (centered) frame, anchored at the
-                // -X/-Y corner = bottom-right as seen in the browser.
-                // X line runs up the right edge, Y line runs left along the bottom.
-                .setStroke("red")
-                .strokeLine(legX, legY, legX + AXIS_LEGEND_LEN_IN, legY)
-                .setFill("red")
-                .fillText("X axis", legX + AXIS_LEGEND_LEN_IN / 2, legY + 5,
-                        "8px Arial", 0, false)
-                .setStroke("green")
-                .strokeLine(legX, legY, legX, legY + AXIS_LEGEND_LEN_IN)
-                .setFill("green")
-                .fillText("Y axis", legX + 5, legY + AXIS_LEGEND_LEN_IN / 2,
-                        "8px serif", 0, false)
-                // Fused robot pose (rectangle + heading tick, no text label).
-                .setStroke("blue")
-                .setFill("rgba(0,0,255,0.25)")
-                .fillPolygon(px, py)
-                .setStroke("blue")
-                .strokeLine(rxIn, ryIn, noseX, noseY);
-
-        dashboard.sendTelemetryPacket(packet);
+        renderer.drawFieldPose(rx, ry, rh);
     }
 }

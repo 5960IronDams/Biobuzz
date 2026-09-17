@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.irondams.drivetrain;
 
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.IMU;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -39,7 +40,7 @@ public class GyroMecanumDriveTrain implements IDriveTrain {
      * @param opMode     The active LinearOpMode context for telemetry and hardware mapping access.
      * @param driveTrain The baseline four-wheel motor configuration to pass powers to.
      */
-    public GyroMecanumDriveTrain(LinearOpMode opMode, FourWheelDriveTrain driveTrain) {
+    public GyroMecanumDriveTrain(OpMode opMode, FourWheelDriveTrain driveTrain) {
         this.driveTrain = driveTrain;
 
         imu = opMode.hardwareMap.get(IMU.class, "imu2");

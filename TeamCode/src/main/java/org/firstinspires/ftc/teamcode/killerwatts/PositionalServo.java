@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -68,7 +69,7 @@ public class PositionalServo extends SubsystemBase {
     private boolean prevToggle = false;
 
 
-    public PositionalServo(LinearOpMode opMode) {
+    public PositionalServo(OpMode opMode) {
         servo = opMode.hardwareMap.get(Servo.class, SERVO_NAME);
         gamepad1 = opMode.gamepad1;
 

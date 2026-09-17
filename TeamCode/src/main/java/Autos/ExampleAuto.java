@@ -9,10 +9,9 @@ import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.SharedObjects;
 import org.firstinspires.ftc.teamcode.killerwatts.Drivetrain;
-import org.firstinspires.ftc.teamcode.killerwatts.FieldTracker;
-import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.DashboardFieldRenderer;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.math.Pose;
@@ -37,6 +36,8 @@ public class ExampleAuto extends OpMode {
     public Telemetry telemetry = SharedObjects.telemetry;
     private Follower follower;// = SharedObjects.follower;
     private final PoseFactory poseFactory = PoseFactory.degrees();
+    // Pose-agnostic dashboard renderer: Pedro poses go straight in, no Pinpoint/Kalman needed.
+    private final DashboardFieldRenderer fieldRenderer = new DashboardFieldRenderer();
 
     private Intake intake;
     //END ROBOT BOILERPLATE -- doesnt change between OpModes
@@ -71,6 +72,10 @@ public class ExampleAuto extends OpMode {
         //schedule(follow(follower, parkonly()));
         schedule(autoRoutine());
     }
+    @Override
+    public void stop() {
+        SharedObjects.autonomousEndPose = follower.pose(); //saves your position in that file
+    }
 
     @Override
     public void loop() {
@@ -86,6 +91,11 @@ public class ExampleAuto extends OpMode {
         telemetry.addData("Heading", Math.toDegrees(follower.pose().heading()));
         telemetry.addData("Follower Mode", follower.mode());
         telemetry.update();
+        // Draw the Pedro pose on the dashboard field overlay (corner-origin -> field frame
+        // conversion handled inside the renderer).
+        if (follower != null && follower.pose() != null) {
+            fieldRenderer.drawPedroPose(follower.pose());
+        }
     }
     private Command autoRoutine() {
         return sequential(
