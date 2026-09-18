@@ -55,7 +55,7 @@ public class Red_ExampleAuto extends OpMode {
 
         //setupPathPoints();
 
-        //setup all our subsystems and command factory
+        //now that Alliance is settled : setup all our subsystems and command factory
         robot = new RobotMain(this);
 
         //for autons, set our robot in the known starting place
@@ -65,12 +65,6 @@ public class Red_ExampleAuto extends OpMode {
         //update telemetry and draw where our robot is on the field.
         UpdateTelemetry();
         RobotMain.DashTelemetry.addData("AutonEndPose", "Unsaved");
-
-        //update dashboard with what alliance we should be on. this is for one good final double check for the driver
-        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        telemetry.update();
-        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        RobotMain.DashTelemetry.update();
     }
 
 
@@ -112,6 +106,7 @@ public class Red_ExampleAuto extends OpMode {
     }
     private void UpdateTelemetry()
     {
+        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
         telemetry.addData("X", robot.follower.pose().x());
         telemetry.addData("Y", robot.follower.pose().y());
         telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));

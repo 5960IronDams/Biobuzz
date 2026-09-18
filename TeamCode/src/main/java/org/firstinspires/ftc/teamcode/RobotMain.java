@@ -44,13 +44,34 @@ public class RobotMain {
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
         CommandF = new CommandFactory(follower,intake,PosServ);
 
+        //declare what alliance we are on to BOTH dashboards
+        //this is for one good final double check for the driver and co pilot
+        opmode.telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        opmode.telemetry.update();
+        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        RobotMain.DashTelemetry.update();
     }
+
 
     public void RobotRunPeriodic()
     {
         follower.update();//updates this robots pedro Followers
         RunPeriodic();//run all registered subsystems periodic
         Scheduler.execute(); //eun the Ivy scheduler periodic
+        looptime();
     }
+    long lastTime = System.nanoTime();
+    public void looptime() {
+        long currentTime = System.nanoTime();
 
+        // Calculate loop time in milliseconds
+        double loopTimeMs = (currentTime - lastTime) / 1_000_000.0;
+        lastTime = currentTime;
+
+        // ... Your Robot Logic Here ...
+
+        RobotMain.DashTelemetry.addData("Loop Time (ms)", "%.2f ms", loopTimeMs);
+        RobotMain.DashTelemetry.addData("Hz", "%.1f Hz", 1000.0 / loopTimeMs);
+        RobotMain.DashTelemetry.update();
+    }
 }

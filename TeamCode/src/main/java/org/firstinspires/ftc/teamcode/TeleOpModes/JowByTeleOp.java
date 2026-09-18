@@ -21,15 +21,21 @@ public class JowByTeleOp extends OpMode {
 
     @Override
     public void init() {
-
+        //now that Alliance is settled - setup all our subsystems and command factory
         robot = new RobotMain(this);
-        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        telemetry.update();
-        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        RobotMain.DashTelemetry.update();
         //setAutonPose();
 
 
+    }
+    @Override
+    public void start() {
+
+    }
+    @Override
+    public void loop() {
+        robot.RobotRunPeriodic();
+        PedroFollowerFieldCentricDrivetrainloop();
+        UpdateTelemetry();
     }
     public void PedroFollowerFieldCentricDrivetrainloop()
     {
@@ -67,26 +73,18 @@ public class JowByTeleOp extends OpMode {
         RobotMain.DashTelemetry.addData("Robot Y", robotPose.y());
         RobotMain.DashTelemetry.addData("Robot Heading", Math.toDegrees(robotPose.heading()));
     }
-    @Override
-    public void start() {
 
-    }
 
-    public void setAutonPose()
-    {
-        robot.follower.setPose(RobotMain.autonomousEndPose);
-        robot.follower.update();
-        robot.fieldRenderer.drawPedroPose(robot.follower.pose());
-        RobotMain.DashTelemetry.addData("AutonEndPose", "SetInTeleOp");
-        RobotMain.DashTelemetry.update();
-    }
+//    public void setAutonPose()
+//    {
+//        robot.follower.setPose(RobotMain.autonomousEndPose);
+//        robot.follower.update();
+//        robot.fieldRenderer.drawPedroPose(robot.follower.pose());
+//        RobotMain.DashTelemetry.addData("AutonEndPose", "SetInTeleOp");
+//        RobotMain.DashTelemetry.update();
+//    }
 
-    @Override
-    public void loop() {
-        robot.RobotRunPeriodic();
-        PedroFollowerFieldCentricDrivetrainloop();
-        UpdateTelemetry();
-    }
+
     public void UpdateTelemetry()
     {
         RobotMain.DashTelemetry.addData("Status", "Running");
