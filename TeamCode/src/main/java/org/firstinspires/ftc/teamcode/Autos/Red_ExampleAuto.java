@@ -28,21 +28,34 @@ public class Red_ExampleAuto extends OpMode {
     public RobotMain robot;
     public PoseFactory poseFactory = PoseFactory.degrees();//we design for red, then mirror for blue
     public ALLIANCE_COLOR SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
-
+    public PPFile pp;
     @Override
     public void init() {
+        //assign our auto our alliance color
         RobotMain.CurrentAlliance = SetRobotToThisColor;
         if(RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE)
         {
-            poseFactory = PoseFactory.degrees().mirrorY(GameConst.FieldCenter.y()).mirrorX(GameConst.FieldCenter.x());//we design for red, then mirror for blue
+            // 180-degree rotation of the Red design around the field center.
+            // Do NOT use mirrorY().mirrorX() here: Pedro's mirrorX maps heading
+            // h -> -h, which is only correct for +/-90 deg (Red 90 -> Blue 270
+            // works, but Red 60 -> Blue 300 instead of 240, Red 0 -> Blue 0
+            // instead of 180). blueRotationFactory maps h -> h + PI, correct for
+            // all headings. See PPFile.blueRotationFactory for the full analysis.
+            poseFactory = PPFile.blueRotationFactory(GameConst.FieldCenter.x(), GameConst.FieldCenter.y());
+        }
+        // after poseFactory is configured for Red/Blue load the pathfile:
+        try {
+            pp = PPFile.fromAsset(hardwareMap, "pathfiles/exampleAuto1.pp", poseFactory);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
 
-        setupPathPoints();
+        //setupPathPoints();
         robot = new RobotMain(this);
         clearAll();
         Scheduler.reset();
         //robot.follower = Constants.create(hardwareMap);
-        robot.follower.setPose(start);
+        robot.follower.setPose(pp.getStartPose());
         robot.follower.update();
         UpdateTelemetry();
         RobotMain.DashTelemetry.addData("AutonEndPose", "Unsaved");
@@ -88,11 +101,11 @@ public class Red_ExampleAuto extends OpMode {
     }
     private Command autoRoutine() {
         return sequential(
-                follow(robot.follower, path1()),
+                follow(robot.follower, pp.getPath("StartPoint")),
                 // Add mechanism commands here.
                 parallel(
                         RunIntake,
-                        follow(robot.follower, path2())
+                        follow(robot.follower, pp.getPath("StartToOffset"))
                         ),
                 StopIntake
         );
@@ -101,22 +114,22 @@ public class Red_ExampleAuto extends OpMode {
     Command RunIntake = instant(() -> robot.intake.runIntake());
     Command StopIntake = instant(() -> robot.intake.stop());
 
-    private void setupPathPoints() {//this exist to ensure Blue works. this pattern needs to be changed.
-        start = poseFactory.of(55, 9, 90);
-        path1 = poseFactory.of(36.0, 9.75, 60);
-        point2 = poseFactory.of(36.0, 27.0, 0);
-    }
-    //points used in this auton.
-    private Pose start = null;
-    private Pose path1 = null;
-    private Pose point2 = null;
-    
-    //path creators. 
-    public Path path1() {
-        return line(start, path1).linear(path1,start );//why is linear backwards !?
-    }
-
-    public Path path2() {
-        return line(path1, point2).linear(point2,path1);//why is linear backwards !?
-    }
+//    private void setupPathPoints() {//this exist to ensure Blue works. this pattern needs to be changed.
+//        start = poseFactory.of(55, 9, 90);
+//        path1 = poseFactory.of(36.0, 9.75, 60);
+//        point2 = poseFactory.of(36.0, 27.0, 0);
+//    }
+//    //points used in this auton.
+//    private Pose start = null;
+//    private Pose path1 = null;
+//    private Pose point2 = null;
+//
+//    //path creators.
+//    public Path path1() {
+//        return line(start, path1).linear(path1,start );//why is linear backwards !?
+//    }
+//
+//    public Path path2() {
+//        return line(path1, point2).linear(point2,path1);//why is linear backwards !?
+//    }
 }

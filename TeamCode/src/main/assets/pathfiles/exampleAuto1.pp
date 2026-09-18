@@ -1,7 +1,8 @@
 {
   "startPoint": {
-    "x": 56.34554334554335,
-    "y": 9.900488400488394,
+    "x": 55.36176582526524,
+    "y": 10.720303000720154,
+    "name": "StartPoint",
     "locked": false,
     "headingDeg": 90
   },
@@ -9,7 +10,7 @@
     {
       "id": "line-mu4x32bi-hjjne5",
       "color": "#ffc516",
-      "name": "Path 1",
+      "name": "StartToOffset",
       "locked": false,
       "waitBeforeMs": 0,
       "waitAfterMs": 0,
@@ -30,7 +31,7 @@
     {
       "id": "line-mu4x3f7v-bt9a3c",
       "color": "#CD9B5C",
-      "name": "",
+      "name": "OffsetToPark",
       "locked": false,
       "waitBeforeMs": 0,
       "waitAfterMs": 0,
@@ -92,14 +93,6 @@
           "y": 141.5
         },
         {
-          "x": 0,
-          "y": 141.5
-        },
-        {
-          "x": 0,
-          "y": 70
-        },
-        {
           "x": 6,
           "y": 70
         }
@@ -120,5 +113,5 @@
   ],
   "fieldPoints": [],
   "version": "1.5.0",
-  "timestamp": "2026-09-17T02:37:04.267Z"
+  "timestamp": "2026-09-18T15:53:38.778Z"
 }
