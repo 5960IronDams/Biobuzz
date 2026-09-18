@@ -46,7 +46,7 @@ import java.util.Map;
  *   <li>Dpad up / dpad down (hold): primary continuous forward / reverse</li>
  * </ul>
  */
-@Config
+//@Config
 public class ServoMove extends SubsystemBase {
     FtcDashboard dashboard = FtcDashboard.getInstance();
     Telemetry telemetry = dashboard.getTelemetry();

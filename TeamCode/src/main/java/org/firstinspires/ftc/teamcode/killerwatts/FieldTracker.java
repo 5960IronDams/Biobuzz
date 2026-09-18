@@ -38,7 +38,7 @@ import java.util.function.Supplier;
  * {@link #getPose2D()} / {@link #getXIn()} / {@link #getYIn()} /
  * {@link #getHeadingRad()} directly — never Pinpoint's raw robot-frame pose.</p>
  */
-@Config
+//@Config
 public class FieldTracker extends SubsystemBase {
 
     /** Pose-agnostic dashboard renderer. All field-overlay config now lives on

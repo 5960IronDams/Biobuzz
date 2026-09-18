@@ -1,10 +1,12 @@
 package org.firstinspires.ftc.teamcode;
 
+import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
+import com.pedropathing.ivy.Scheduler;
 import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
@@ -20,29 +22,35 @@ public class RobotMain {
 
     public static FtcDashboard dashboard = FtcDashboard.getInstance();
     public static Telemetry DashTelemetry = dashboard.getTelemetry();
-    public Follower follower;// = SharedObjects.follower;
-
     public final DashboardFieldRenderer fieldRenderer = new DashboardFieldRenderer();
+    //subsystems
+    public Follower follower;// = SharedObjects.follower;
     public Intake intake;
     public PositionalServo PosServ;
+    //
+    public CommandFactory CommandF;
     public static Pose autonomousEndPose = new Pose(0, 0, 0);
-//    private static RobotMain robot;
-//    public static RobotMain getInstance(OpMode opmode)
-//    {
-//        if(robot == null)
-//        {
-//            robot = new RobotMain(opmode);
-//        }
-//        robot.follower = Constants.create(opmode.hardwareMap);//shouldnt fix as much as it does. pedro pathing 3.0.0 issue?
-//        return robot;
-//    }
     public RobotMain(OpMode opmode)
     {
-        clearAll(); // avoid double-registration on re-run
+        clearAll(); // avoid double-registration of subsystem on re-run or Opmode switch
+        Scheduler.reset(); //clears all scheduler commands in ivy after opmode switch.
+        //subsystems
         follower = Constants.create(opmode.hardwareMap);
         fieldRenderer.drawPedroPose(follower.pose());
         intake = new Intake(opmode);
         PosServ = new PositionalServo(opmode);
+
+
+        //after all subsystems are started (i.e their variables point to an object). Build the command factory
+        CommandF = new CommandFactory(follower,intake,PosServ);
+
+    }
+
+    public void RobotRunPeriodic()
+    {
+        follower.update();//updates this robots pedro Followers
+        RunPeriodic();//run all registered subsystems periodic
+        Scheduler.execute(); //eun the Ivy scheduler periodic
     }
 
 }

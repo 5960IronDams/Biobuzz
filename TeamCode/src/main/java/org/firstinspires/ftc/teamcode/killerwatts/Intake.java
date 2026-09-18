@@ -106,14 +106,14 @@ public class Intake extends SubsystemBase {
     public void Periodic() {
         applyPids(false);
 
-        boolean running = gamepad1.right_trigger > TRIGGER_THRESHOLD;
-        if (running) {
-            runIntake();
-        } else {
+        if (gamepad1.rightTriggerWasPressed()) {  //gamepad1.right_trigger > TRIGGER_THRESHOLD;
+            // Re-assert every loop so dashboard RPM edits apply live
+            // and nothing else can starve the velocity.
+            motor.setVelocity(rpmToTicksPerSec(INTAKE_RPM));
+        } else if (gamepad1.rightTriggerWasReleased()){
             stop();
         }
 
-        telemetry.addData("Intake running", running);
         telemetry.addData("Intake target RPM", INTAKE_RPM);
         telemetry.addData("Intake actual RPM", "%.1f", getActualRpm());
         telemetry.addData("Intake target tps", "%.1f", rpmToTicksPerSec(INTAKE_RPM));

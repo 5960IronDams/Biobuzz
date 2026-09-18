@@ -18,9 +18,11 @@ import com.pedropathing.ivy.Scheduler;
 
 import static com.pedropathing.ivy.Scheduler.schedule;
 import static com.pedropathing.ivy.commands.Commands.instant;
+import static com.pedropathing.ivy.commands.Commands.waitMs;
 import static com.pedropathing.ivy.groups.Groups.parallel;
 import static com.pedropathing.ivy.groups.Groups.sequential;
 import static com.pedropathing.ivy.pedro.PedroCommands.follow;
+import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
 @Autonomous(name = "Red_ExampleAuto1", group = "Autos")
@@ -28,11 +30,12 @@ public class Red_ExampleAuto extends OpMode {
     public RobotMain robot;
     public PoseFactory poseFactory = PoseFactory.degrees();//we design for red, then mirror for blue
     public ALLIANCE_COLOR SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
-    public PPFile pp;
+    public PPFile pp;//loads and manages our pathFiles we create in the pedro path visualizer. (visualizer.pedropathing.com)
     @Override
     public void init() {
         //assign our auto our alliance color
         RobotMain.CurrentAlliance = SetRobotToThisColor;
+        //if blue rotate our heading and factory.
         if(RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE)
         {
             // 180-degree rotation of the Red design around the field center.
@@ -51,14 +54,19 @@ public class Red_ExampleAuto extends OpMode {
         }
 
         //setupPathPoints();
+
+        //setup all our subsystems and command factory
         robot = new RobotMain(this);
-        clearAll();
-        Scheduler.reset();
-        //robot.follower = Constants.create(hardwareMap);
+
+        //for autons, set our robot in the known starting place
         robot.follower.setPose(pp.getStartPose());
         robot.follower.update();
+
+        //update telemetry and draw where our robot is on the field.
         UpdateTelemetry();
         RobotMain.DashTelemetry.addData("AutonEndPose", "Unsaved");
+
+        //update dashboard with what alliance we should be on. this is for one good final double check for the driver
         telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
         telemetry.update();
         RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
@@ -81,10 +89,26 @@ public class Red_ExampleAuto extends OpMode {
 
     @Override
     public void loop() {
-        robot.follower.update();
-        Scheduler.execute();
+        robot.RobotRunPeriodic();
         UpdateTelemetry();
 
+    }
+
+    private Command autoRoutine() {
+        return sequential(
+                robot.CommandF.ServoToPos(0.5),
+                follow(robot.follower, pp.getPath("StartPoint")),
+                // Add mechanism commands here.
+                parallel(
+                        robot.CommandF.RunIntake(),
+                        follow(robot.follower, pp.getPath("StartToOffset"))
+                        ),
+                robot.CommandF.StopIntake(),
+                robot.CommandF.ServoToPos(1.0),
+                waitMs(1500),
+                robot.CommandF.ServoToPos(0.0)
+
+        );
     }
     private void UpdateTelemetry()
     {
@@ -99,22 +123,10 @@ public class Red_ExampleAuto extends OpMode {
             robot.fieldRenderer.drawPedroPose(robot.follower.pose());
         }
     }
-    private Command autoRoutine() {
-        return sequential(
-                follow(robot.follower, pp.getPath("StartPoint")),
-                // Add mechanism commands here.
-                parallel(
-                        RunIntake,
-                        follow(robot.follower, pp.getPath("StartToOffset"))
-                        ),
-                StopIntake
-        );
-    }
 
-    Command RunIntake = instant(() -> robot.intake.runIntake());
-    Command StopIntake = instant(() -> robot.intake.stop());
 
-//    private void setupPathPoints() {//this exist to ensure Blue works. this pattern needs to be changed.
+
+//    private void setupPathPoints() {//this exist to ensure Blue works. this pattern needs to be changed. //blue requires posefactory to be mirrored.
 //        start = poseFactory.of(55, 9, 90);
 //        path1 = poseFactory.of(36.0, 9.75, 60);
 //        point2 = poseFactory.of(36.0, 27.0, 0);

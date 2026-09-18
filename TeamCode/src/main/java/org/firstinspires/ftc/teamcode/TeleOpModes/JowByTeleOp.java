@@ -83,7 +83,7 @@ public class JowByTeleOp extends OpMode {
 
     @Override
     public void loop() {
-        RunPeriodic();
+        robot.RobotRunPeriodic();
         PedroFollowerFieldCentricDrivetrainloop();
         UpdateTelemetry();
     }

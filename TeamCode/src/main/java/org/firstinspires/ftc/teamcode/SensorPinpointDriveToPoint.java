@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
@@ -13,7 +14,7 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.GoBildaPinpointDriver;
 import java.util.Locale;
 
 @Autonomous(name="Pinpoint Navigation Example", group="Pinpoint")
-//@Disabled
+@Disabled
 
 public class SensorPinpointDriveToPoint extends LinearOpMode {
 

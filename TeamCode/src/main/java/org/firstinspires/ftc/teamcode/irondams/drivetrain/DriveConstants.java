@@ -32,7 +32,7 @@ import com.acmerobotics.dashboard.config.Config;
  * active in code: stick conditioning always applies; power vs velocity is
  * selected by {@link #USE_VELOCITY}.
  */
-@Config
+//@Config
 public final class DriveConstants {
 
     private DriveConstants() {}

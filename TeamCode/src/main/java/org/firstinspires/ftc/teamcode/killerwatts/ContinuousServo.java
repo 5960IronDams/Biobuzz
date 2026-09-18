@@ -29,7 +29,7 @@ import java.util.Locale;
  * </pre>
  * then drive from code with {@link #setPower} / {@link #stop}.
  */
-@Config
+//@Config
 public class ContinuousServo extends SubsystemBase {
     FtcDashboard dashboard = FtcDashboard.getInstance();
     Telemetry telemetry = dashboard.getTelemetry();
