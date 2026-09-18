@@ -4,98 +4,81 @@ import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPe
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
 import com.pedropathing.drivetrain.DrivePowers;
-import com.pedropathing.follower.Follower;
 import com.pedropathing.follower.ManualDrive;
 import com.pedropathing.math.Pose;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import org.firstinspires.ftc.teamcode.SharedObjects;
-import org.firstinspires.ftc.teamcode.killerwatts.ContinuousServo;
-import org.firstinspires.ftc.teamcode.killerwatts.Drivetrain;
-import org.firstinspires.ftc.teamcode.killerwatts.FieldTracker;
-import org.firstinspires.ftc.teamcode.killerwatts.GoBildaPinpoint;
-import org.firstinspires.ftc.teamcode.killerwatts.Intake;
-import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
+import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.DashboardFieldRenderer;
-import org.firstinspires.ftc.teamcode.pedro.Constants;
 
-@TeleOp(name = "Red-JowByTeleOp", group = "TeleOp")
+@TeleOp(name = "JowBy_TeleOp", group = "TeleOp")//red_
 
 public class JowByTeleOp extends OpMode {
-    public ALLIANCE_COLOR CurrentAlliance = ALLIANCE_COLOR.ALLIANCE_RED;
-    //private GyroMecanumDriveTrain DamDrive;
-    //private ServoMove servermovetest;
-    private Drivetrain DT;
-    private GoBildaPinpoint PinOdo;
-    private FieldTracker tracker;
-    private Intake intake;
-    private PositionalServo PosServ;
-    private ContinuousServo ContServ;
-    private Follower follower;// = SharedObjects.follower;
-    private final DashboardFieldRenderer fieldRenderer = new DashboardFieldRenderer();
+
+    public RobotMain robot;
+
     @Override
     public void init() {
-        follower = Constants.create(hardwareMap);
-        fieldRenderer.drawPedroPose(follower.pose());
-        clearAll(); // avoid double-registration on re-run
-        //DamDrive = new GyroMecanumDriveTrain(this,)
-        //build subsystems — order matters: pinpoint before tracker (tracker reads pinpoint.pos).
-        //servermovetest = new ServoMove();
-        //DT = new Drivetrain(this);
-        //PinOdo = new GoBildaPinpoint(this);
-        //tracker = new FieldTracker();
-        intake = new Intake(this);
-        //tracker.setPinpoint(PinOdo);
-        // Heading assist if pinpoint drops: Control-Hub IMU yaw (radians CCW+).
-        //tracker.setImuYawSupplier(() ->DT.GMDT.imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS));
-        //DT.setFieldTracker(tracker);
 
-        PosServ = new PositionalServo(this);
+        robot = new RobotMain(this);
+        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        telemetry.update();
+        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        RobotMain.DashTelemetry.update();
+        //setAutonPose();
+
+
     }
     public void PedroFollowerFieldCentricDrivetrainloop()
     {
-        if(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_RED) {
+        if(RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_RED) {
             DrivePowers powers = ManualDrive.fieldCentric(
                     -gamepad1.left_stick_y,
                     -gamepad1.left_stick_x,
                     -gamepad1.right_stick_x,
-                    follower.pose().heading()
+                    robot.follower.pose().heading()
             );
-            follower.manual(powers);
+            robot.follower.manual(powers);
         }
         else{//we are on blue alliance
             DrivePowers powers = ManualDrive.fieldCentric(
                     gamepad1.left_stick_y,
                     gamepad1.left_stick_x,
-                    gamepad1.right_stick_x,
-                    follower.pose().heading()
+                    -gamepad1.right_stick_x,
+                    robot.follower.pose().heading()
             );
-            follower.manual(powers);
+            robot.follower.manual(powers);
         }
 
 
         // relocalise button
         if (gamepad1.startWasPressed()) {
-            Pose cornerPose = new Pose(10.5, 10.5, Math.toRadians(90));
-            // On the fly Pose creation, we dont recommend this for Autonomous. Only accepts radians for heading
-            follower.setPose(cornerPose); // overrides our pose
+            Pose ResetPose = new Pose(10.5, 10.5, Math.toRadians(0));//red alliance reset pose
+            if(RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE) {ResetPose = new Pose(20.5, 20.5, Math.toRadians(180));}//blue alliance reset pose
+            robot.follower.setPose(ResetPose); // overrides our pose
         }
 
-        follower.update();
-        fieldRenderer.drawPedroPose(follower.pose());
-        Pose robotPose = follower.pose(); // returns a Pose object
-        telemetry.addData("Robot X", robotPose.x());
-        telemetry.addData("Robot Y", robotPose.y());
-        telemetry.addData("Robot Heading", Math.toDegrees(robotPose.heading()));
+        robot.follower.update();
+        robot.fieldRenderer.drawPedroPose(robot.follower.pose());
+        Pose robotPose = robot.follower.pose(); // returns a Pose object
+        RobotMain.DashTelemetry.addData("Robot X", robotPose.x());
+        RobotMain.DashTelemetry.addData("Robot Y", robotPose.y());
+        RobotMain.DashTelemetry.addData("Robot Heading", Math.toDegrees(robotPose.heading()));
     }
     @Override
     public void start() {
-        follower.setPose(SharedObjects.autonomousEndPose);
-        follower.update();
+
+    }
+
+    public void setAutonPose()
+    {
+        robot.follower.setPose(RobotMain.autonomousEndPose);
+        robot.follower.update();
+        robot.fieldRenderer.drawPedroPose(robot.follower.pose());
+        RobotMain.DashTelemetry.addData("AutonEndPose", "SetInTeleOp");
+        RobotMain.DashTelemetry.update();
     }
 
     @Override
@@ -106,7 +89,7 @@ public class JowByTeleOp extends OpMode {
     }
     public void UpdateTelemetry()
     {
-        telemetry.addData("Status", "Running");
-        telemetry.update();
+        RobotMain.DashTelemetry.addData("Status", "Running");
+        RobotMain.DashTelemetry.update();
     }
 }
