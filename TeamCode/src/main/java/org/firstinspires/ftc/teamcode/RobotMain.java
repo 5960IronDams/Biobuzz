@@ -42,7 +42,7 @@ public class RobotMain {
 
 
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
-        CommandF = new CommandFactory(follower,intake,PosServ);
+        CommandF = new CommandFactory(follower,intake,PosServ, opmode.hardwareMap);
 
         //declare what alliance we are on to BOTH dashboards
         //this is for one good final double check for the driver and co pilot

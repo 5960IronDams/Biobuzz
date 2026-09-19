@@ -1,11 +1,9 @@
 package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
-import com.acmerobotics.dashboard.config.Config;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
-import com.qualcomm.robotcore.hardware.Gamepad;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
@@ -13,11 +11,13 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 import java.util.Locale;
 
 /**
- * TEMPLATE for a single continuous-rotation servo (spinner, intake wheel, feeder...).
+ * Single continuous-rotation servo (spinner, intake wheel, feeder...).
+ *
+ * <p>Hardware only - gamepad bindings live in {@code KeyBindings} (KeyBindings drives
+ * it via {@link #setPower}; add a section there when this is wired in).
  *
  * <p>To make a new mechanism: copy this file, rename the class, change
- * {@link #SERVO_NAME} to the hardware-map name, adjust the powers and the
- * gamepad bindings in {@link #handleGamepad}. That's it.
+ * {@link #SERVO_NAME} to the hardware-map name. That's it.
  *
  * <p>Dashboard-tunable (FTC Dashboard -&gt; ContinuousServo): direction, caps,
  * hold powers, deadband. Hardware NAME change needs an OpMode restart (looked
@@ -47,11 +47,7 @@ public class ContinuousServo extends SubsystemBase {
     /** Commands under this park the servo instead of creeping. */
     public static double DEADBAND = 0.08;
 
-    /** Master switch for the default gamepad1 bindings. False in auto. */
-    public static boolean ENABLE_GAMEPAD = true;
-
     private final CRServo servo;
-    private final Gamepad gamepad1;
 
     /** Programmatic hold value when no gamepad input is held. */
     private double requested = 0;
@@ -60,17 +56,15 @@ public class ContinuousServo extends SubsystemBase {
 
     public ContinuousServo(LinearOpMode opMode) {
         servo = opMode.hardwareMap.get(CRServo.class, SERVO_NAME);
-        gamepad1 = opMode.gamepad1;
 
         servo.setDirection(REVERSED ? CRServo.Direction.REVERSE : CRServo.Direction.FORWARD);
         servo.setPower(0);
     }
 
-    // ---- Code API (auto uses these; set ENABLE_GAMEPAD false) ----
+    // ---- Code API (KeyBindings drives these; autos set a hold power and forget) ----
 
     /**
      * Hold a power (-1..1, deadbanded + capped by {@link #MAX_POWER}).
-     * Gamepad input overrides this while held; release returns to this value.
      */
     public void setPower(double power) {
         requested = cap(power);
@@ -109,25 +103,12 @@ public class ContinuousServo extends SubsystemBase {
         servo.setDirection(REVERSED ? CRServo.Direction.REVERSE : CRServo.Direction.FORWARD);
         requested = cap(requested);
 
-        double override = handleGamepad();
-        applied = (ENABLE_GAMEPAD && override != 0)
-                ? cap(override > 0 ? FWD_POWER : REV_POWER)
-                : requested;
+        applied = requested;
         servo.setPower(applied);
 
         telemetry.addData("CR " + SERVO_NAME,
                 String.format(Locale.US, "pwr %.2f req %.2f", applied, requested));
         telemetry.update();
-    }
-
-    // ---- TODO: adjust bindings per driver preference ----
-    /**
-     * @return +1 / -1 while a gamepad input is held, else 0 (falls back to requested).
-     */
-    private double handleGamepad() {
-        if (gamepad1.dpad_up) return 1;
-        if (gamepad1.dpad_down) return -1;
-        return 0;
     }
 
     private static double cap(double power) {

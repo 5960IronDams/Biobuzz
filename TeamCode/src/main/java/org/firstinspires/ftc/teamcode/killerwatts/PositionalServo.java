@@ -2,9 +2,7 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
-import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
@@ -14,11 +12,13 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 import java.util.Locale;
 
 /**
- * TEMPLATE for a single positional servo (claw, wrist, arm, diverter...).
+ * Single positional servo (claw, wrist, arm, diverter...).
+ *
+ * <p>Hardware only - gamepad bindings live in {@code KeyBindings} (X toggles presets
+ * via {@code CommandF.ServoTogglePos}, bumpers nudge via {@link #nudge}).
  *
  * <p>To make a new mechanism: copy this file, rename the class, change
- * {@link #SERVO_NAME} to the hardware-map name, tune the presets, adjust the
- * gamepad bindings in {@link #handleGamepad}. That's it.
+ * {@link #SERVO_NAME} to the hardware-map name. That's it.
  *
  * <p>Dashboard-tunable (FTC Dashboard -&gt; PositionalServo): presets, limits,
  * direction, slew. Hardware NAME change needs an OpMode restart (looked up once
@@ -56,22 +56,16 @@ public class PositionalServo extends SubsystemBase {
     /** Within this of target counts as "there" for {@link #isAtPosition}. */
     public static double TOLERANCE = 0.01;
 
-    /** Master switch for the default gamepad1 bindings. False in auto. */
-    public static boolean ENABLE_GAMEPAD = true;
-
     private final Servo servo;
-    private final Gamepad gamepad1;
     private final ElapsedTime timer = new ElapsedTime();
 
     private double target;
     private double current;
     private double lastTime = Double.NaN;
-    private boolean prevToggle = false;
 
 
     public PositionalServo(OpMode opMode) {
         servo = opMode.hardwareMap.get(Servo.class, SERVO_NAME);
-        gamepad1 = opMode.gamepad1;
 
         target = clamp(POS_A, POS_MIN, POS_MAX);
         current = target;
@@ -80,7 +74,7 @@ public class PositionalServo extends SubsystemBase {
         timer.reset();
     }
 
-    // ---- Code API (auto uses these; set ENABLE_GAMEPAD false) ----
+    // ---- Code API (KeyBindings + CommandFactory drive these; autos use them too) ----
 
     /** Command a position (0..1, clamped to MIN/MAX). Slew-limited on the way out. */
     public void setPosition(double position) {
@@ -140,10 +134,6 @@ public class PositionalServo extends SubsystemBase {
         servo.setDirection(REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD);
         target = clamp(target, Math.min(POS_MIN, POS_MAX), Math.max(POS_MIN, POS_MAX));
 
-        if (ENABLE_GAMEPAD) {
-            handleGamepad(dtSec);
-        }
-
         if (SLEW > 0) {
             double maxMove = SLEW * dtSec;
             double err = target - current;
@@ -161,20 +151,6 @@ public class PositionalServo extends SubsystemBase {
                 String.format(Locale.US, "tgt %.3f cmd %.3f %s", target, current,
                         isAtPosition() ? "AT" : "moving"));
         telemetry.update();
-    }
-
-    // ---- TODO: adjust bindings per driver preference ----
-    private void handleGamepad(double dtSec) {
-        // X: toggle between presets (edge-triggered).
-        boolean togglePressed = gamepad1.x;
-        if (togglePressed && !prevToggle) {
-            toggle();
-        }
-        prevToggle = togglePressed;
-
-        // Bumpers (hold): fine-adjust.
-        if (gamepad1.left_bumper) nudge(-NUDGE_RATE * dtSec);
-        if (gamepad1.right_bumper) nudge(NUDGE_RATE * dtSec);
     }
 
     private static double clamp(double v, double lo, double hi) {

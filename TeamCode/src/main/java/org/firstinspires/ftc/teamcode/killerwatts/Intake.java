@@ -2,22 +2,21 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 
 /**
- * Velocity-PID intake subsystem, same pattern as {@link ServoMove}.
+ * Velocity-PID intake subsystem.
  *
- * <p>Dashboard-tunable (FTC Dashboard -> Intake): set INTAKE_RPM plus the
- * RUN_USING_ENCODER PIDF gains live. Hold gamepad1 right trigger past
- * TRIGGER_THRESHOLD to spin at INTAKE_RPM, release to stop.
+ * <p>Hardware only - gamepad bindings live in {@code KeyBindings} (right trigger
+ * press/release schedules {@code CommandF.RunIntake()} / {@code CommandF.StopIntake()}).
+ * Dashboard-tunable (FTC Dashboard -> Intake): set INTAKE_RPM plus the
+ * RUN_USING_ENCODER PIDF gains live.
  *
  * <p>Construct once in the OpMode (auto-registers with SubsystemBase):
  * <pre>
@@ -41,7 +40,6 @@ public class Intake extends SubsystemBase {
     public static String MOTOR_NAME = "intake";
 
     private final DcMotorEx motor;
-    private final Gamepad gamepad1;
 
     private double lastP = Double.NaN;
     private double lastI = Double.NaN;
@@ -51,7 +49,6 @@ public class Intake extends SubsystemBase {
 
     public Intake(OpMode opMode) {
         motor = opMode.hardwareMap.get(DcMotorEx.class, MOTOR_NAME);
-        gamepad1 = opMode.gamepad1;
 
         motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
@@ -105,14 +102,6 @@ public class Intake extends SubsystemBase {
     @Override
     public void Periodic() {
         applyPids(false);
-
-        if (gamepad1.rightTriggerWasPressed()) {  //gamepad1.right_trigger > TRIGGER_THRESHOLD;
-            // Re-assert every loop so dashboard RPM edits apply live
-            // and nothing else can starve the velocity.
-            motor.setVelocity(rpmToTicksPerSec(INTAKE_RPM));
-        } else if (gamepad1.rightTriggerWasReleased()){
-            stop();
-        }
 
         telemetry.addData("Intake target RPM", INTAKE_RPM);
         telemetry.addData("Intake actual RPM", "%.1f", getActualRpm());

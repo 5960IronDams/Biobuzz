@@ -4,7 +4,6 @@ import static com.pedropathing.ivy.commands.Commands.instant;
 
 import com.pedropathing.follower.Follower;
 import com.pedropathing.ivy.Command;
-import com.pedropathing.ivy.CommandBuilder;
 import com.pedropathing.ivy.behaviors.BlockedBehavior;
 import com.pedropathing.ivy.behaviors.ConflictBehavior;
 import com.pedropathing.ivy.behaviors.EndCondition;
@@ -13,18 +12,23 @@ import com.pedropathing.ivy.behaviors.InterruptedBehavior;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 
+import com.qualcomm.robotcore.hardware.HardwareMap;
+
 import java.util.Collections;
 import java.util.Set;
+import java.util.function.DoubleSupplier;
 
 public class CommandFactory {
 
     public final Follower follower;
     public final Intake intake;
     public final PositionalServo PosServ;
-    public CommandFactory(Follower _follower, Intake _intake, PositionalServo _posServ) {
+    public final HardwareMap hardwareMap;
+    public CommandFactory(Follower _follower, Intake _intake, PositionalServo _posServ, HardwareMap _hardwareMap) {
         follower = _follower;
         intake = _intake;
         PosServ = _posServ;
+        hardwareMap = _hardwareMap;
     }
 
     public Command RunIntake() {
@@ -32,6 +36,19 @@ public class CommandFactory {
     }
     public Command StopIntake() {
         return instant(()->{intake.stop();}).requiring(intake);
+    }
+
+    /**
+     * Hold-to-aim: faces the closest AimPoints.pp target for the current alliance
+     * (Red* / Blue* filtered, re-picked every loop) while {@code forward}/{@code strafe}
+     * keep the driver on translation. Runs until cancelled - hold the left trigger
+     * to aim, compose with the flywheel via {@code .until(...)} / parallel / deadline.
+     *
+     * <p>Pass the same alliance-aware stick mapping the TeleOp uses, e.g. for Red:
+     * {@code () -> -gamepad1.left_stick_y} and {@code () -> -gamepad1.left_stick_x}.
+     */
+    public Command AimAtClosestGoal(DoubleSupplier forward, DoubleSupplier strafe) {
+        return new AimAtGoal(follower, hardwareMap, forward, strafe, () -> RobotMain.CurrentAlliance);
     }
 
     public Command ServoTogglePos = new Command() {
