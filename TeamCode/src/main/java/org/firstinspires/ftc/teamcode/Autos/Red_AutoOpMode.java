@@ -1,48 +1,41 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
-import com.pedropathing.api.PoseFactory;
-import com.qualcomm.robotcore.eventloop.opmode.Disabled;
-import com.qualcomm.robotcore.eventloop.opmode.OpMode;
-import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-
-import org.firstinspires.ftc.teamcode.IronConstants;
-import org.firstinspires.ftc.teamcode.RobotMain;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-
-import com.pedropathing.ivy.Command;
-
 import static com.pedropathing.ivy.Scheduler.schedule;
 import static com.pedropathing.ivy.commands.Commands.waitMs;
 import static com.pedropathing.ivy.groups.Groups.parallel;
 import static com.pedropathing.ivy.groups.Groups.sequential;
 import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 
-@Autonomous(name = "Red_ExampleAuto1", group = "Autos")
+import com.pedropathing.api.PoseFactory;
+import com.pedropathing.ivy.Command;
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
+
+import org.firstinspires.ftc.teamcode.IronConstants;
+import org.firstinspires.ftc.teamcode.RobotMain;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
+
+//@Autonomous(name = "Red_AutoOpMode", group = "Autos")
 @Disabled
-public class Red_ExampleAuto extends OpMode {
-    public String assetPath = "pathfiles/exampleAuto1.pp";
-    public Command autoRoutine() {
-        return sequential(
-                robot.CommandF.ServoToPos(0.5),
-                follow(robot.follower, pp.getPath("StartPoint")),
-                // Add mechanism commands here.
-                parallel(
-                        robot.CommandF.RunIntake(),
-                        follow(robot.follower, pp.getPath("StartToOffset"))
-                ),
-                robot.CommandF.StopIntake(),
-                robot.CommandF.ServoToPos(1.0),
-                waitMs(1500),
-                robot.CommandF.ServoToPos(0.0)
-
-        );
-    }
-
-    //AutoTemplateBelow
+public abstract class Red_AutoOpMode extends OpMode {
     public RobotMain robot;
     public PoseFactory poseFactory = PoseFactory.degrees();//we design for red, then mirror for blue
+    /**
+     *  <em>Must</em> be overridden inside Constructor Or Example  paths Will be Loaded!
+     */
+    public String assetPath = "pathfiles/exampleAuto1.pp";;
+    /**
+     *  The Alliance This Auton is for, Default Red! Must Be Overridden in child constructor (unless red)
+     */
     public ALLIANCE_COLOR SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
     public PPFile pp;//loads and manages our pathFiles we create in the pedro path visualizer. (visualizer.pedropathing.com)
+
+    /**
+     *  <em>Must</em> be overridden for auton to have any actions!
+     */
+    public abstract Command autoRoutine();//Must be overridden, this is the command that runs, this is your auto.
+
     @Override
     public void init() {
         //assign our auto our alliance color
@@ -79,7 +72,6 @@ public class Red_ExampleAuto extends OpMode {
 
     @Override
     public void start() {
-        //schedule(follow(follower, parkonly()));
         schedule(autoRoutine());
     }
     @Override
