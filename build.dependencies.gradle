@@ -3,6 +3,7 @@ repositories {
     google() // Needed for androidx
     maven { url = 'https://maven.brott.dev/' }
     maven { url 'https://repo.dairy.foundation/releases/'}
+    maven { url = "https://mymaven.bylazar.com/releases" }
 }
 
 dependencies {
@@ -15,16 +16,30 @@ dependencies {
     implementation 'org.firstinspires.ftc:FtcCommon:12.0.0'
     implementation 'org.firstinspires.ftc:Vision:12.0.0'
     implementation 'androidx.appcompat:appcompat:1.2.0'
-    // Dashboard 0.6.0 was built against SDK 11; exclude its transitive FTC SDK
-    // deps so it links against this project's SDK 12 classes instead. Mixing
-    // Dashboard-bundled SDK 11 OpMode classes with the app's SDK 12 classes
-    // crashes the dashboard web UI ("lockOpModesWhile(...) must not be null")
-    // and then log-spams closed-Lynx reads from getRobotStatus().
-    implementation('com.acmerobotics.dashboard:dashboard:0.6.0') {
-        exclude group: 'org.firstinspires.ftc'
-    }
+    // FTC Dashboard removed 2026-09-19: superseded by FTControl Panels
+    // (core + plugins below). Panels provides telemetry, live-tuning
+    // (@Configurable) and the Field widget; Dashboard's TelemetryPacket
+    // field overlay + @Config are replaced by PanelsFieldRenderer.
     implementation 'com.pedropathing:revhub:3.0.1'
+    // Required by TeamCode pedro/procedures/* + Tuning.java (autotune API).
+    // Must stay: commenting it out breaks compile (Procedure/Tuner not found).
     implementation 'com.pedropathing:tuning:1.0.1'
     implementation 'com.pedropathing.ivy:pedro:1.1.1'
+    // FTControl Panels, subset (2026-09-19): core + 10 plugins instead of
+    // com.bylazar:fullpanels:1.0.13 (which bundles ~15 modules incl. Themes,
+    // LimelightProxy, Docs, Lights, CameraStream). Smaller dex/assets = shorter
+    // ClassManager scan = stays under the system ANR watchdog. Versions are
+    // latest per https://mymaven.bylazar.com/releases as of 2026-09-19.
+    implementation "com.bylazar:panels:1.0.5"
+    implementation "com.bylazar:battery:1.0.3"
+    implementation "com.bylazar:capture:1.0.3"
+    implementation "com.bylazar:configurables:1.0.5"
+    // NOTE field 1.0.7 AAR ships with no web assets so widget never shows; pinned to 1.0.6.
+    implementation "com.bylazar:field:1.0.6"
+    //implementation "com.bylazar:gamepad:1.0.4"
+    implementation "com.bylazar:graph:1.0.4"
+    implementation "com.bylazar:opmodecontrol:1.0.3"
+    implementation "com.bylazar:pinger:1.0.3"
+    implementation "com.bylazar:telemetry:1.0.5"
+    implementation "com.bylazar:utils:1.0.4"
 }
-

@@ -1,7 +1,7 @@
 package org.firstinspires.ftc.teamcode.killerwatts;
 
-import com.acmerobotics.dashboard.FtcDashboard;
-import com.acmerobotics.dashboard.config.Config;
+import com.bylazar.configurables.annotations.Configurable;
+import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -16,7 +16,7 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
  *
  * <p>Hardware only - gamepad bindings live in {@code KeyBindings} (right trigger
  * press/release schedules {@code CommandF.RunIntake()} / {@code CommandF.StopIntake()}).
- * Dashboard-tunable (FTC Dashboard -> Intake): set INTAKE_RPM plus the
+ * Panels-tunable (Panels -> Intake): set INTAKE_RPM plus the
  * RUN_USING_ENCODER PIDF gains live.
  *
  * <p>Construct once in the OpMode (auto-registers with SubsystemBase):
@@ -24,12 +24,11 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
  * intake = new Intake(this);
  * </pre>
  */
-@Config
+@Configurable
 public class Intake extends SubsystemBase {
-    FtcDashboard dashboard = FtcDashboard.getInstance();
-    Telemetry telemetry = dashboard.getTelemetry();
+    Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
-    // ---- Dashboard tuning ----
+    // ---- Panels tuning ----
     public static double INTAKE_RPM = 100;
     public static double TICKS_PER_REV = 537.7; // goBILDA 5203 312rpm = 537.7; adjust to your motor
     public static double kP = 20;
@@ -104,10 +103,13 @@ public class Intake extends SubsystemBase {
     public void Periodic() {
         applyPids(false);
 
+        // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
+        // clears its line buffer on every update(), so >1 update per loop sends
+        // partial frames (flicker) and drops lines. RobotMain.flushTelemetry()
+        // does the single end-of-loop flush.
         telemetry.addData("Intake target RPM", INTAKE_RPM);
         telemetry.addData("Intake actual RPM", "%.1f", getActualRpm());
         telemetry.addData("Intake target tps", "%.1f", rpmToTicksPerSec(INTAKE_RPM));
         telemetry.addData("Intake actual tps", "%.1f", motor.getVelocity());
-        telemetry.update();
     }
 }

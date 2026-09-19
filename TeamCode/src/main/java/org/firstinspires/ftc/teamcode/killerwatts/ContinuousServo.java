@@ -1,9 +1,9 @@
 package org.firstinspires.ftc.teamcode.killerwatts;
 
-import com.acmerobotics.dashboard.FtcDashboard;
+import com.bylazar.configurables.annotations.Configurable;
+import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.CRServo;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
@@ -19,7 +19,7 @@ import java.util.Locale;
  * <p>To make a new mechanism: copy this file, rename the class, change
  * {@link #SERVO_NAME} to the hardware-map name. That's it.
  *
- * <p>Dashboard-tunable (FTC Dashboard -&gt; ContinuousServo): direction, caps,
+ * <p>Panels-tunable (Panels -&gt; ContinuousServo): direction, caps,
  * hold powers, deadband. Hardware NAME change needs an OpMode restart (looked
  * up once in the constructor); everything else applies live.
  *
@@ -29,10 +29,9 @@ import java.util.Locale;
  * </pre>
  * then drive from code with {@link #setPower} / {@link #stop}.
  */
-//@Config
+@Configurable
 public class ContinuousServo extends SubsystemBase {
-    FtcDashboard dashboard = FtcDashboard.getInstance();
-    Telemetry telemetry = dashboard.getTelemetry();
+    Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- TODO: edit these per mechanism (hardcoded, one servo per subsystem) ----
     /** Must match the RC config name. Changing it needs a restart. */
@@ -99,7 +98,7 @@ public class ContinuousServo extends SubsystemBase {
 
     @Override
     public void Periodic() {
-        // Live-tune support: Dashboard edits apply without restart.
+        // Live-tune support: Panels edits apply without restart.
         servo.setDirection(REVERSED ? CRServo.Direction.REVERSE : CRServo.Direction.FORWARD);
         requested = cap(requested);
 
@@ -108,7 +107,7 @@ public class ContinuousServo extends SubsystemBase {
 
         telemetry.addData("CR " + SERVO_NAME,
                 String.format(Locale.US, "pwr %.2f req %.2f", applied, requested));
-        telemetry.update();
+        // NOTE: addData only, no update() here. See Intake.Periodic for why.
     }
 
     private static double cap(double power) {

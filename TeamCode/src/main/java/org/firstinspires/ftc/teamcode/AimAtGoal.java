@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode;
 
-import com.acmerobotics.dashboard.config.Config;
+import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.follower.Follower;
@@ -31,7 +31,7 @@ import java.util.function.Supplier;
  * the follower pose) is picked fresh every loop, so the lock follows you
  * around the field.
  *
- * <p>Only the turn axis is PID-controlled (tunable below via FTC Dashboard
+ * <p>Only the turn axis is PID-controlled (tunable below via Panels
  * -&gt; AimAtGoal). Forward/strafe come from the supplied sticks, so the
  * driver can still translate while aiming.
  *
@@ -55,10 +55,10 @@ import java.util.function.Supplier;
  *     robot.CommandF.RunIntake()));
  * </pre>
  */
-@Config
+@Configurable
 public class AimAtGoal implements Command {
 
-    // ---- Dashboard-tunable heading PID (FTC Dashboard -> AimAtGoal) ----
+    // ---- Panels-tunable heading PID (Panels -> AimAtGoal) ----
     /** Proportional gain on heading error (radians) -> turn power. */
     public static double kP = 2.5;
     /** Integral gain (anti-windup via {@link #I_MAX}). */

@@ -2,11 +2,16 @@ howdy,
 
 to debug this robot, Connect to the 5960-RC wifi
 Status page : http://192.168.43.1:8080/?page=connection.html&pop=true
-DashboardV1 : http://192.168.43.1:8080/dash (click field in the top right)
+PanelsDashboard : http://192.168.43.1:8080 (Telemetry + Field + Configurables tabs)
 
 We use Pedro pathing for pathing and ivy for commands
 Currently planning solverslib installion for Linear interpolation tables
 and Command Controller for triggers
+
+Live tuning: public static fields on @Configurable classes
+(Intake, PositionalServo, AimAtGoal, PanelsFieldRenderer) are editable
+in Panels > Configurables while the OpMode runs. Field pose comes from
+PanelsFieldRenderer (Panels > Field, BIOBUZZ background).
 
 Creating Autos:
 WE ONLY CREATE RED SIDE AUTO! blue will be automatically created when you make the Blue link and change the extends below!

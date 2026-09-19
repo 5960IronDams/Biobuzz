@@ -30,6 +30,7 @@ public class JowByTeleOp extends OpMode {
         robot.RobotRunPeriodic();
         keys.update();
         UpdateTelemetry();
+        robot.flushTelemetry(); // single flush LAST — see RobotMain.flushTelemetry()
     }
     @Override
     public void stop() {
@@ -51,7 +52,7 @@ public class JowByTeleOp extends OpMode {
 
     public void UpdateTelemetry()
     {
+        // addData only — flushed once via flushTelemetry() at end of loop().
         RobotMain.DashTelemetry.addData("Status", "Running");
-        RobotMain.DashTelemetry.update();
     }
 }

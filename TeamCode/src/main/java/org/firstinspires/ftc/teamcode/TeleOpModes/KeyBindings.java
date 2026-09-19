@@ -37,7 +37,7 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
  * it applies the follower powers (aim PID output from the scheduler, or fresh stick
  * powers) with a trailing {@code follower.update()} + field draw.
  *
- * <p>Subsystems are hardware-only: they expose Dashboard-tunable state plus command-safe
+ * <p>Subsystems are hardware-only: they expose Panels-tunable state plus command-safe
  * APIs and never touch a gamepad. Every button/stick lives here. Gamepad2 is currently
  * unbound - add operator bindings in {@link #handleOperator}.
  */
@@ -215,6 +215,7 @@ public class KeyBindings {
     // ------------------------------------------------------------------ telemetry
 
     private void reportTelemetry() {
+        // addData only — flushed once via robot.flushTelemetry() at end of loop().
         RobotMain.DashTelemetry.addData("Drive mode",
                 aimCmd != null ? "AIM (LT held, sticks = translate)" : "manual field-centric");
         if (robot.follower != null && robot.follower.pose() != null) {

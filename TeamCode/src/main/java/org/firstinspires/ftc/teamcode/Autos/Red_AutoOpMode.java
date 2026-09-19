@@ -66,6 +66,20 @@ public abstract class Red_AutoOpMode extends OpMode {
         //update telemetry and draw where our robot is on the field.
         UpdateTelemetry();
         RobotMain.DashTelemetry.addData("AutonEndPose", "Unsaved");
+        robot.flushTelemetry(); // init() runs once — flush here is correct
+    }
+
+    @Override
+    public void init_loop() {
+        // init_loop runs every cycle while sitting on the init screen.
+        // Re-assert the start pose each time so the Panels Field always shows
+        // THIS auto's start — even if another auto was previewed before,
+        // or the localizer drifted while waiting.
+        if (robot == null || pp == null || robot.follower == null) return;
+        robot.follower.setPose(pp.getStartPose());
+        robot.follower.update();
+        UpdateTelemetry();
+        robot.flushTelemetry();
     }
 
 
@@ -85,7 +99,7 @@ public abstract class Red_AutoOpMode extends OpMode {
     public void loop() {
         robot.RobotRunPeriodic();
         UpdateTelemetry();
-
+        robot.flushTelemetry(); // single flush LAST — see RobotMain.flushTelemetry()
     }
 
 
@@ -97,7 +111,13 @@ public abstract class Red_AutoOpMode extends OpMode {
         telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
         telemetry.addData("Follower Mode", robot.follower.mode());
         telemetry.update();
-        // Draw the Pedro pose on the dashboard field overlay (corner-origin -> field frame
+        // Mirror to Panels + draw (addData only — caller flushes once at the end).
+        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        RobotMain.DashTelemetry.addData("X", robot.follower.pose().x());
+        RobotMain.DashTelemetry.addData("Y", robot.follower.pose().y());
+        RobotMain.DashTelemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
+        RobotMain.DashTelemetry.addData("Follower Mode", robot.follower.mode());
+        // Draw the Pedro pose on the Panels field widget (Pedro-native;
         // conversion handled inside the renderer).
         if (robot.follower != null && robot.follower.pose() != null) {
             robot.fieldRenderer.drawPedroPose(robot.follower.pose());

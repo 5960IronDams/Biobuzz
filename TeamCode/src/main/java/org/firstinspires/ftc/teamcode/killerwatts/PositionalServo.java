@@ -2,8 +2,8 @@ package org.firstinspires.ftc.teamcode.killerwatts;
 
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.killaUtils.clamp;
 
-import com.acmerobotics.dashboard.FtcDashboard;
-import com.acmerobotics.dashboard.config.Config;
+import com.bylazar.configurables.annotations.Configurable;
+import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -23,7 +23,7 @@ import java.util.Locale;
  * <p>To make a new mechanism: copy this file, rename the class, change
  * add the MotorName to constants then Get it from the HardwareMap. That's it.
  *
- * <p>Dashboard-tunable (FTC Dashboard -&gt; PositionalServo): presets, limits,
+ * <p>Panels-tunable (Panels -&gt; PositionalServo): presets, limits,
  * direction, slew. Hardware NAME change needs an OpMode restart (looked up once
  * in the constructor); everything else applies live.
  *
@@ -33,10 +33,9 @@ import java.util.Locale;
  * </pre>
  * then drive from code with {@link #setPosition}, {@link #toggle}, etc.
  */
-@Config
+@Configurable
 public class PositionalServo extends SubsystemBase {
-    FtcDashboard dashboard = FtcDashboard.getInstance();
-    Telemetry telemetry = dashboard.getTelemetry();
+    Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- TODO: edit these per mechanism (hardcoded, one servo per subsystem) ----
     /** Must match the RC config name. Changing it needs a restart. */
@@ -128,10 +127,10 @@ public class PositionalServo extends SubsystemBase {
     public void Periodic() {
         double now = timer.seconds();
         double rawDt = Double.isNaN(lastTime) ? 0.02 : Math.max(0, now - lastTime);
-        double dtSec = Math.min(rawDt, 0.25); // Dashboard pause shouldn't slingshot servos
+        double dtSec = Math.min(rawDt, 0.25); // Panels pause shouldn't slingshot servos
         lastTime = now;
 
-        // Live-tune support: Dashboard edits apply without restart.
+        // Live-tune support: Panels edits apply without restart.
         // NOTE: no scaleRange() on purpose -- positions are absolute 0..1 and
         // software-clamped, so scaleRange would double-map them.
         servo.setDirection(REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD);
@@ -153,7 +152,7 @@ public class PositionalServo extends SubsystemBase {
         telemetry.addData("Pos " + Servoname,
                 String.format(Locale.US, "tgt %.3f cmd %.3f %s", target, current,
                         isAtPosition() ? "AT" : "moving"));
-        telemetry.update();
+        // NOTE: addData only, no update() here. See Intake.Periodic for why.
     }
 
 
