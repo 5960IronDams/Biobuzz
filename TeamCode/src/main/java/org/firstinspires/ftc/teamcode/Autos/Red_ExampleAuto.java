@@ -4,7 +4,7 @@ import com.pedropathing.api.PoseFactory;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 
-import org.firstinspires.ftc.teamcode.GameConst;
+import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
@@ -44,7 +44,7 @@ public class Red_ExampleAuto extends OpMode {
             // works, but Red 60 -> Blue 300 instead of 240, Red 0 -> Blue 0
             // instead of 180). blueRotationFactory maps h -> h + PI, correct for
             // all headings. See PPFile.blueRotationFactory for the full analysis.
-            poseFactory = PPFile.blueRotationFactory(GameConst.FieldCenter.x(), GameConst.FieldCenter.y());
+            poseFactory = PPFile.blueRotationFactory(IronConstants.FieldCenter.x(), IronConstants.FieldCenter.y());
         }
         // after poseFactory is configured for Red/Blue load the pathfile:
         try {

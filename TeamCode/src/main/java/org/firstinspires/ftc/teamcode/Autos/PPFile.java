@@ -22,7 +22,7 @@ import java.util.Map;
 /**
  * Loads a Pedro Pathing Visualizer {@code .pp} file (JSON) and exposes its points and paths.
  *
- * <p>Indexing convention (as requested):
+ * <p>Indexing convention:
  * <ul>
  *   <li>{@code getPoint(0)} returns the file's {@code startPoint}.</li>
  *   <li>{@code getPoint(i)} for {@code i > 0} returns the end point of the
@@ -56,13 +56,12 @@ import java.util.Map;
  * </ul>
  *
  * <p>All {@link Pose}s are created through the supplied {@link PoseFactory} exactly once,
- * so a mirrored factory (Blue alliance) automatically mirrors both the poses <em>and</em>
- * the Bezier control points. Pass the same {@code poseFactory} you already use in the auto
- * (e.g. {@code PoseFactory.degrees().mirrorY(...).mirrorX(...)} for Blue).
+ * so the Blue factory automatically mirrors both the poses <em>and</em>
+ * the Bezier control points. Pass the same {@code poseFactory} used in the auto
+ * (e.g. {@code PPFile.blueRotationFactory(...)} for Blue).
  *
- * <p>Note: the {@code .pp} files currently live next to the autos in
- * {@code Autos/PathFiles/}, which is <b>not</b> packaged onto the robot. Copy the file you
- * need into {@code TeamCode/src/main/assets/pathfiles/} and load it with
+ * <p>Note: the {@code .pp} files MUST BE Copied
+ *  into {@code TeamCode/src/main/assets/pathfiles/} and load it with
  * {@link #fromAsset(HardwareMap, String, PoseFactory)}, e.g. asset path
  * {@code "pathfiles/exampleAuto1.pp"}.
  */
@@ -114,57 +113,21 @@ public class PPFile {
      * Builds the Blue-alliance factory for a 180-degree rotationally symmetric
      * field (Red design rotated half a turn around {@code (centerX, centerY)}).
      *
-     * <p>Why this exists instead of {@code mirrorY().mirrorX()}: Pedro's
-     * {@code mirrorX} negates the heading ({@code h -> -h}) and {@code mirrorY}
-     * leaves it unchanged, so the chained factory maps heading {@code h -> -h}.
-     * That matches a 180-degree rotation <em>only</em> for {@code +/-90} deg
-     * (e.g. Red 90 -> Blue 270, correct). For anything else it is wrong: Red 60
-     * -> Blue 300 (should be 240), Red 0 -> Blue 0 (should be 180). Positions
-     * ({@code x -> 2*cx - x}, {@code y -> 2*cy - y}) are a true point reflection
-     * either way, so XY looks right on Blue while headings do not.
+     * <p>Thin wrapper over Pedro 3.0.1's built-in
+     * {@code PoseFactory.mirrorAroundPoint(cx, cy)}, which maps positions
+     * ({@code x -> 2*cx - x}, {@code y -> 2*cy - y}) and headings
+     * ({@code h -> h + PI}) — a true 180-degree rotation, correct for all
+     * headings. (Do NOT hand-roll this as {@code mirrorY().mirrorX()}: that
+     * chain maps heading {@code h -> -h}, which only coincides with rotation
+     * for {@code +/-90} deg.)
      *
-     * <p>Use this in the auto instead, e.g.
+     * <p>Use this in the auto, e.g.
      * {@code PPFile.blueRotationFactory(GameConst.FieldCenter.x(),
-     * GameConst.FieldCenter.y())}. The {@code mapHeading} lambda operates in
-     * radians (the factory stores radians internally; {@code of()} converts the
-     * degrees you pass it before the ops run).
+     * GameConst.FieldCenter.y())}.
      */
     public static PoseFactory blueRotationFactory(double centerX, double centerY) {
-        return PoseFactory.degrees()
-                .mapX(x -> 2 * centerX - x)
-                .mapY(y -> 2 * centerY - y)
-                .mapHeading(h -> h + Math.PI);
+        return PoseFactory.degrees().mirrorAroundPoint(centerX, centerY);
     }
-
-    /**
-     * Straight segments are built as 3-point quadratic Beziers
-     * ({@code start, midpoint, end}) instead of {@code Line}s. The midpoint
-     * Bezier is geometrically <em>identical</em> to the line
-     * ({@code B(t) = P0*(1-t) + P2*t}), so XY tracking is unchanged — but it
-     * keeps us on Pedro's native heading interpolators for everything.
-     *
-     * <p>Why: Pedro 3.0.0's {@code Interpolator.linear} scales by
-     * {@code Curve.pathCompletion(t)}, and {@code Line} inherits the default
-     * {@code pathCompletion(t) == 1 - t} (remaining-distance based), so native
-     * {@code .linear(s, e)} runs <em>backwards</em> on straight segments
-     * ({@code heading(0) == e}, verified empirically against core-3.0.0) while
-     * {@code BezierCurve} overrides it with a true arc-length fraction and runs
-     * correctly. {@code PiecewiseInterpolator} keys off the same completion, so
-     * the {@code endT} variant is broken for lines too. Building straights as
-     * Beziers makes native {@code .linear(s, e)} / {@code .linear(s, e, endT)}
-     * correct for every segment type with no custom interpolator and no
-     * arg-swapping. If Pedro fixes {@code Line.pathCompletion}, this stays
-     * correct as-is.
-     *
-     * <p>NOTE on the visualizer {@code reverse} checkbox: it means "drive this
-     * segment backwards", it does <em>not</em> add 180 deg to a linear heading
-     * (exported code keeps {@code setLinearHeadingInterpolation(start, end)}
-     * and adds a separate drive-direction flag). Core 3.0.0 has no
-     * drive-direction flag on {@link Path} — {@code reverse} only exists as
-     * {@code reverseTangent()} — so {@code reverse} is honored for tangential
-     * headings and deliberately <em>ignored</em> for linear/constant/facingPoint
-     * (adding PI facest the robot backwards and causes the 180 deg pre-spin).
-     */
 
     // ------------------------------------------------------------------ loading
 
@@ -477,10 +440,17 @@ public class PPFile {
     /**
      * Returns the path from {@code getPoint(i)} to {@code getPoint(i + 1)} using the
      * heading mode stored in the file. Everything here uses Pedro's native
-     * heading interpolators ({@code .linear(s, e)}, {@code .constant(e)},
-     * {@code .tangent()}); straight segments are built as midpoint Beziers so
-     * native {@code .linear(s, e)} runs the right direction (see the note above
-     * on why {@code Line} can't be used with it in 3.0.0).
+     * heading interpolators in canonical order ({@code .linear(start, end)},
+     * {@code .constant(end)}, {@code .tangent()}).
+     *
+     * <p>NOTE on the visualizer {@code reverse} checkbox: it means "drive this
+     * segment backwards", it does <em>not</em> add 180 deg to a linear heading
+     * (exported code keeps {@code setLinearHeadingInterpolation(start, end)}
+     * and adds a separate drive-direction flag). Core has no drive-direction
+     * flag on {@link Path} — {@code reverse} only exists as
+     * {@code reverseTangent()} — so {@code reverse} is honored for tangential
+     * headings and deliberately <em>ignored</em> for linear/constant/facingPoint
+     * (adding PI faces the robot backwards and causes a 180 deg pre-spin).
      */
     public Path getPath(int i) {
         Segment seg = segments.get(i);
@@ -489,12 +459,7 @@ public class PPFile {
 
         Path base;
         if (seg.controls.isEmpty()) {
-            // Straight: midpoint quadratic Bezier, geometrically identical to the
-            // line (B(t) = P0*(1-t) + P2*t), so native .linear runs correctly.
-            Vector2D mid = Vector2D.cartesian(
-                    (seg.startPos.x() + seg.endPos.x()) / 2.0,
-                    (seg.startPos.y() + seg.endPos.y()) / 2.0);
-            base = Paths.curve(seg.startPos, mid, seg.endPos);
+            base = Paths.line(s, e);
         } else {
             Vector2D[] pts = new Vector2D[seg.controls.size() + 2];
             pts[0] = seg.startPos;

@@ -15,9 +15,16 @@ dependencies {
     implementation 'org.firstinspires.ftc:FtcCommon:12.0.0'
     implementation 'org.firstinspires.ftc:Vision:12.0.0'
     implementation 'androidx.appcompat:appcompat:1.2.0'
-    implementation 'com.acmerobotics.dashboard:dashboard:0.6.0'
-    implementation 'com.pedropathing:revhub:3.0.0'
-    implementation 'com.pedropathing:tuning:1.0.0'
+    // Dashboard 0.6.0 was built against SDK 11; exclude its transitive FTC SDK
+    // deps so it links against this project's SDK 12 classes instead. Mixing
+    // Dashboard-bundled SDK 11 OpMode classes with the app's SDK 12 classes
+    // crashes the dashboard web UI ("lockOpModesWhile(...) must not be null")
+    // and then log-spams closed-Lynx reads from getRobotStatus().
+    implementation('com.acmerobotics.dashboard:dashboard:0.6.0') {
+        exclude group: 'org.firstinspires.ftc'
+    }
+    implementation 'com.pedropathing:revhub:3.0.1'
+    implementation 'com.pedropathing:tuning:1.0.1'
     implementation 'com.pedropathing.ivy:pedro:1.1.1'
 }
 

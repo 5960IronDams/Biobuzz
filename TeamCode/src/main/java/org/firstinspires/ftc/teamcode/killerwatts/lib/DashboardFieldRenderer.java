@@ -155,7 +155,7 @@ public class DashboardFieldRenderer {
                 .strokeLine(legX, legY, legX, legY + AXIS_LEGEND_LEN_IN)
                 .setFill("green")
                 .fillText("Y axis", legX + 5, legY + AXIS_LEGEND_LEN_IN / 2,
-                        "8px serif", 0, false)
+                        "8px serif", 90, false)
                 // Fused robot pose (rectangle + heading tick, no text label).
                 .setStroke(stroke)
                 .setFill(fill)

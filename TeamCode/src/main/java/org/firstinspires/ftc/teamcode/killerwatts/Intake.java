@@ -8,6 +8,7 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 
 /**
@@ -37,7 +38,7 @@ public class Intake extends SubsystemBase {
     public static double kF = 12;
     public static boolean MOTOR_REVERSED = true;
     public static double TRIGGER_THRESHOLD = 0.2;
-    public static String MOTOR_NAME = "intake";
+
 
     private final DcMotorEx motor;
 
@@ -48,7 +49,7 @@ public class Intake extends SubsystemBase {
     private boolean lastReversed = false;
 
     public Intake(OpMode opMode) {
-        motor = opMode.hardwareMap.get(DcMotorEx.class, MOTOR_NAME);
+        motor = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.IntakeMotorName);
 
         motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);

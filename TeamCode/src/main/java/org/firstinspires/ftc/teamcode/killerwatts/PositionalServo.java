@@ -1,12 +1,15 @@
 package org.firstinspires.ftc.teamcode.killerwatts;
 
+import static org.firstinspires.ftc.teamcode.killerwatts.lib.killaUtils.clamp;
+
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
-
+import org.firstinspires.ftc.teamcode.killerwatts.lib.killaUtils;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
 
 import java.util.Locale;
@@ -14,11 +17,11 @@ import java.util.Locale;
 /**
  * Single positional servo (claw, wrist, arm, diverter...).
  *
- * <p>Hardware only - gamepad bindings live in {@code KeyBindings} (X toggles presets
- * via {@code CommandF.ServoTogglePos}, bumpers nudge via {@link #nudge}).
+ * <p>Hardware only in this class - gamepad bindings live in {@code KeyBindings}
+ * to use a gamepad inputs and control this mechanism add them there. ).
  *
  * <p>To make a new mechanism: copy this file, rename the class, change
- * {@link #SERVO_NAME} to the hardware-map name. That's it.
+ * add the MotorName to constants then Get it from the HardwareMap. That's it.
  *
  * <p>Dashboard-tunable (FTC Dashboard -&gt; PositionalServo): presets, limits,
  * direction, slew. Hardware NAME change needs an OpMode restart (looked up once
@@ -37,7 +40,7 @@ public class PositionalServo extends SubsystemBase {
 
     // ---- TODO: edit these per mechanism (hardcoded, one servo per subsystem) ----
     /** Must match the RC config name. Changing it needs a restart. */
-    public static String SERVO_NAME = "eeerrr";
+    public String Servoname = IronConstants.FrontServoName;
     /** Preset A, e.g. closed / stowed. */
     public static double POS_A = 0.15;
     /** Preset B, e.g. open / scored. */
@@ -65,7 +68,7 @@ public class PositionalServo extends SubsystemBase {
 
 
     public PositionalServo(OpMode opMode) {
-        servo = opMode.hardwareMap.get(Servo.class, SERVO_NAME);
+        servo = opMode.hardwareMap.get(Servo.class, Servoname);
 
         target = clamp(POS_A, POS_MIN, POS_MAX);
         current = target;
@@ -147,13 +150,11 @@ public class PositionalServo extends SubsystemBase {
         }
         servo.setPosition(current);
 
-        telemetry.addData("Pos " + SERVO_NAME,
+        telemetry.addData("Pos " + Servoname,
                 String.format(Locale.US, "tgt %.3f cmd %.3f %s", target, current,
                         isAtPosition() ? "AT" : "moving"));
         telemetry.update();
     }
 
-    private static double clamp(double v, double lo, double hi) {
-        return Math.min(hi, Math.max(lo, v));
-    }
+
 }
