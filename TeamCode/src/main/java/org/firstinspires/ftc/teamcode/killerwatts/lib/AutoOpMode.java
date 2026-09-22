@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.Autos;
+package org.firstinspires.ftc.teamcode.killerwatts.lib;
 
 import static com.pedropathing.ivy.Scheduler.schedule;
 
@@ -10,11 +10,10 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.killerwatts.PPFile;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
 //@Autonomous(name = "Red_AutoOpMode", group = "Autos")
 @Disabled
-public abstract class Red_AutoOpMode extends OpMode {
+public abstract class AutoOpMode extends OpMode {
     public RobotMain robot;
     public PoseFactory poseFactory = PoseFactory.degrees();//we design for red, then mirror for blue
     /**

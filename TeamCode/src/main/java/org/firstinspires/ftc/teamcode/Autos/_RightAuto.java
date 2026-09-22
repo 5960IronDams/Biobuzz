@@ -6,19 +6,15 @@ import static com.pedropathing.ivy.groups.Groups.parallel;
 import static com.pedropathing.ivy.groups.Groups.sequential;
 import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 
-import com.pedropathing.api.PoseFactory;
 import com.pedropathing.ivy.Command;
-import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
-import org.firstinspires.ftc.teamcode.IronConstants;
-import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.AutoOpMode;
 
-@Autonomous(name = "Red_RightAuto",group = "Autos")
-public class Red_RightAuto extends Red_AutoOpMode {
+//@Autonomous(name = "Red_RightAuto",group = "Autos")
+public class _RightAuto extends AutoOpMode {
 
-    public Red_RightAuto()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
+    public _RightAuto()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
     {
         super.assetPath = "pathfiles/exampleAuto1.pp";//this must be set to alliance this auton is made for
         super.SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
@@ -26,13 +22,16 @@ public class Red_RightAuto extends Red_AutoOpMode {
     @Override
     public Command autoRoutine() {
         return sequential(
+                //fire or whatever.
                 robot.CommandF.ServoToPos(0.5),
-                follow(robot.follower, pp.getPath("StartPoint")),
-                // Add mechanism commands here.
+                //move out of way
+                follow(robot.follower, pp.getPathByLineName("StartToOffset")),
+                // move to next location
                 parallel(
                         robot.CommandF.RunIntake(),
-                        follow(robot.follower, pp.getPath("StartToOffset"))
+                        follow(robot.follower, pp.getPathByLineName("OffsetToPark"))
                 ),
+                //stop intakeing and other functions.
                 robot.CommandF.StopIntake(),
                 robot.CommandF.ServoToPos(1.0),
                 waitMs(1500),
