@@ -8,4 +8,9 @@ public class IronConstants {
 
     public static final String IntakeMotorName = "intake";
     public static final String FrontServoName = "eeerrr";
+
+    //TODO: Test todo.
+    //TODO: panels custom to make website open fast also make 1.0.7 biobuzz version work.
+    //todo: try ftclib/Dairy/solverslib
+    //todo: commandgamepad? triggers? linear-interpolation table.
 }

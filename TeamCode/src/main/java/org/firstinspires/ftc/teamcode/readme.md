@@ -20,3 +20,6 @@ Copy the example auto rename (example : Red_YourNewAuto) and tell PPFile to load
 Then double check in init that your start position is loaded
 then edit the autoroutine() to your liking. this is what does all the movements and actions.
 copy the Blue_ example auto and change it from "extends Red_exampleAuto" to "extends Red_YourNewAuto"
+
+//TODO: check this
+

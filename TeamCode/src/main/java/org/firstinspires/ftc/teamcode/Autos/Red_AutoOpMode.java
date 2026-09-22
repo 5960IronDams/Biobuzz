@@ -1,19 +1,15 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
 import static com.pedropathing.ivy.Scheduler.schedule;
-import static com.pedropathing.ivy.commands.Commands.waitMs;
-import static com.pedropathing.ivy.groups.Groups.parallel;
-import static com.pedropathing.ivy.groups.Groups.sequential;
-import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.ivy.Command;
-import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
+import org.firstinspires.ftc.teamcode.killerwatts.PPFile;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
 //@Autonomous(name = "Red_AutoOpMode", group = "Autos")

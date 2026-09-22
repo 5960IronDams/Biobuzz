@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.Autos;
+package org.firstinspires.ftc.teamcode.killerwatts;
 
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.api.Paths;
