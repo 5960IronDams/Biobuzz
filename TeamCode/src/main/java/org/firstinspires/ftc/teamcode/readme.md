@@ -3,6 +3,7 @@ howdy,
 to debug this robot, Connect to the 5960-RC wifi
 Status page : http://192.168.43.1:8080/?page=connection.html&pop=true
 PanelsDashboard : http://192.168.43.1:8080 (Telemetry + Field + Configurables tabs)
+Pedro tuning : http://192.168.43.1:10158/tuner/PRPxCZ
 
 We use Pedro pathing for pathing and ivy for commands
 Currently planning solverslib installion for Linear interpolation tables

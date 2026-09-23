@@ -11,6 +11,8 @@ import com.pedropathing.math.Velocity;
 import com.pedropathing.utils.Angle;
 
 import org.firstinspires.ftc.teamcode.RobotMain;
+import org.firstinspires.ftc.teamcode.killerwatts.TipCompensator;
+import org.firstinspires.ftc.teamcode.killerwatts.TipSanityFilter;
 import org.firstinspires.ftc.teamcode.killerwatts.Vision;
 
 /**
@@ -83,6 +85,36 @@ public class VisionFusion {
     /** Clamp on total pipeline latency used for back-dating, ms. */
     public static double MAX_LATENCY_MS = 250.0;
 
+    // ================= moving-cluster / attitude gates (BIOBUZZ) =================
+    // BIOBUZZ localizes off the 4 hive-cell clusters (IDs 30-45), whose REST pose
+    // is 30deg tipped. Stage 1 (TipSanityFilter, always on) drops solves far from
+    // the rest signature: off-rest cells, underground/floating height, teleports.
+    // Stage 2 (TipCompensator, DISABLED until field-tested) tries to rescue
+    // off-rest solves by rest projection; see that class for the validation plan.
+    // REJECT_CLUSTER_ONLY stays as a big red switch: true = Pinpoint-only whenever
+    // ONLY cluster tags are visible (conservative). False = let cluster solves
+    // through the sanity filter like any other solve (your call: you WILL localize
+    // off them — leave false once the fmap + compensator check out on-field).
+    /**
+     * Only-cluster-visible switch (default false = FUSE cluster solves, filtered).
+     * True = reject cluster-only solves outright (Pinpoint-only fallback).
+     * You asked to localize off the clusters, so this ships false; Stage 1
+     * still drops the tipped ones, Stage 2 (disabled) will rescue them later.
+     */
+    public static boolean REJECT_CLUSTER_ONLY = false;
+    /**
+     * Backstop: |botpose pitch/roll| beyond this (deg) means off-rest.
+     * GOOD (cell at rest, map matching) reports flat ~= 0 — the 30deg lives in
+     * the .fmap entries, not in the solve. Mirrors TipSanityFilter (the real
+     * gate); kept here so Panels shows one story. 0 disables.
+     */
+    public static double MAX_BOT_PITCH_DEG = 12.0;
+    /** Same for |botpose roll|, degrees. 0 disables. */
+    public static double MAX_BOT_ROLL_DEG = 12.0;
+    /** Reject when reported camera height is outside [min, max], meters. */
+    public static double BOT_Z_MIN_M = 0.05;
+    public static double BOT_Z_MAX_M = 0.60;
+
     // ================= base trust (variances, NOT stddevs) =================
     // R is digested as Matrix.diag(x, y, heading). These match
     // Constants.fusionDefaultMeasurementNoise(); the per-reading scaler below
@@ -138,12 +170,15 @@ public class VisionFusion {
     private double lastRx = BASE_R_XY, lastRh = BASE_R_HEADING;
     private Pose lastVision = null;
     private boolean lastMt2 = false;
+    private boolean lastVisionClusterOnly = false;
     private int lastTags = 0;
     private double lastResidualIn = Double.NaN;
 
     private final Follower follower;
     @Nullable
     private final Vision vision;
+    /** Stage 1 sanity filter (stateless except last-accepted teleport check). */
+    private final TipSanityFilter tipFilter = new TipSanityFilter();
 
     public VisionFusion(Follower follower, @Nullable Vision vision) {
         if (follower == null) throw new IllegalArgumentException("VisionFusion needs a non-null Follower");
@@ -206,6 +241,7 @@ public class VisionFusion {
         }
         lastVision = rd.pedroPose;
         lastMt2 = rd.isMt2;
+        lastVisionClusterOnly = rd.clusterOnly;
         lastTags = rd.tagCount;
 
         // ---- absolute reject gates (garbage only) ----
@@ -220,17 +256,86 @@ public class VisionFusion {
             report();
             return;
         }
+        // ---- Stage 1: rest-signature sanity (TipSanityFilter, always on) ----
+        // Drops off-rest / underground / teleporting solves BEFORE the old inline
+        // gates. The inline gates below stay as a backstop (same thresholds, so
+        // Panels shows one consistent story either way).
+        TipSanityFilter.Decision sanity;
+        try {
+            sanity = tipFilter.filter(rd);
+        } catch (Exception e) {
+            lastStatus = "sanity-exception";
+            report();
+            return;
+        }
+        if (sanity == null || !sanity.accepted()) {
+            lastStatus = sanity == null ? "reject-sanity"
+                    : "reject-" + sanity.verdict.name().toLowerCase().replace("reject_", "");
+            report();
+            return;
+        }
+        // ---- Stage 2 (DISABLED): rest-projection rescue ----
+        // TipCompensator.ENABLED ships false. When you enable it after the
+        // validation plan in that class, accepted-but-deviated solves get
+        // projected back to rest here and fused with inflated R.
+        Pose measPose = rd.pedroPose;
+        double compRScale = 1.0;
+        if (TipCompensator.ENABLED) {
+            try {
+                TipCompensator.Result comp = TipCompensator.compensate(
+                        rd.pedroPose, rd.botPitchDeg, rd.botRollDeg, rd.botZMeters);
+                if (comp == null) {
+                    lastStatus = "reject-uncompensatable";
+                    report();
+                    return;
+                }
+                measPose = comp.pose;
+                compRScale = Math.max(comp.rScale, 1.0);
+                lastStatus = "compensated";
+            } catch (Exception e) {
+                lastStatus = "compensate-exception";
+                report();
+                return;
+            }
+        }
+        // BIOBUZZ cluster-only switch: conservative Pinpoint-only fallback.
+        // Ships false (you localize off the clusters); Stage 1 still drops tipped ones.
+        if (REJECT_CLUSTER_ONLY && rd.clusterOnly) {
+            lastStatus = "reject-cluster";
+            report();
+            return;
+        }
+        // Rest-signature backstop: GOOD (cell at rest) reports flat ~= 0 because
+        // the 30deg lives in the .fmap entries. Off-rest cells tilt the solve.
+        // Mirrors TipSanityFilter (the real gate) — see note on the tunables.
+        if (MAX_BOT_PITCH_DEG > 0 && Math.abs(rd.botPitchDeg) > MAX_BOT_PITCH_DEG) {
+            lastStatus = "reject-tilt";
+            report();
+            return;
+        }
+        if (MAX_BOT_ROLL_DEG > 0 && Math.abs(rd.botRollDeg) > MAX_BOT_ROLL_DEG) {
+            lastStatus = "reject-tilt";
+            report();
+            return;
+        }
+        if (!(rd.botZMeters >= BOT_Z_MIN_M && rd.botZMeters <= BOT_Z_MAX_M)) {
+            lastStatus = "reject-height";
+            report();
+            return;
+        }
         if (rd.pedroPose.x() < -FIELD_MARGIN_IN || rd.pedroPose.x() > 144.0 + FIELD_MARGIN_IN
                 || rd.pedroPose.y() < -FIELD_MARGIN_IN || rd.pedroPose.y() > 144.0 + FIELD_MARGIN_IN) {
             lastStatus = "reject-off-field";
             report();
             return;
         }
-        double dx = rd.pedroPose.x() - fused.x();
-        double dy = rd.pedroPose.y() - fused.y();
+        // Residuals are computed against the FUSED pose but the MEASUREMENT is
+        // measPose (== raw now; compensated once Stage 2 is enabled/tested).
+        double dx = measPose.x() - fused.x();
+        double dy = measPose.y() - fused.y();
         double dxy = Math.hypot(dx, dy);
         double dhDeg = Math.abs(Math.toDegrees(
-                Angle.normalizeSigned(rd.pedroPose.heading() - fused.heading())));
+                Angle.normalizeSigned(measPose.heading() - fused.heading())));
         lastResidualIn = dxy;
         if (dxy > MAX_JUMP_XY_IN && dhDeg > MAX_JUMP_HEADING_DEG) {
             lastStatus = "reject-jump";
@@ -303,6 +408,9 @@ public class VisionFusion {
         }
         double rH = BASE_R_HEADING * Math.min(sH, MAX_TOTAL_SCALE);
         if (!rd.isMt2) rH = Math.max(rH, MT1_HEADING_R);
+        // Stage 2 rescue inflates R for its residual pivot-arc error (1.0 when disabled).
+        rXY = Math.min(rXY * compRScale, BASE_R_XY * MAX_TOTAL_SCALE);
+        rH = Math.min(rH * compRScale, BASE_R_HEADING * MAX_TOTAL_SCALE);
 
         lastScale = Math.max(rXY / BASE_R_XY, rH / BASE_R_HEADING);
         lastRx = rXY;
@@ -313,8 +421,11 @@ public class VisionFusion {
         long stampNs = System.nanoTime() - (long) (latMs * 1.0e6);
 
         try {
-            fusion.addMeasurement(rd.pedroPose, stampNs, new Pose(rXY, rXY, rH));
-            lastStatus = rd.isMt2 ? "fused-mt2" : "fused-mt1";
+            fusion.addMeasurement(measPose, stampNs, new Pose(rXY, rXY, rH));
+            // Preserve the compensated marker when Stage 2 actually rescued.
+            if (!"compensated".equals(lastStatus)) {
+                lastStatus = rd.isMt2 ? "fused-mt2" : "fused-mt1";
+            }
         } catch (Exception e) {
             lastStatus = "addMeasurement-exception";
         }
@@ -333,6 +444,7 @@ public class VisionFusion {
                             lastVision.heading())));
             RobotMain.DashTelemetry.addData("Fusion/mt2", lastMt2);
             RobotMain.DashTelemetry.addData("Fusion/tags", lastTags);
+            RobotMain.DashTelemetry.addData("Fusion/clusterOnly", lastVisionClusterOnly);
         }
         RobotMain.DashTelemetry.addData("Fusion/scale", "%.2fx", lastScale);
         RobotMain.DashTelemetry.addData("Fusion/Rxy", "%.2f", lastRx);

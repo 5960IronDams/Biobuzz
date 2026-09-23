@@ -5,6 +5,7 @@ import androidx.annotation.Nullable;
 import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.math.Pose;
 import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
@@ -14,6 +15,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.pedro.PedroFieldBridge;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -40,6 +42,14 @@ import java.util.List;
  * mirrored, flip {@link #LL_X_SIGN}/{@link #LL_Y_SIGN}; if heading is off by a
  * constant, set {@link #LL_YAW_OFFSET_DEG} (and the same offset automatically
  * applies to the yaw seeded back via {@code updateRobotOrientation}).
+ *
+ * <p><b>BIOBUZZ: clusters ARE the map.</b> All 16 tags (IDs 30-45, 4 per cell,
+ * level-pose entries in {@code ftc2026BiobuzzTest.fmap}) ride on tipping hive
+ * cells. Level-cell solves are first-class measurements; tipped-cell solves are
+ * biased and handled downstream: {@code TipSanityFilter} (wired in, ON) drops
+ * tilted/underground/teleport solves, {@code TipCompensator} (DISABLED until
+ * field-tested) will floor-project them. Frame-map verification = park level in
+ * front of a KNOWN-level cell and check {@code Fusion/visionX/Y} vs Pinpoint.
  */
 @Configurable
 public class Vision {
@@ -68,6 +78,34 @@ public class Vision {
     /** Re-seed early if the yaw moved more than this (degrees) since last seed. */
     public static double SEED_YAW_DELTA_DEG = 0.5;
 
+    // ---- BIOBUZZ cluster IDs (from SDK 12.0 AprilTagGameDatabase) ----
+    // All 16 tags live on 4 tipping hive cells (level poses in the .fmap):
+    // 30-33 RED SCORING, 34-37 RED AUDIENCE, 38-41 BLUE AUDIENCE, 42-45 BLUE SCORING.
+    // poll() flags cluster-built solves (Reading.clusterOnly) so VisionFusion's
+    // TipSanityFilter can drop the tipped ones; HiveCellMonitor aims off them.
+    /** True when this tag ID belongs to a moving BIOBUZZ hive-cell cluster. */
+    public static boolean isClusterId(int id) {
+        return id >= 30 && id <= 45;
+    }
+
+    /** Cluster base ID (30/34/38/42) for a member ID, or -1 when not a cluster tag. */
+    public static int clusterBaseFor(int id) {
+        if (!isClusterId(id)) return -1;
+        return 30 + ((id - 30) / 4) * 4;
+    }
+
+    /** SDK cluster name for a base ID (null when unknown). */
+    @Nullable
+    public static String clusterNameFor(int baseId) {
+        switch (baseId) {
+            case 30: return "RED SCORING";
+            case 34: return "RED AUDIENCE";
+            case 38: return "BLUE AUDIENCE";
+            case 42: return "BLUE SCORING";
+            default: return null;
+        }
+    }
+
     /** One MegaTag solve with the quality signals the Kalman R-scaler needs. */
     public static final class Reading {
         /** Vision pose already converted to Pedro frame (inches, corner origin). */
@@ -91,10 +129,20 @@ public class Vision {
         public final double latencyMs;
         /** ms since the Limelight last published (staleness gate lives downstream). */
         public final long stalenessMs;
+        /** IDs seen in this frame (from per-fiducial results; empty if LL omitted them). */
+        public final int[] fiducialIds;
+        /** True when every seen ID is a BIOBUZZ moving-cluster tag (30-45). */
+        public final boolean clusterOnly;
+        /** Botpose pitch/roll (deg) + camera height (m). Tilt sanity lives downstream. */
+        public final double botPitchDeg;
+        public final double botRollDeg;
+        public final double botZMeters;
 
         Reading(Pose pedroPose, boolean isMt2, int tagCount, double avgDistM,
                 double avgAreaPct, double spanM, double stddevXYIn,
-                double latencyMs, long stalenessMs) {
+                double latencyMs, long stalenessMs,
+                int[] fiducialIds, boolean clusterOnly,
+                double botPitchDeg, double botRollDeg, double botZMeters) {
             this.pedroPose = pedroPose;
             this.isMt2 = isMt2;
             this.tagCount = tagCount;
@@ -104,6 +152,11 @@ public class Vision {
             this.stddevXYIn = stddevXYIn;
             this.latencyMs = latencyMs;
             this.stalenessMs = stalenessMs;
+            this.fiducialIds = fiducialIds != null ? fiducialIds : new int[0];
+            this.clusterOnly = clusterOnly;
+            this.botPitchDeg = botPitchDeg;
+            this.botRollDeg = botRollDeg;
+            this.botZMeters = botZMeters;
         }
     }
 
@@ -236,7 +289,58 @@ public class Vision {
         } catch (Exception ignored) {
         }
 
-        return new Reading(pedro, isMt2, tags, dist, area, span, stdXY, latMs, staleMs);
+        // Per-fiducial IDs: every BIOBUZZ tag is a cluster tag (IDs 30-45, level
+        // poses in the .fmap). clusterOnly is normally true; it goes false only
+        // if a foreign/test tag appears — still fused, but no longer "pure cluster".
+        int[] ids = new int[0];
+        boolean clusterOnly = false;
+        try {
+            List<LLResultTypes.FiducialResult> frs = r.getFiducialResults();
+            if (frs != null && !frs.isEmpty()) {
+                ArrayList<Integer> seen = new ArrayList<>();
+                for (LLResultTypes.FiducialResult fr : frs) {
+                    if (fr != null) seen.add(fr.getFiducialId());
+                }
+                ids = new int[seen.size()];
+                boolean anyStatic = false;
+                for (int i = 0; i < seen.size(); i++) {
+                    ids[i] = seen.get(i);
+                    if (!isClusterId(ids[i])) anyStatic = true;
+                }
+                clusterOnly = !seen.isEmpty() && !anyStatic;
+            }
+        } catch (Exception ignored) {
+        }
+        // Botpose attitude sanity: a flat-floor robot cannot pitch/roll, so a
+        // tilted botpose means a TIPPED TAG corrupted the solve (the "robot
+        // driven into the floor" signature). Height should be camera height.
+        double botPitchDeg = 0, botRollDeg = 0, botZM = 0;
+        try {
+            botPitchDeg = raw.getOrientation().getPitch(AngleUnit.DEGREES);
+            botRollDeg = raw.getOrientation().getRoll(AngleUnit.DEGREES);
+            botZM = raw.getPosition().toUnit(DistanceUnit.METER).z;
+        } catch (Exception ignored) {
+        }
+
+        return new Reading(pedro, isMt2, tags, dist, area, span, stdXY, latMs, staleMs,
+                ids, clusterOnly, botPitchDeg, botRollDeg, botZM);
+    }
+
+    /**
+     * Raw per-tag detections for relative aiming (HiveCellMonitor). Empty list
+     * when the Limelight has nothing. Same cluster tags the global pose uses —
+     * aim with their goal-point poses, localize with the filtered botpose.
+     */
+    public List<LLResultTypes.FiducialResult> getLatestFiducials() {
+        try {
+            LLResult r = limelight.getLatestResult();
+            if (r != null && r.isValid()) {
+                List<LLResultTypes.FiducialResult> frs = r.getFiducialResults();
+                if (frs != null) return frs;
+            }
+        } catch (Exception ignored) {
+        }
+        return new ArrayList<>();
     }
 
     /**

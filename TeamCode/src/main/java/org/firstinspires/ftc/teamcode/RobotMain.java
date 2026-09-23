@@ -12,6 +12,7 @@ import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.killerwatts.HiveCellMonitor;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
@@ -35,6 +36,8 @@ public class RobotMain {
     public Vision vision;
     /** Kalman corrector feeding Limelight solves into the Fusion localizer. */
     public VisionFusion visionFusion;
+    /** Relative hive-cell monitor (cluster aiming only, never the global pose). */
+    public HiveCellMonitor cells;
     //
     public CommandFactory CommandF;
     public static Pose autonomousEndPose = new Pose(0, 0, 0);
@@ -49,6 +52,8 @@ public class RobotMain {
         vision = Vision.tryCreate(opmode.hardwareMap);
         if (vision != null) vision.start(0);
         visionFusion = new VisionFusion(follower, vision);
+        // Relative cell monitor shares the same Limelight (no extra HW handle).
+        cells = new HiveCellMonitor(vision);
         fieldRenderer.drawPedroPose(follower.pose());
         intake = new Intake(opmode);
         PosServ = new PositionalServo(opmode);
@@ -70,6 +75,10 @@ public class RobotMain {
     {
         follower.update();//updates this robots pedro Follower (predict: Pinpoint)
         if (visionFusion != null) visionFusion.correct(); // correct: Limelight -> Kalman
+        // Relative cell state (cluster tags). Never touches the global pose.
+        if (cells != null) {
+            cells.update(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE ? 'B' : 'R');
+        }
         RunPeriodic();//run all registered subsystems periodic (addData only, no update)
         Scheduler.execute(); //eun the Ivy scheduler periodic (AimAtGoal adds data, no update)
         looptime(); //adds loop-time lines, no update — OpMode loop must end with flushTelemetry()
