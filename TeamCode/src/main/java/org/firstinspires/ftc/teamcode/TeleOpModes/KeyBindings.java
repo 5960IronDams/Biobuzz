@@ -127,6 +127,8 @@ public class KeyBindings {
         }
         // Trailing update: applies aim PID powers OR the fresh manual powers above.
         robot.follower.update();
+        // Correct AFTER the trailing update (same predict->correct order as RobotMain).
+        if (robot.visionFusion != null) robot.visionFusion.correct();
         robot.fieldRenderer.drawPedroPose(robot.follower.pose());
     }
 

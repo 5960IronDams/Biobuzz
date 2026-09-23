@@ -3,8 +3,9 @@ package org.firstinspires.ftc.teamcode;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
+import androidx.annotation.Nullable;
+
 import com.bylazar.telemetry.PanelsTelemetry;
-import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.ivy.Scheduler;
 import com.pedropathing.math.Pose;
@@ -15,7 +16,9 @@ import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.PanelsFieldRenderer;
+import org.firstinspires.ftc.teamcode.killerwatts.Vision;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
+import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
 
 public class RobotMain {
     public static ALLIANCE_COLOR CurrentAlliance = ALLIANCE_COLOR.ALLIANCE_RED;
@@ -27,6 +30,11 @@ public class RobotMain {
     public Follower follower;// = SharedObjects.follower;
     public Intake intake;
     public PositionalServo PosServ;
+    /** Null when no Limelight3A is in the RC config (Pinpoint-only mode). */
+    @Nullable
+    public Vision vision;
+    /** Kalman corrector feeding Limelight solves into the Fusion localizer. */
+    public VisionFusion visionFusion;
     //
     public CommandFactory CommandF;
     public static Pose autonomousEndPose = new Pose(0, 0, 0);
@@ -36,6 +44,11 @@ public class RobotMain {
         Scheduler.reset(); //clears all scheduler commands in ivy after opmode switch.
         //subsystems
         follower = Constants.create(opmode.hardwareMap);
+        // Limelight is optional: absent in tuning configs -> fused filter runs
+        // Pinpoint-only (VisionFusion reports "no-limelight-configured").
+        vision = Vision.tryCreate(opmode.hardwareMap);
+        if (vision != null) vision.start(0);
+        visionFusion = new VisionFusion(follower, vision);
         fieldRenderer.drawPedroPose(follower.pose());
         intake = new Intake(opmode);
         PosServ = new PositionalServo(opmode);
@@ -55,7 +68,8 @@ public class RobotMain {
 
     public void RobotRunPeriodic()
     {
-        follower.update();//updates this robots pedro Followers
+        follower.update();//updates this robots pedro Follower (predict: Pinpoint)
+        if (visionFusion != null) visionFusion.correct(); // correct: Limelight -> Kalman
         RunPeriodic();//run all registered subsystems periodic (addData only, no update)
         Scheduler.execute(); //eun the Ivy scheduler periodic (AimAtGoal adds data, no update)
         looptime(); //adds loop-time lines, no update — OpMode loop must end with flushTelemetry()

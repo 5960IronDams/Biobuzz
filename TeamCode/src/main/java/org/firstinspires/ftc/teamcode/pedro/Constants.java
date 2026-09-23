@@ -5,6 +5,7 @@ import com.pedropathing.algorithm.ForesightConfig;
 import com.pedropathing.controllers.Controller;
 import com.pedropathing.drivetrain.Drivetrain;
 import com.pedropathing.follower.Follower;
+import com.pedropathing.localization.FusionLocalizer;
 import com.pedropathing.localization.Localizer;
 import com.pedropathing.math.Matrix;
 import com.pedropathing.math.Pose;
@@ -102,17 +103,65 @@ public class Constants {
                 RevHubOrientationOnRobot.UsbFacingDirection.RIGHT);
     }
 
+    // ================= Fusion covariances (Pinpoint predictor + vision corrections) =================
+    // FusionLocalizer(Localizer deadReckoning, Pose P0, Pose Q, Pose R, int bufferSize).
+    // P/Q/R are digested as Matrix.diag(x, y, heading) VARIANCES (not stddevs):
+    // larger == less trust. update() grows P by Q*|twist|*dt each loop; addMeasurement()
+    // blends the vision pose with Kalman gain K = P/(P+R) and re-propagates history.
+    // Heading units are radians^2, so 0.05 rad (~3deg stddev) -> 0.0025 variance.
+    // Tune: raw Pinpoint in the tuners, Fusion in matches. Panels-tunable via FusionTune.
+    /** Initial covariance P0 (in^2, in^2, rad^2). */
+    public static Pose fusionInitialCovariance() {
+        return new Pose(0.25, 0.25, Math.toRadians(3.0) * Math.toRadians(3.0));
+    }
+
+    /** Process noise Q: Pinpoint drift per unit twist (in^2, in^2, rad^2). */
+    public static Pose fusionProcessNoise() {
+        return new Pose(0.02, 0.02, Math.toRadians(0.5) * Math.toRadians(0.5));
+    }
+
+    /** Default measurement noise R for vision (in^2, in^2, rad^2); VisionFusion scales per-reading. */
+    public static Pose fusionDefaultMeasurementNoise() {
+        return new Pose(9.0, 9.0, Math.toRadians(6.0) * Math.toRadians(6.0));
+    }
+
+    /** History buffer: update() appends one entry per loop, oldest evicted past this. */
+    public static int fusionBufferSize() {
+        return 200;
+    }
+
     // ================= Factories (used by Tuning Tests + future autos) =================
-    // Uncomment once the configs above are pasted in.
+    // NOTE: getLocalizer() returns the Fusion wrapper so follower.update() fuses
+    // automatically. Tuners (Foresight/Tests) call getPinpointLocalizer() for RAW
+    // odometry; RobotMain/TeleOp/Auto get the fused pose via create().
      public static Drivetrain getDrivetrain(HardwareMap h) {
          return new Mecanum(h, drivetrainConfig);
      }
     //
-     public static Localizer getLocalizer(HardwareMap h) {
-         return new PinpointLocalizer(h, localizerConfig);
-     }
-    //
-     public static Follower create(HardwareMap h) {
-         return new Follower(getLocalizer(h), getDrivetrain(h), new Foresight(foresightConfig));
-     }
+    /**
+     * RAW Pinpoint localizer. Use this in tuners (Foresight/Tests) so process
+     * models are fit to odometry alone — vision corrections would corrupt them.
+     * The tuner procedures in {@link Tuning} take this function.
+     */
+    public static Localizer getPinpointLocalizer(HardwareMap h) {
+        return new PinpointLocalizer(h, localizerConfig);
+    }
+
+    /**
+     * FUSED localizer: Pinpoint predictor wrapped in the Fusion Kalman filter.
+     * This is what the follower drives on in TeleOp/Auto. Vision corrections
+     * arrive via {@code ((FusionLocalizer) follower.localizer).addMeasurement(...)}.
+     */
+    public static Localizer getLocalizer(HardwareMap h) {
+        return new FusionLocalizer(
+                getPinpointLocalizer(h),
+                fusionInitialCovariance(),
+                fusionProcessNoise(),
+                fusionDefaultMeasurementNoise(),
+                fusionBufferSize());
+    }
+
+    public static Follower create(HardwareMap h) {
+        return new Follower(getLocalizer(h), getDrivetrain(h), new Foresight(foresightConfig));
+    }
 }

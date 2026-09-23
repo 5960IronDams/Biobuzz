@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.pedro;
 
+import com.pedropathing.algorithm.Foresight;
 import com.pedropathing.tuning.autotune.Procedure;
 import com.pedropathing.tuning.autotune.Tuner;
 
@@ -75,14 +76,18 @@ public class Tuning {
     }
 
     // ---- Enable AFTER Constants wires drivetrain + localizer (post Mecanum + Pinpoint) ----
+    // NOTE: tuners use getPinpointLocalizer() (RAW odometry). Fitting process
+    // models on the Fusion wrapper would let vision corrections leak into the
+    // drivetrain/algorithm constants. Match play uses Constants.create()
+    // (fused) via RobotMain.
      @Tuner(name = "Foresight Tuner")
      public static Procedure foresightTuner() {
-         return new ForesightTuner(Constants::getLocalizer, Constants::getDrivetrain);
+         return new ForesightTuner(Constants::getPinpointLocalizer, Constants::getDrivetrain);
      }
     //
      @Tuner(name = "Tests")
      public static Procedure tests() {
-         return new Tests(Constants::getDrivetrain, Constants::getLocalizer,
-                 () -> new com.pedropathing.algorithm.Foresight(Constants.foresightConfig));
+         return new Tests(Constants::getDrivetrain, Constants::getPinpointLocalizer,
+                 () -> new Foresight(Constants.foresightConfig));
      }
 }
