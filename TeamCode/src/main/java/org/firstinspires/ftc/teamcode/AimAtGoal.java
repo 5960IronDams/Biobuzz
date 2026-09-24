@@ -66,7 +66,7 @@ public class AimAtGoal implements Command {
     /** Derivative gain on heading-error rate. */
     public static double kD = 0.1;
     /** Max |turn| power the PID may request. */
-    public static double MAX_TURN = 0.7;
+    public static double MAX_TURN = 1.0;//0.7;
     /** Integral clamp (anti-windup). */
     public static double I_MAX = 1.0;
     /** |error| below this (degrees) counts as "on target" for telemetry. */

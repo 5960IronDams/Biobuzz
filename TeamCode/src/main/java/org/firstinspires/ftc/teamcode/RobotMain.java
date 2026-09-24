@@ -4,7 +4,7 @@ import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPe
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
 
 import androidx.annotation.Nullable;
-
+import android.util.Log;
 import com.bylazar.telemetry.PanelsTelemetry;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.ivy.Scheduler;
@@ -12,6 +12,7 @@ import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.killerwatts.Flywheel;
 import org.firstinspires.ftc.teamcode.killerwatts.HiveCellMonitor;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
@@ -30,6 +31,7 @@ public class RobotMain {
     //subsystems
     public Follower follower;// = SharedObjects.follower;
     public Intake intake;
+    public Flywheel flywheel;
     public PositionalServo PosServ;
     /** Null when no Limelight3A is in the RC config (Pinpoint-only mode). */
     @Nullable
@@ -50,17 +52,21 @@ public class RobotMain {
         // Limelight is optional: absent in tuning configs -> fused filter runs
         // Pinpoint-only (VisionFusion reports "no-limelight-configured").
         vision = Vision.tryCreate(opmode.hardwareMap);
+        Log.i("IronLog","Vision Loaded");
         if (vision != null) vision.start(0);
+        Log.i("IronLog","Vision Started");
         visionFusion = new VisionFusion(follower, vision);
+        Log.i("IronLog","VisionFusion Started");
         // Relative cell monitor shares the same Limelight (no extra HW handle).
         cells = new HiveCellMonitor(vision);
         fieldRenderer.drawPedroPose(follower.pose());
         intake = new Intake(opmode);
+        flywheel = new Flywheel(opmode);
         PosServ = new PositionalServo(opmode);
 
 
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
-        CommandF = new CommandFactory(follower,intake,PosServ, opmode.hardwareMap);
+        CommandF = new CommandFactory(follower,intake,flywheel,PosServ, opmode.hardwareMap);
 
         //declare what alliance we are on to BOTH telemetry outputs
         //this is for one good final double check for the driver and co pilot

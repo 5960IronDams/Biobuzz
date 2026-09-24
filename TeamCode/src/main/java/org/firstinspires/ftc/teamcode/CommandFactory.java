@@ -9,6 +9,7 @@ import com.pedropathing.ivy.behaviors.ConflictBehavior;
 import com.pedropathing.ivy.behaviors.EndCondition;
 import com.pedropathing.ivy.behaviors.InterruptedBehavior;
 
+import org.firstinspires.ftc.teamcode.killerwatts.Flywheel;
 import org.firstinspires.ftc.teamcode.killerwatts.Intake;
 import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
 
@@ -22,11 +23,13 @@ public class CommandFactory {
 
     public final Follower follower;
     public final Intake intake;
+    public final Flywheel flywheel;
     public final PositionalServo PosServ;
     public final HardwareMap hardwareMap;
-    public CommandFactory(Follower _follower, Intake _intake, PositionalServo _posServ, HardwareMap _hardwareMap) {
+    public CommandFactory(Follower _follower, Intake _intake, Flywheel _flywheel, PositionalServo _posServ, HardwareMap _hardwareMap) {
         follower = _follower;
         intake = _intake;
+        flywheel = _flywheel;
         PosServ = _posServ;
         hardwareMap = _hardwareMap;
     }
@@ -36,6 +39,31 @@ public class CommandFactory {
     }
     public Command StopIntake() {
         return instant(()->{intake.stop();}).requiring(intake);
+    }
+
+    /**
+     * Spin the flywheel to an explicit RPM via velocity PID (fire-and-forget).
+     * The PID hold runs in {@code Flywheel.Periodic()}, so this finishes instantly -
+     * sequence on {@code flywheel.isAtTargetRpm()} (e.g. {@code .until(...)}) if the
+     * next step needs it up to speed first.
+     */
+    public Command SetFlywheelRpm(double rpm) {
+        return instant(()->{flywheel.setTargetRpm(rpm);}).requiring(flywheel);
+    }
+    /** PID-brake the flywheel to zero. */
+    public Command StopFlywheel() {
+        return instant(()->{flywheel.stop();}).requiring(flywheel);
+    }
+    /**
+     * Cut drive (FLOAT) and free-spin toward idle, then re-engage the normal PID
+     * to hold idle on arrival. Finishes when {@code flywheel.isHoldingIdle()} -
+     * i.e. coast arrived AND PID is holding idle - so autos can sequence on it.
+     */
+    public Command CoastFlywheelToIdle() {
+        return Command.build()
+                .requiring(flywheel)
+                .setStart(()->{flywheel.coastToIdle();})
+                .setDone(()->{return flywheel.isHoldingIdle();});
     }
 
     /**

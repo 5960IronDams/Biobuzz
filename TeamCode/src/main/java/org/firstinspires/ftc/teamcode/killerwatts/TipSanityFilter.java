@@ -121,10 +121,11 @@ public class TipSanityFilter {
             return decided(new Decision(Verdict.REJECT_TILT, rd.pedroPose,
                     pitch, roll, rd.botZMeters, Double.NaN));
         }
-        if (!(rd.botZMeters >= CAM_Z_MIN_M && rd.botZMeters <= CAM_Z_MAX_M)) {
-            return decided(new Decision(Verdict.REJECT_HEIGHT, rd.pedroPose,
-                    pitch, roll, rd.botZMeters, Double.NaN));
-        }
+        //check if tag height makes sense;
+//        if (!(rd.botZMeters >= CAM_Z_MIN_M && rd.botZMeters <= CAM_Z_MAX_M)) {
+//            return decided(new Decision(Verdict.REJECT_HEIGHT, rd.pedroPose,
+//                    pitch, roll, rd.botZMeters, Double.NaN));
+//        }
         double speedIps = Double.NaN;
         long nowNs = System.nanoTime();
         if (lastAcceptedXY != null && MAX_SOLVE_SPEED_IPS > 0) {

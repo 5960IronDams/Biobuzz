@@ -318,11 +318,12 @@ public class VisionFusion {
             report();
             return;
         }
-        if (!(rd.botZMeters >= BOT_Z_MIN_M && rd.botZMeters <= BOT_Z_MAX_M)) {
-            lastStatus = "reject-height";
-            report();
-            return;
-        }
+        //filters out tags not at the height they should be (untipped)
+//        if (!(rd.botZMeters >= BOT_Z_MIN_M && rd.botZMeters <= BOT_Z_MAX_M)) {
+//            lastStatus = "reject-height";
+//            report();
+//            return;
+//        }
         if (rd.pedroPose.x() < -FIELD_MARGIN_IN || rd.pedroPose.x() > 144.0 + FIELD_MARGIN_IN
                 || rd.pedroPose.y() < -FIELD_MARGIN_IN || rd.pedroPose.y() > 144.0 + FIELD_MARGIN_IN) {
             lastStatus = "reject-off-field";
