@@ -76,6 +76,7 @@ public class FusionTune extends OpMode {
         robot.follower.update();
 
         // Correct AFTER the trailing update (same order as RobotMain).
+        // Same-frame re-poll no-ops inside VisionFusion; a new LL frame still fuses.
         if (robot.visionFusion != null) robot.visionFusion.correct();
 
         // Extra compare telemetry: raw Pinpoint vs fused vs vision.

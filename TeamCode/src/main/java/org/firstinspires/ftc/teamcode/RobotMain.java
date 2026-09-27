@@ -95,8 +95,14 @@ public class RobotMain {
      * Panels TelemetryManager sends AND clears its buffer on every update(), so
      * any second update in the same loop sends a partial frame (flicker) and
      * anything added after the last update waits a full loop (lag).
+     *
+     * <p>Also emits the once-per-loop vision snapshot ({@code Fusion/*} +
+     * {@code Tip/*} via {@code visionFusion.report()}). correct() may run twice
+     * per loop (predict + trailing update) but never reports itself, so this is
+     * the single place those lines are added — exactly one set per frame.
      */
     public void flushTelemetry() {
+        if (visionFusion != null) visionFusion.report();
         DashTelemetry.update();
     }
     long lastTime = System.nanoTime();

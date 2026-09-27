@@ -5,8 +5,6 @@ import androidx.annotation.Nullable;
 import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.math.Pose;
 
-import org.firstinspires.ftc.teamcode.RobotMain;
-
 /**
  * Stage 1 (WIRED IN, ON by default): rest-pose sanity filter for vision poses.
  *
@@ -20,7 +18,8 @@ import org.firstinspires.ftc.teamcode.RobotMain;
  * <ol>
  *   <li>REJECTS impossible solves outright (tilt / height / speed gates below).</li>
  *   <li>PASSES sane solves through untouched (same object, zero math).</li>
- *   <li>Reports every decision on Panels ({@code Tip/*}) for tuning.</li>
+ *   <li>Stashes every decision in {@link #lastDecision()} — {@code VisionFusion.report()}
+ *       mirrors it to Panels ({@code Tip/*}) once per loop for tuning.</li>
  * </ol>
  *
  * <p>Stage 2 (the compensator) lives in {@link TipCompensator} and is DISABLED
@@ -147,8 +146,9 @@ public class TipSanityFilter {
     }
 
     private Decision decided(Decision d) {
+        // No telemetry here: VisionFusion.report() emits the snapshot once per
+        // loop (correct() runs twice per TeleOp loop — see VisionFusion).
         lastDecision = d;
-        report(d);
         return d;
     }
 
@@ -158,13 +158,4 @@ public class TipSanityFilter {
         return lastDecision;
     }
 
-    private static void report(Decision d) {
-        RobotMain.DashTelemetry.addData("Tip/verdict", d.verdict);
-        RobotMain.DashTelemetry.addData("Tip/pitchDeg", "%.1f", d.pitchDeg);
-        RobotMain.DashTelemetry.addData("Tip/rollDeg", "%.1f", d.rollDeg);
-        RobotMain.DashTelemetry.addData("Tip/zM", "%.3f", d.zMeters);
-        if (Double.isFinite(d.speedIps)) {
-            RobotMain.DashTelemetry.addData("Tip/solveSpeedIps", "%.1f", d.speedIps);
-        }
-    }
 }

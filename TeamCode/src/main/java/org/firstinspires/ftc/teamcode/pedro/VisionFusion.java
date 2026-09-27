@@ -15,6 +15,8 @@ import org.firstinspires.ftc.teamcode.killerwatts.TipCompensator;
 import org.firstinspires.ftc.teamcode.killerwatts.TipSanityFilter;
 import org.firstinspires.ftc.teamcode.killerwatts.Vision;
 
+import java.util.Locale;
+
 /**
  * Vision corrector: feeds Limelight MegaTag solves into Pedro's
  * {@link FusionLocalizer} Kalman filter via {@code addMeasurement()}.
@@ -22,8 +24,14 @@ import org.firstinspires.ftc.teamcode.killerwatts.Vision;
  * <p>Call order per loop (see {@link RobotMain#RobotRunPeriodic}):
  * <pre>
  * follower.update();      // predict step (Pinpoint) + fuse owner
- * visionFusion.correct(); // zero or one addMeasurement()
+ * visionFusion.correct(); // zero or one axis-masked addMeasurement
  * </pre>
+ * TeleOp corrects twice per loop ({@code RobotRunPeriodic} + the trailing
+ * drive update); the second call re-polls the same ~10Hz Limelight packet and
+ * is a same-frame no-op via fingerprint dedup, so each frame fuses once.
+ * Telemetry is NEVER emitted here — {@link #report()} runs once per loop from
+ * {@link RobotMain#flushTelemetry()}, which is why Panels shows one set of
+ * {@code Fusion/*} + {@code Tip/*} lines.
  * The follower owns the prediction; this class owns the correction. Nothing
  * here calls {@code setPose()}, so Foresight's velocity estimate is never
  * teleported — corrections blend with gain K = P/(P+R) and re-propagate
@@ -36,31 +44,17 @@ import org.firstinspires.ftc.teamcode.killerwatts.Vision;
  * off-field poses, stale frames, impossible jumps on every axis at once. This
  * keeps corrections flowing through tag deserts instead of going blind.
  *
- * <p><b>Heading blending.</b> MT2 yaw is only as good as the gyro seed behind
- * it. At speed the seed lags and MT2 yaw smears, so the heading component is
- * up-weighted (higher R) with motion while XY stays trusted — position from
- * tags is still good when yaw isn't. MT1 yaw (single-tag ambiguity) is trusted
- * even less.
+ * <p><b>Split solver: MT2 owns XY, MT1 owns yaw, never MT2 yaw.</b> MT2 yaw is
+ * seed echo (~90% the gyro value fed back through the Limelight), so fusing it
+ * double-counts the gyro in a feedback loop — the rotation warping seen on
+ * down-facing tag geometry, where yaw is weakly observed. MT2's XY is fused
+ * every accepted frame; MT1's independent 6DOF yaw fuses under strict gates
+ * (multi-tag, slow, small residual) with a long time constant, so it drags gyro
+ * drift out without ever snapping the heading. {@code FusionLocalizer} skips
+ * NaN components per axis, so each fuse() call masks the axis it doesn't own.
  *
  * <p>All tunables are Panels-live ({@code Panels -> VisionFusion}).
- *
- *
  */
-     /** Fused XY creeps slightly toward vision; heading essentially ignores it. Same reading standing still, 2 tags, close: s ≈ 1, R ≈ 9, full correction. That's the whole philosophy — bad conditions bend the blend, they don't shut it off, except the four garbage gates (NaN, stale, off-field, whole-pose teleport).
-    Knobs worth knowing by feel:
-    SINGLE_TAG_PENALTY, MT1_XY_PENALTY, MT1_HEADING_R — source quality. MT1 yaw ambiguity is why heading gets a floor, not a multiplier.
-    DIST_SLOPE_PER_M, AREA_REF_PCT, SPAN_REF_M — geometry quality (far / small / narrow-baseline tags triangulate poorly).
-    SPEED_REF_IPS, TURN_REF_RPS, HEADING_* — motion blur + MT2 seed lag. Note heading has an extra linear-in-speed term: even driving straight fast smears the gyro seed MT2 depends on, while tag position stays fine. That's why XY and heading split.
-    RESIDUAL_* — innovation gate as a ramp (6"→24", up to ×9), not a cliff. A real drift correction (medium residual) still fuses; a hallucination (huge residual) gets muffled.
-    STDDEV_TRUST_CAP_IN — Limelight's own stddev is only believed when small; when LL itself says "I'm unsure," that increases R instead.
-    MAX_TOTAL_SCALE = 64 — no single reading can exceed 64× base. Safety net against multiplied penalties exploding to "never trust vision at all."
-    Tuning it on-field (Fusion Tune)
-    Watch three Panels lines while driving:
-    1.Fusion/scale pinned at 1.0x everywhere → you're over-trusting; raise BASE_R_XY.
-    2.Fusion/residualIn shrinks after tags appear → fusion is working. Residual stuck large → under-trusting; lower BASE_R_XY.
-    3.Pose jumps when a tag pops in → raise base R or lower RESIDUAL_MAX_PENALTY.
-    And the A/B test: flip VisionFusion.ENABLED live — same drive, Pinpoint-only vs fused. If fused is worse, don't touch the penalties first; re-verify the LL_* frame map in  Vision.java. A mirrored axis looks exactly like "Kalman is broken" but no R value can fix a wrong frame.
-  */
 @Configurable
 public class VisionFusion {
 
@@ -74,14 +68,12 @@ public class VisionFusion {
     /** Reject poses outside the field plus this margin, inches. */
     public static double FIELD_MARGIN_IN = 24.0;
     /**
-     * Reject when BOTH |dXY| exceeds this AND |dHeading| exceeds
-     * {@link #MAX_JUMP_HEADING_DEG}. Single-axis jumps still fuse (de-weighted
-     * below) — a real correction usually moves one axis more than the other,
-     * while garbage jumps everywhere at once.
+     * XY teleport gate, inches. A bad MT2 XY solve is garbage regardless of
+     * yaw — MT2 yaw never fuses, so a yaw jump alone must NEVER reject a good
+     * XY frame (that was the old combined gate; it dropped good position on
+     * yaw wander). Heading protection lives in the MT1-yaw gates below.
      */
     public static double MAX_JUMP_XY_IN = 36.0;
-    /** Heading half of the impossible-jump gate, degrees. */
-    public static double MAX_JUMP_HEADING_DEG = 45.0;
     /** Clamp on total pipeline latency used for back-dating, ms. */
     public static double MAX_LATENCY_MS = 250.0;
 
@@ -107,6 +99,7 @@ public class VisionFusion {
      * GOOD (cell at rest, map matching) reports flat ~= 0 — the 30deg lives in
      * the .fmap entries, not in the solve. Mirrors TipSanityFilter (the real
      * gate); kept here so Panels shows one story. 0 disables.
+     * NOTE: pitch/roll come from the MT2 XY solve (the fused position source).
      */
     public static double MAX_BOT_PITCH_DEG = 12.0;
     /** Same for |botpose roll|, degrees. 0 disables. */
@@ -114,22 +107,60 @@ public class VisionFusion {
     /** Reject when reported camera height is outside [min, max], meters. */
     public static double BOT_Z_MIN_M = 0.05;
     public static double BOT_Z_MAX_M = 0.60;
+    // ================= MT2-XY health (seed agreement repurposed) =================
+    // The seed-vs-return yaw comparison used to penalize MT2 heading. Heading no
+    // longer fuses from MT2 at all (NaN-masked — see fuse()), so the agreement
+    // is now an MT2-XY TRUST signal: large disagreement means the gyro seed the
+    // XY solve was conditioned on was wrong, so the XY is suspect. It scales sXY
+    // (not sH). A healthy loop reads seedAgrDeg small (< ~10). Pinned near 180 =
+    // seed frame mirrored — fix LL_YAW_OFFSET_DEG.
+    /**
+     * Extra XY R x when |seed − returned| yaw exceeds YAW_AGR_FULL_DEG.
+     * Ramps 1x below FULL to this at YAW_AGR_MAX_DEG. 0/1 = gate off.
+     */
+    public static double YAW_DISAGREE_PENALTY = 4.0;
+    /** Agreement below this (deg) = healthy, no penalty. */
+    public static double YAW_AGR_FULL_DEG = 15.0;
+    /** Agreement at/above this (deg) = full penalty. */
+    public static double YAW_AGR_MAX_DEG = 60.0;
+    /** Hard-reject the frame when disagreement exceeds this (deg). 0 disables. */
+    public static double YAW_AGR_REJECT_DEG = 120.0;
 
     // ================= base trust (variances, NOT stddevs) =================
     // R is digested as Matrix.diag(x, y, heading). These match
     // Constants.fusionDefaultMeasurementNoise(); the per-reading scaler below
     // multiplies them. Heading is rad^2: 6deg stddev -> 0.011 var.
-    /** Base XY measurement variance, in^2 (3in stddev). */
+    /** Base XY measurement variance, in^2 (3in stddev). MT2 XY fuses at this. */
     public static double BASE_R_XY = 9.0;
-    /** Base heading measurement variance, rad^2 (6deg stddev). */
-    public static double BASE_R_HEADING = 0.011;
+    /**
+     * MT1 yaw measurement variance, rad^2. Ships at 18deg stddev (~0.10): slow
+     * drift correction, never a snap. Shrink toward ~10deg (0.03) once the
+     * split proves out on-field; grow if heading ever warps again.
+     */
+    public static double BASE_R_HEADING = 0.10;
 
     // ================= soft de-weight knobs =================
-    // Each factor is multiplicative on R, i.e. trust /= factor.
-    /** MT1 fallback: XY R x this (MT1 yaw handled by MT1_HEADING_R below). */
+    // Each factor is multiplicative on R, i.e. trust /= factor. sXY feeds the
+    // MT2-XY fuse; sH feeds the MT1-yaw fuse. They are computed independently.
+    /** MT1-ABSENT: no MT2 either is impossible (poll returns null); this covers MT1-XY fallback. */
     public static double MT1_XY_PENALTY = 4.0;
-    /** MT1 fallback heading variance floor, rad^2 (~30deg stddev). */
+    /**
+     * MT1 yaw variance floor, rad^2 (~30deg stddev). Single-tag MT1 yaw is
+     * flip-ambiguous on down-facing tags — the strict YAW_* gates below are the
+     * real protection; this floor keeps even a passing solve honest.
+     */
     public static double MT1_HEADING_R = 0.27;
+    // ---- MT1-yaw strict gates (near-hard: a flipped solve is worse than none) ----
+    /** Fuse MT1 yaw only with >= this many tags (flip ambiguity). */
+    public static int YAW_MIN_TAGS = 2;
+    /** Fuse MT1 yaw only below this planar speed (in/s). */
+    public static double YAW_MAX_SPEED_IPS = 20.0;
+    /** Fuse MT1 yaw only below this turn rate (rad/s). */
+    public static double YAW_MAX_OMEGA_RPS = 0.5;
+    /** Fuse MT1 yaw only below this mean tag distance (m). */
+    public static double YAW_MAX_DIST_M = 2.5;
+    /** Fuse MT1 yaw only when |MT1yaw − fused| below this (deg). */
+    public static double YAW_MAX_RESIDUAL_DEG = 20.0;
     /** Extra R x per tag below 2 (single-tag solves are ambiguous). */
     public static double SINGLE_TAG_PENALTY = 3.0;
     /** R x per meter of mean tag distance past CLOSE_DIST_M. */
@@ -142,19 +173,16 @@ public class VisionFusion {
      * "LL is unsure" and R is scaled up instead of down. 0 disables.
      */
     public static double STDDEV_TRUST_CAP_IN = 6.0;
-    /** R x per (in/s of planar speed / SPEED_REF_IPS), quadratic. */
+    /** R x per (in/s of planar speed / SPEED_REF_IPS), quadratic. XY path. */
     public static double SPEED_REF_IPS = 40.0;
-    /** R x per (rad/s of turn rate / TURN_REF_RPS), quadratic, XY only. */
+    /** R x per (rad/s of turn rate / TURN_REF_RPS), quadratic, XY path. */
     public static double TURN_REF_RPS = 2.0;
-    /** Heading R x per (rad/s of turn rate / HEADING_TURN_REF_RPS), quadratic. */
-    public static double HEADING_TURN_REF_RPS = 1.0;
-    /** Heading R x when moving fast even if not turning (MT2 seed lag), linear. */
-    public static double HEADING_SPEED_REF_IPS = 30.0;
-    /** R x when tag area is tiny (far/small in frame), ramps below AREA_REF_PCT. */
+    /** R x when tag area is tiny (far/small in frame), ramps below AREA_REF_PCT. XY path. */
     public static double AREA_REF_PCT = 0.5;
-    /** R x when the tag baseline is narrow (poor triangulation), ramps below SPAN_REF_M. */
+    /** R x when the tag baseline is narrow (poor triangulation), ramps below SPAN_REF_M. XY path. */
     public static double SPAN_REF_M = 1.0;
-    // Innovation (vision - fused residual) de-weight: smooth, never a cliff.
+    // Innovation (XY residual) de-weight: smooth, never a cliff. Yaw residual
+    // has its own ramp in the MT1-yaw path (same shape, deg units).
     /** Residual below this fuses at full weight, inches. */
     public static double RESIDUAL_FULL_IN = 6.0;
     /** Residual at/above this is heavily down-weighted, inches. */
@@ -167,18 +195,42 @@ public class VisionFusion {
     // ---- last-loop debug snapshot (telemetry) ----
     private String lastStatus = "no-vision";
     private double lastScale = 1.0;
-    private double lastRx = BASE_R_XY, lastRh = BASE_R_HEADING;
+    private double lastRx = BASE_R_XY;
+    private double lastRh = Double.NaN;
     private Pose lastVision = null;
     private boolean lastMt2 = false;
     private boolean lastVisionClusterOnly = false;
     private int lastTags = 0;
     private double lastResidualIn = Double.NaN;
+    /** MT1 yaw residual |MT1yaw − fused| this loop, deg (NaN when yaw skipped). */
+    private double lastYawResidualDeg = Double.NaN;
+    /** True when the MT1 yaw axis fused this loop. */
+    private boolean lastYawFused = false;
+    /** Why yaw fused/skipped this loop ("fused", "tags", "speed", ...). */
+    private String lastYawSkip = "none";
+    /** MT1 yaw R this loop, rad^2 (NaN when yaw skipped). */
+    private double lastYawR = Double.NaN;
+    /** Seed-vs-return yaw agreement this loop, deg (NaN when MT2 absent). */
+    private double lastSeedAgrDeg = Double.NaN;
 
     private final Follower follower;
     @Nullable
     private final Vision vision;
     /** Stage 1 sanity filter (stateless except last-accepted teleport check). */
     private final TipSanityFilter tipFilter = new TipSanityFilter();
+
+    // ---- same-frame dedup (two correct() calls per TeleOp loop) ----
+    /**
+     * Max ns between polls to treat a bit-identical packet as the same LL
+     * frame. Same-loop re-polls land ~1-5ms apart; next-loop polls are a full
+     * loop period later, so they re-evaluate normally.
+     */
+    private static final long SAME_FRAME_MAX_NS = 10_000_000L; // 10ms
+    private long lastPollNs = 0L;
+    private boolean hasLastFrame = false;
+    private double lastFrameX, lastFrameY, lastFrameH, lastFrameMt1, lastFrameLat, lastFrameYaw;
+    private int lastFrameTags;
+    private long lastFrameStale;
 
     public VisionFusion(Follower follower, @Nullable Vision vision) {
         if (follower == null) throw new IllegalArgumentException("VisionFusion needs a non-null Follower");
@@ -236,24 +288,54 @@ public class VisionFusion {
         }
         if (rd == null || rd.pedroPose == null) {
             lastStatus = "no-solve";
-            report();
+
             return;
         }
+        // Same-frame dedup: TeleOp corrects twice per loop (RobotRunPeriodic's
+        // predict + the trailing drive update) off one ~10Hz LL packet. The
+        // re-poll returns bit-identical doubles with an aging staleness; skip it
+        // so the frame fuses once. A genuinely new frame resets staleness (or
+        // changes a byte) and still fuses. Snapshot below stays from the first
+        // call, so the once-per-loop report() is unaffected.
+        long nowNs = System.nanoTime();
+        if (hasLastFrame && (nowNs - lastPollNs) < SAME_FRAME_MAX_NS
+                && rd.tagCount == lastFrameTags
+                && rd.latencyMs == lastFrameLat
+                && rd.stalenessMs >= lastFrameStale - 1
+                && rd.pedroPose.x() == lastFrameX
+                && rd.pedroPose.y() == lastFrameY
+                && Double.compare(rd.pedroPose.heading(), lastFrameH) == 0
+                && Double.compare(rd.mt1HeadingRad, lastFrameMt1) == 0
+                && Double.compare(rd.llYawDeg, lastFrameYaw) == 0) {
+            return;
+        }
+        lastPollNs = nowNs;
+        hasLastFrame = true;
+        lastFrameX = rd.pedroPose.x();
+        lastFrameY = rd.pedroPose.y();
+        lastFrameH = rd.pedroPose.heading();
+        lastFrameMt1 = rd.mt1HeadingRad;
+        lastFrameTags = rd.tagCount;
+        lastFrameLat = rd.latencyMs;
+        lastFrameYaw = rd.llYawDeg;
+        lastFrameStale = rd.stalenessMs;
         lastVision = rd.pedroPose;
-        lastMt2 = rd.isMt2;
+        lastMt2 = rd.hasMt2;
         lastVisionClusterOnly = rd.clusterOnly;
         lastTags = rd.tagCount;
 
-        // ---- absolute reject gates (garbage only) ----
-        if (!Double.isFinite(rd.pedroPose.x()) || !Double.isFinite(rd.pedroPose.y())
-                || !Double.isFinite(rd.pedroPose.heading())) {
+        // ---- absolute reject gates (XY source: NaN / stale only) ----
+        // NOTE: heading is NOT gated here — MT2 yaw never fuses (NaN-masked in
+        // fuse()), and MT1 yaw has its own strict gates below. A garbage MT2 yaw
+        // cannot hurt us; only garbage XY can.
+        if (!Double.isFinite(rd.pedroPose.x()) || !Double.isFinite(rd.pedroPose.y())) {
             lastStatus = "reject-nan";
-            report();
+
             return;
         }
         if (rd.stalenessMs > MAX_STALENESS_MS) {
             lastStatus = "reject-stale";
-            report();
+
             return;
         }
         // ---- Stage 1: rest-signature sanity (TipSanityFilter, always on) ----
@@ -265,13 +347,13 @@ public class VisionFusion {
             sanity = tipFilter.filter(rd);
         } catch (Exception e) {
             lastStatus = "sanity-exception";
-            report();
+
             return;
         }
         if (sanity == null || !sanity.accepted()) {
             lastStatus = sanity == null ? "reject-sanity"
                     : "reject-" + sanity.verdict.name().toLowerCase().replace("reject_", "");
-            report();
+
             return;
         }
         // ---- Stage 2 (DISABLED): rest-projection rescue ----
@@ -286,7 +368,7 @@ public class VisionFusion {
                         rd.pedroPose, rd.botPitchDeg, rd.botRollDeg, rd.botZMeters);
                 if (comp == null) {
                     lastStatus = "reject-uncompensatable";
-                    report();
+        
                     return;
                 }
                 measPose = comp.pose;
@@ -294,7 +376,7 @@ public class VisionFusion {
                 lastStatus = "compensated";
             } catch (Exception e) {
                 lastStatus = "compensate-exception";
-                report();
+    
                 return;
             }
         }
@@ -302,7 +384,7 @@ public class VisionFusion {
         // Ships false (you localize off the clusters); Stage 1 still drops tipped ones.
         if (REJECT_CLUSTER_ONLY && rd.clusterOnly) {
             lastStatus = "reject-cluster";
-            report();
+
             return;
         }
         // Rest-signature backstop: GOOD (cell at rest) reports flat ~= 0 because
@@ -310,41 +392,49 @@ public class VisionFusion {
         // Mirrors TipSanityFilter (the real gate) — see note on the tunables.
         if (MAX_BOT_PITCH_DEG > 0 && Math.abs(rd.botPitchDeg) > MAX_BOT_PITCH_DEG) {
             lastStatus = "reject-tilt";
-            report();
+
             return;
         }
         if (MAX_BOT_ROLL_DEG > 0 && Math.abs(rd.botRollDeg) > MAX_BOT_ROLL_DEG) {
             lastStatus = "reject-tilt";
-            report();
+
             return;
         }
         //filters out tags not at the height they should be (untipped)
 //        if (!(rd.botZMeters >= BOT_Z_MIN_M && rd.botZMeters <= BOT_Z_MAX_M)) {
 //            lastStatus = "reject-height";
-//            report();
+//
 //            return;
 //        }
         if (rd.pedroPose.x() < -FIELD_MARGIN_IN || rd.pedroPose.x() > 144.0 + FIELD_MARGIN_IN
                 || rd.pedroPose.y() < -FIELD_MARGIN_IN || rd.pedroPose.y() > 144.0 + FIELD_MARGIN_IN) {
             lastStatus = "reject-off-field";
-            report();
+
             return;
         }
-        // Residuals are computed against the FUSED pose but the MEASUREMENT is
-        // measPose (== raw now; compensated once Stage 2 is enabled/tested).
+        // Residuals: XY residual always; yaw residual only when MT1 present.
         double dx = measPose.x() - fused.x();
         double dy = measPose.y() - fused.y();
         double dxy = Math.hypot(dx, dy);
-        double dhDeg = Math.abs(Math.toDegrees(
-                Angle.normalizeSigned(measPose.heading() - fused.heading())));
         lastResidualIn = dxy;
-        if (dxy > MAX_JUMP_XY_IN && dhDeg > MAX_JUMP_HEADING_DEG) {
-            lastStatus = "reject-jump";
-            report();
+        double dhDeg = Double.NaN;
+        if (rd.hasMt1) {
+            dhDeg = Math.abs(Math.toDegrees(
+                    Angle.normalizeSigned(rd.mt1HeadingRad - fused.heading())));
+            lastYawResidualDeg = dhDeg;
+        } else {
+            lastYawResidualDeg = Double.NaN;
+        }
+        // XY teleport gate stays AND (a bad XY solve is garbage regardless).
+        // The old XY-AND-heading combined gate is gone: MT2 yaw never fuses, so
+        // a yaw jump alone must NEVER reject a good XY frame.
+        if (dxy > MAX_JUMP_XY_IN) {
+            lastStatus = "reject-jump-xy";
+
             return;
         }
 
-        // ---- soft R scaling (everything below multiplies trust down) ----
+        // ---- soft R scaling: XY path (MT2) ----
         double speedIps = 0, omegaRps = 0;
         if (vel != null) {
             speedIps = Math.hypot(vel.vx, vel.vy);
@@ -354,20 +444,16 @@ public class VisionFusion {
         }
 
         double sXY = 1.0;
-        double sH = 1.0;
 
-        // Source quality: MT1 fallback + single tag.
-        if (!rd.isMt2) sXY *= MT1_XY_PENALTY;
+        // XY source quality: MT1-position fallback (no MT2) is less trusted.
+        if (!rd.hasMt2) sXY *= MT1_XY_PENALTY;
         if (rd.tagCount < 2) {
             // tagCount is 0/1 here (2+ skips this block); 0 = LL gave no count.
-            double p = SINGLE_TAG_PENALTY * (rd.tagCount == 1 ? 1.0 : 0.5);
-            sXY *= p;
-            sH *= p;
+            sXY *= SINGLE_TAG_PENALTY * (rd.tagCount == 1 ? 1.0 : 0.5);
         }
-        // Multi-tag MT2 with a narrow baseline triangulates poorly.
-        if (rd.isMt2 && rd.tagCount >= 2 && rd.spanM > 0 && rd.spanM < SPAN_REF_M) {
-            double k = 1.0 + 2.0 * (1.0 - rd.spanM / SPAN_REF_M);
-            sXY *= k;
+        // Narrow multi-tag baseline triangulates poorly.
+        if (rd.hasMt2 && rd.tagCount >= 2 && rd.spanM > 0 && rd.spanM < SPAN_REF_M) {
+            sXY *= 1.0 + 2.0 * (1.0 - rd.spanM / SPAN_REF_M);
         }
         // Distance falloff past close range.
         if (rd.avgDistM > CLOSE_DIST_M) {
@@ -382,20 +468,80 @@ public class VisionFusion {
         sXY *= 1.0 + speedK * speedK;
         double turnK = omegaRps / Math.max(TURN_REF_RPS, 1e-6);
         sXY *= 1.0 + turnK * turnK;
-        double hTurnK = omegaRps / Math.max(HEADING_TURN_REF_RPS, 1e-6);
-        sH *= 1.0 + hTurnK * hTurnK;
-        double hSpeedK = speedIps / Math.max(HEADING_SPEED_REF_IPS, 1e-6);
-        sH *= 1.0 + hSpeedK;
-        // Innovation: smooth ramp, never a cliff.
+        // Seed agreement repurposed: a wrong seed poisons the MT2 XY solve, so
+        // disagreement scales sXY (never heading — heading doesn't fuse from MT2).
+        double seedAgrDeg = Double.NaN;
+        if (rd.hasMt2 && Double.isFinite(rd.llYawDeg)) {
+            // Seed as-sent was fieldYawDeg; map it back to the LL frame the
+            // same way seedYaw() does: LL = (field − offset) · sign.
+            double seedLlDeg = norm180Deg((fieldYawDeg - Vision.LL_YAW_OFFSET_DEG) * Vision.LL_YAW_SIGN);
+            seedAgrDeg = Math.abs(norm180Deg(rd.llYawDeg - seedLlDeg));
+            lastSeedAgrDeg = seedAgrDeg;
+            if (YAW_AGR_REJECT_DEG > 0 && seedAgrDeg > YAW_AGR_REJECT_DEG) {
+                lastStatus = "reject-seed";
+    
+                return;
+            }
+            if (YAW_DISAGREE_PENALTY > 1 && seedAgrDeg > YAW_AGR_FULL_DEG) {
+                double t = Math.min((seedAgrDeg - YAW_AGR_FULL_DEG)
+                        / Math.max(YAW_AGR_MAX_DEG - YAW_AGR_FULL_DEG, 1e-6), 1.0);
+                sXY *= 1.0 + (YAW_DISAGREE_PENALTY - 1.0) * t * t;
+            }
+        } else {
+            lastSeedAgrDeg = Double.NaN;
+        }
+        // XY innovation: smooth ramp, never a cliff.
         if (dxy > RESIDUAL_FULL_IN) {
             double t = Math.min((dxy - RESIDUAL_FULL_IN)
                     / Math.max(RESIDUAL_MAX_IN - RESIDUAL_FULL_IN, 1e-6), 1.0);
-            double p = 1.0 + (RESIDUAL_MAX_PENALTY - 1.0) * t * t;
-            sXY *= p;
-            sH *= p;
+            sXY *= 1.0 + (RESIDUAL_MAX_PENALTY - 1.0) * t * t;
         }
 
-        // Limelight self-reported stddev: trusted 1:1 only when small.
+        // ---- MT1 yaw path: strict gates, then its own R ----
+        // A flipped single-tag solve is worse than none: default is SKIP yaw.
+        boolean fuseYaw = rd.hasMt1;
+        String yawSkip = "none";
+        double yawResidDeg = dhDeg;
+        if (fuseYaw && rd.tagCount < YAW_MIN_TAGS) {
+            fuseYaw = false;
+            yawSkip = "tags";
+        }
+        if (fuseYaw && speedIps > YAW_MAX_SPEED_IPS) {
+            fuseYaw = false;
+            yawSkip = "speed";
+        }
+        if (fuseYaw && omegaRps > YAW_MAX_OMEGA_RPS) {
+            fuseYaw = false;
+            yawSkip = "turn";
+        }
+        if (fuseYaw && rd.avgDistM > YAW_MAX_DIST_M) {
+            fuseYaw = false;
+            yawSkip = "dist";
+        }
+        if (fuseYaw && Double.isFinite(yawResidDeg) && yawResidDeg > YAW_MAX_RESIDUAL_DEG) {
+            fuseYaw = false;
+            yawSkip = "residual";
+        }
+        lastYawFused = fuseYaw;
+        lastYawSkip = fuseYaw ? "fused" : yawSkip;
+        double rH = Double.NaN;
+        if (fuseYaw) {
+            // Slow pull only: base 18deg stddev + floor + residual ramp.
+            // NOTE: sH starts at 1.0 here — the old motion-blur/turn terms applied
+            // to MT2-echo yaw and must NOT touch independent MT1 yaw. MT1 yaw at
+            // speed is handled by the YAW_MAX_* hard gates above, not soft scaling.
+            double sH = 1.0;
+            if (Double.isFinite(yawResidDeg) && yawResidDeg > RESIDUAL_FULL_IN) {
+                double t = Math.min(yawResidDeg / Math.max(YAW_MAX_RESIDUAL_DEG, 1e-6), 1.0);
+                sH *= 1.0 + (RESIDUAL_MAX_PENALTY - 1.0) * t * t;
+            }
+            rH = BASE_R_HEADING * Math.min(sH, MAX_TOTAL_SCALE);
+            rH = Math.max(rH, MT1_HEADING_R);
+            rH = Math.min(rH * compRScale, BASE_R_HEADING * MAX_TOTAL_SCALE);
+        }
+        lastYawR = rH;
+
+        // Limelight self-reported stddev: trusted 1:1 only when small (XY path).
         double rXY = BASE_R_XY * Math.min(sXY, MAX_TOTAL_SCALE);
         if (rd.stddevXYIn > 0 && Double.isFinite(rd.stddevXYIn)) {
             if (rd.stddevXYIn <= STDDEV_TRUST_CAP_IN) {
@@ -407,13 +553,10 @@ public class VisionFusion {
                 rXY = Math.min(rXY, BASE_R_XY * MAX_TOTAL_SCALE);
             }
         }
-        double rH = BASE_R_HEADING * Math.min(sH, MAX_TOTAL_SCALE);
-        if (!rd.isMt2) rH = Math.max(rH, MT1_HEADING_R);
-        // Stage 2 rescue inflates R for its residual pivot-arc error (1.0 when disabled).
+        // Stage 2 rescue inflates XY R for its residual pivot-arc error (1.0 when off).
         rXY = Math.min(rXY * compRScale, BASE_R_XY * MAX_TOTAL_SCALE);
-        rH = Math.min(rH * compRScale, BASE_R_HEADING * MAX_TOTAL_SCALE);
 
-        lastScale = Math.max(rXY / BASE_R_XY, rH / BASE_R_HEADING);
+        lastScale = rXY / BASE_R_XY;
         lastRx = rXY;
         lastRh = rH;
 
@@ -422,19 +565,33 @@ public class VisionFusion {
         long stampNs = System.nanoTime() - (long) (latMs * 1.0e6);
 
         try {
-            fusion.addMeasurement(measPose, stampNs, new Pose(rXY, rXY, rH));
+            fuse(fusion, measPose, rd.mt1HeadingRad, fuseYaw, stampNs, rXY, rH);
             // Preserve the compensated marker when Stage 2 actually rescued.
             if (!"compensated".equals(lastStatus)) {
-                lastStatus = rd.isMt2 ? "fused-mt2" : "fused-mt1";
+                lastStatus = fuseYaw ? "fused-xy-yaw" : "fused-xy";
             }
         } catch (Exception e) {
             lastStatus = "addMeasurement-exception";
         }
-        report();
     }
 
-    /** Panels telemetry for this loop (addData only — caller flushes once). */
+    /**
+     * Once-per-loop Panels snapshot (addData only — {@link RobotMain#flushTelemetry()}
+     * calls this right before the single {@code update()}). Includes the latest
+     * {@link TipSanityFilter} decision so {@code Tip/*} also appears exactly once.
+     * Safe to call when inactive (reports the sticky last-loop snapshot).
+     */
     public void report() {
+        TipSanityFilter.Decision sanity = tipFilter.lastDecision();
+        if (sanity != null) {
+            RobotMain.DashTelemetry.addData("Tip/verdict", sanity.verdict);
+            RobotMain.DashTelemetry.addData("Tip/pitchDeg", "%.1f", sanity.pitchDeg);
+            RobotMain.DashTelemetry.addData("Tip/rollDeg", "%.1f", sanity.rollDeg);
+            RobotMain.DashTelemetry.addData("Tip/zM", "%.3f", sanity.zMeters);
+            if (Double.isFinite(sanity.speedIps)) {
+                RobotMain.DashTelemetry.addData("Tip/solveSpeedIps", "%.1f", sanity.speedIps);
+            }
+        }
         RobotMain.DashTelemetry.addData("Fusion/status", lastStatus);
         RobotMain.DashTelemetry.addData("Fusion/active", isActive());
         if (lastVision != null) {
@@ -449,7 +606,12 @@ public class VisionFusion {
         }
         RobotMain.DashTelemetry.addData("Fusion/scale", "%.2fx", lastScale);
         RobotMain.DashTelemetry.addData("Fusion/Rxy", "%.2f", lastRx);
-        RobotMain.DashTelemetry.addData("Fusion/Rh", "%.4f", lastRh);
+        RobotMain.DashTelemetry.addData("Fusion/Rh", Double.isFinite(lastRh) ? String.format(Locale.US, "%.4f", lastRh) : "skip");
+        RobotMain.DashTelemetry.addData("Fusion/yaw", lastYawSkip
+                + (Double.isFinite(lastYawResidualDeg)
+                        ? String.format(Locale.US, " res=%.1f", lastYawResidualDeg) : ""));
+        RobotMain.DashTelemetry.addData("Fusion/seedAgrDeg", Double.isFinite(lastSeedAgrDeg)
+                ? String.format(Locale.US, "%.1f", lastSeedAgrDeg) : "n/a");
         if (Double.isFinite(lastResidualIn)) {
             RobotMain.DashTelemetry.addData("Fusion/residualIn", "%.2f", lastResidualIn);
         }
@@ -478,5 +640,30 @@ public class VisionFusion {
     @Nullable
     public Pose lastVisionPose() {
         return lastVision;
+    }
+
+    /**
+     * Axis-masked fuse. MT2 yaw is NEVER fused (NaN-masked): it is seed echo,
+     * not measurement — fusing it double-counts the gyro in a feedback loop.
+     * XY always fuses from measPose; yaw fuses from the independent MT1 solve
+     * only when fuseYaw passed the strict gates. FusionLocalizer skips NaN
+     * components per axis (verified in 3.0.1 bytecode). Single addMeasurement
+     * call carries both axes; the yaw component is NaN when yaw is skipped.
+     */
+    private static void fuse(FusionLocalizer fusion, Pose xyPose, double mt1HeadingRad,
+                             boolean fuseYaw, long stampNs, double rXY, double rH) {
+        double yaw = (fuseYaw && Double.isFinite(mt1HeadingRad)) ? mt1HeadingRad : Double.NaN;
+        double yawR = (fuseYaw && Double.isFinite(rH)) ? rH : Double.NaN;
+        fusion.addMeasurement(
+                new Pose(xyPose.x(), xyPose.y(), yaw),
+                stampNs,
+                new Pose(rXY, rXY, yawR));
+    }
+
+    private static double norm180Deg(double deg) {
+        deg %= 360.0;
+        if (deg > 180.0) deg -= 360.0;
+        if (deg < -180.0) deg += 360.0;
+        return deg;
     }
 }
