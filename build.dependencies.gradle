@@ -21,9 +21,19 @@ dependencies {
     // (@Configurable) and the Field widget; Dashboard's TelemetryPacket
     // field overlay + @Config are replaced by PanelsFieldRenderer.
     implementation 'com.pedropathing:revhub:3.0.1'
-    // Required by TeamCode pedro/procedures/* + Tuning.java (autotune API).
-    // Must stay: commenting it out breaks compile (Procedure/Tuner not found).
-    implementation 'com.pedropathing:tuning:1.0.1'
+    // Pedro AutoTune (tuning procedures + Sloth). Gated by the pedroTuning
+    // flag in gradle.properties: false = excluded (normal driving, Panels
+    // @Configurable works); true = included (tuning sessions only).
+    // com.pedropathing:tuning bundles Sloth, and Sloth duplicates classes,
+    // which silently breaks Panels Configurables (Panels updates a different
+    // copy of the statics than the OpModes use). After flipping the flag:
+    // Sync + Rebuild. TeamCode/build.gradle also excludes
+    // pedro/Tuning.java + pedro/procedures/* from compilation when false,
+    // since those sources import com.pedropathing.tuning.*.
+    def pedroTuningEnabled = (rootProject.findProperty('pedroTuning') ?: "false").toString().toBoolean()
+    if (pedroTuningEnabled) {
+        implementation 'com.pedropathing:tuning:1.0.1'
+    }
     implementation 'com.pedropathing.ivy:pedro:1.1.1'
     // FTControl Panels, subset (2026-09-19): core + 10 plugins instead of
     // com.bylazar:fullpanels:1.0.13 (which bundles ~15 modules incl. Themes,

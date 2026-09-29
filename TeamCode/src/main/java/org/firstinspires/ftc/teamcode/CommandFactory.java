@@ -113,20 +113,18 @@ public class CommandFactory {
 
         @Override
         public InterruptedBehavior interruptedBehavior() {
-            return null;
+            return InterruptedBehavior.END;
         }
 
         @Override
         public ConflictBehavior conflictBehavior() {
-            return null;
+            return ConflictBehavior.OVERRIDE;
         }
 
         @Override
         public BlockedBehavior blockedBehavior() {
-            return null;
+            return BlockedBehavior.CANCEL;
         }
-
-
     };
 
     public Command ServoToPos(double GotoPos) {

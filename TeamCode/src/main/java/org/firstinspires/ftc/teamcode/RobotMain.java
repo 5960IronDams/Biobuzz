@@ -61,12 +61,12 @@ public class RobotMain {
         cells = new HiveCellMonitor(vision);
         fieldRenderer.drawPedroPose(follower.pose());
         intake = new Intake(opmode);
-        flywheel = new Flywheel(opmode);
+        //flywheel = new Flywheel(opmode);
         PosServ = new PositionalServo(opmode);
 
 
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
-        CommandF = new CommandFactory(follower,intake,flywheel,PosServ, opmode.hardwareMap);
+        CommandF = new CommandFactory(follower,intake,null,PosServ, opmode.hardwareMap);
 
         //declare what alliance we are on to BOTH telemetry outputs
         //this is for one good final double check for the driver and co pilot

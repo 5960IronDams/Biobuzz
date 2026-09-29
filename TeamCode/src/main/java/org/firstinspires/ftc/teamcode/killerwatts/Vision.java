@@ -67,14 +67,15 @@ public class Vision {
     public static double LL_Y_OFFSET_IN = 0.0;
     /**
      * Constant added to the Limelight yaw (degrees, CCW+) to get FIRST field
-     * heading (0 = +Y). BIOBUZZ value is 180: every cluster sticker is glued
-     * with its bottom edge toward FIELD CENTER, so the tag's in-map "up"
-     * points opposite the field +Y the seed assumes. This is a physical fact
-     * about sticker orientation, NOT a fudge factor — it round-trips through
-     * seedYaw() (subtracted) and toPedroPose() (added), so keep it at 180
-     * unless the stickers get remounted.
+     * heading (0 = +Y). CALIBRATE ONCE, in code only — leave the Limelight web
+     * UI yaw offset at 0. Procedure: park at a KNOWN field heading H (e.g.
+     * facing +Y => H=0, facing +X/east => H=90), read {@code Fusion/mt1LlRawDeg}
+     * (raw MT1 yaw straight off the tag solve, no mapping), then set this to
+     * norm180(H − raw). The same offset round-trips through seedYaw()
+     * (subtracted before sending the seed) and toPedroPose() (added on return),
+     * so one value serves both MT1-yaw and the MT2 seed.
      */
-    public static double LL_YAW_OFFSET_DEG = 180.0;
+    public static double LL_YAW_OFFSET_DEG = 0;
     /** Sign of the Limelight yaw (1 = CCW+, -1 = CW+). */
     public static double LL_YAW_SIGN = 1.0;
     /**
@@ -163,6 +164,21 @@ public class Vision {
          * MT2 yaw health signal on down-facing tag geometry.
          */
         public final double llYawDeg;
+        /**
+         * Raw MT1 yaw straight off the tag solve (deg, LL map frame) BEFORE
+         * any LL_* mapping. Calibration reference: park at a known field
+         * heading H and read this — offset = norm180(H − this). Panels:
+         * {@code Fusion/mt1LlRawDeg}. NaN when MT1 absent.
+         */
+        public final double mt1LlRawDeg;
+        /**
+         * Raw MT2 yaw straight off the tag solve (deg, LL map frame) BEFORE
+         * any mapping. Normally ~= the seed echoed back (MT2's yaw output is
+         * dominated by the gyro seed, NOT an independent measurement) — the
+         * Panels {@code Fusion/seedAgrDeg} line is |this − seed|. NaN when
+         * MT2 absent.
+         */
+        public final double mt2LlRawDeg;
 
         Reading(Pose pedroPose, double mt1HeadingRad, boolean hasMt2, boolean hasMt1,
                 int tagCount, double avgDistM,
@@ -170,7 +186,7 @@ public class Vision {
                 double latencyMs, long stalenessMs,
                 int[] fiducialIds, boolean clusterOnly,
                 double botPitchDeg, double botRollDeg, double botZMeters,
-                double llYawDeg) {
+                double llYawDeg, double mt1LlRawDeg, double mt2LlRawDeg) {
             this.pedroPose = pedroPose;
             this.mt1HeadingRad = mt1HeadingRad;
             this.hasMt2 = hasMt2;
@@ -188,6 +204,8 @@ public class Vision {
             this.botRollDeg = botRollDeg;
             this.botZMeters = botZMeters;
             this.llYawDeg = llYawDeg;
+            this.mt1LlRawDeg = mt1LlRawDeg;
+            this.mt2LlRawDeg = mt2LlRawDeg;
         }
     }
 
@@ -366,6 +384,7 @@ public class Vision {
         // Botpose attitude sanity off the XY source; seed-agreement yaw likewise.
         // GOOD (cell at rest, map holding the 30deg) reports flat ~= 0.
         double botPitchDeg = 0, botRollDeg = 0, botZM = 0, llYawDeg = Double.NaN;
+        double mt1RawDeg = Double.NaN, mt2RawDeg = Double.NaN;
         try {
             botPitchDeg = xySource.getOrientation().getPitch(AngleUnit.DEGREES);
             botRollDeg = xySource.getOrientation().getRoll(AngleUnit.DEGREES);
@@ -373,9 +392,20 @@ public class Vision {
             botZM = xySource.getPosition().toUnit(DistanceUnit.METER).z;
         } catch (Exception ignored) {
         }
+        // Raw yaw off EACH solve before mapping — the calibration reference.
+        // mt2 yaw is normally seed echo; mt1 yaw is the independent solve.
+        try {
+            if (mt1 != null) mt1RawDeg = mt1.getOrientation().getYaw(AngleUnit.DEGREES);
+        } catch (Exception ignored) {
+        }
+        try {
+            if (mt2 != null) mt2RawDeg = mt2.getOrientation().getYaw(AngleUnit.DEGREES);
+        } catch (Exception ignored) {
+        }
 
         return new Reading(pedro, mt1HeadingRad, hasMt2, hasMt1, tags, dist, area, span,
-                stdXY, latMs, staleMs, ids, clusterOnly, botPitchDeg, botRollDeg, botZM, llYawDeg);
+                stdXY, latMs, staleMs, ids, clusterOnly, botPitchDeg, botRollDeg, botZM, llYawDeg,
+                mt1RawDeg, mt2RawDeg);
     }
 
     /**

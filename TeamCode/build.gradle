@@ -37,3 +37,18 @@ android {
 dependencies {
     implementation project(':FtcRobotController')
 }
+
+// Pedro tuning toggle (pairs with the pedroTuning flag in gradle.properties
+// and the conditional 'com.pedropathing:tuning' dep in build.dependencies.gradle).
+// When false, exclude the AutoTune sources — pedro/Tuning.java +
+// pedro/procedures/* — because they import com.pedropathing.tuning.*,
+// which isn't on the classpath when tuning is off. Nothing else references
+// them (Constants.java only mentions Tuning in a javadoc {@link}, which
+// javac ignores), so match play / FusionTune / autos compile unchanged.
+def pedroTuningEnabledTeamCode = (rootProject.findProperty('pedroTuning') ?: "false").toString().toBoolean()
+if (!pedroTuningEnabledTeamCode) {
+    android.sourceSets.main.java.exclude(
+        'org/firstinspires/ftc/teamcode/pedro/Tuning.java',
+        'org/firstinspires/ftc/teamcode/pedro/procedures/*.java'
+    )
+}

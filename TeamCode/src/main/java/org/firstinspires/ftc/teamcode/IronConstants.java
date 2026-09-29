@@ -7,7 +7,7 @@ public class IronConstants {
     public static final Pose FieldCenter = new Pose(FieldXYMaxPoint.x()/2,FieldXYMaxPoint.y()/2,0);
 
     public static final String IntakeMotorName = "intake";
-    public static final String FlywheelMotorName = "intake";
+    public static final String FlywheelMotorName = "flywheel";
     public static final String FrontServoName = "eeerrr";
 
     //TODO: Test todo.
