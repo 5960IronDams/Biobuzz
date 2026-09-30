@@ -52,6 +52,13 @@ public class FusionTune extends OpMode {
     }
 
     @Override
+    public void stop() {
+        if (robot != null) {
+            robot.shutdown();
+        }
+    }
+
+    @Override
     public void loop() {
         robot.RobotRunPeriodic();
         if (robot.follower == null) {
@@ -104,7 +111,9 @@ public class FusionTune extends OpMode {
             RobotMain.DashTelemetry.addData("Fusion/vision", Vision.class.getSimpleName() + " not configured");
         }
 
-        robot.fieldRenderer.drawPedroPose(robot.follower.pose());
+        // No field draw here — flushTelemetry() paints once per loop (fused robot
+        // + raw MT1 yellow / MT2 green): park level with 2+ tags visible and all
+        // three must agree (frame-map check from the class javadoc, now visual).
         robot.flushTelemetry();
     }
 }

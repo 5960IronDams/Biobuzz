@@ -61,6 +61,21 @@ public class Vision {
     public static double LL_X_SIGN = 1.0;
     /** Sign applied to Limelight Y (meters) before inches conversion. */
     public static double LL_Y_SIGN = 1.0;
+    /**
+     * TRUE when the Limelight field frame is rotated -90deg vs the FTC frame
+     * this class assumes (LL +X = field south, LL +Y = field east).
+     *
+     * <p>Verified 2026-09-29 against {@code fiducials(4).fmap} + a stationary
+     * log: (1) mapped visY matched the robot's true Pedro X (55.36) to 0.1 in
+     * — the transposition signature; (2) under the rotation, the fmap's 34/35
+     * positions resolve to a physically-correct east-west tag row ~49.5 in
+     * ahead of the robot; (3) MT1 raw yaw read ~±180deg for a north-facing
+     * robot = facing the fmap frame's −X. Applies AFTER the per-axis
+     * signs/offsets: field_x = ll_y, field_y = −ll_x. Yaw is untouched (it has
+     * its own offset below), and the seed path carries yaw only, so seeding is
+     * unaffected by the swap itself.
+     */
+    public static boolean LL_SWAP_XY = true;
     /** Fine trim added to Limelight X after conversion, inches. */
     public static double LL_X_OFFSET_IN = 0.0;
     /** Fine trim added to Limelight Y after conversion, inches. */
@@ -74,8 +89,15 @@ public class Vision {
      * norm180(H − raw). The same offset round-trips through seedYaw()
      * (subtracted before sending the seed) and toPedroPose() (added on return),
      * so one value serves both MT1-yaw and the MT2 seed.
+     *
+     * <p>Ships at 180 (2026-09-29): the {@code fiducials(4).fmap} frame's yaw
+     * zero faces the fmap +X axis (physical south under the {@link #LL_SWAP_XY}
+     * rotation), so a north-facing robot reads raw ≈ ±180. field = raw + 180
+     * maps both ±180 modes to 0 ✓, and the seed inverse (field − 180) sends
+     * −180 = facing north ✓. Re-verify with the procedure above after any map
+     * re-authoring.
      */
-    public static double LL_YAW_OFFSET_DEG = 0;
+    public static double LL_YAW_OFFSET_DEG = 180;
     /** Sign of the Limelight yaw (1 = CCW+, -1 = CW+). */
     public static double LL_YAW_SIGN = 1.0;
     /**
@@ -116,12 +138,19 @@ public class Vision {
         }
     }
 
-    /** One split-solver frame: MT2 XY + MT1 yaw, same Limelight packet. */
+    /** One split-solver frame: MT2 XY + MT1 yaw, same Limelight packet.
+     * Raw per-solve Pedro poses for the dashboard live in
+     * {@link #mt1Pedro}/{@link #mt2Pedro} (full solves, Pedro frame).
+     * The fused measurement in {@link #pedroPose} is: MT2-conditioned XY + MT1 heading (or NaN).
+     */
     public static final class Reading {
         /**
-         * MT2 pose converted to Pedro frame (inches, corner origin). Its YAW
-         * COMPONENT IS ECHO, NOT MEASUREMENT — downstream must NaN-mask it
-         * out of every addMeasurement (fuse XY only).
+         * Fused measurement pose in Pedro frame (inches, corner origin).
+         * XY: from MT2 when present (gyro-seeded, stable XY in motion), else MT1 fallback.
+         * Heading: ALWAYS from MT1 independent 6DOF solve, or NaN when absent.
+         * NEVER MT2 heading (it is seed-echo, not a measurement). This ensures
+         * the heading fed to the Kalman filter is a true independent measurement,
+         * not gyro-seeded feedback that would double-count rotation.
          */
         public final Pose pedroPose;
         /**
@@ -133,6 +162,21 @@ public class Vision {
         public final boolean hasMt2;
         /** True when the MT1 solve existed this frame (yaw source). */
         public final boolean hasMt1;
+        /**
+         * Raw MT1 full solve in Pedro frame (independent 6DOF: own XY + yaw),
+         * or null when MT1 was absent/disabled. Dashboard-only: the fused XY
+         * comes from {@link #pedroPose} (MT2-conditioned, gyro-seeded); this
+         * is the untouched tag-geometry solve. Yellow on the Field widget.
+         */
+        @Nullable
+        public final Pose mt1Pedro;
+        /**
+         * Raw MT2 full solve in Pedro frame (gyro-seeded: XY + echo yaw),
+         * or null when MT2 was absent. Dashboard-only. Green on the Field
+         * widget.
+         */
+        @Nullable
+        public final Pose mt2Pedro;
         public final int tagCount;
         /** Mean distance to the tags used, meters (from Limelight). */
         public final double avgDistM;
@@ -181,6 +225,7 @@ public class Vision {
         public final double mt2LlRawDeg;
 
         Reading(Pose pedroPose, double mt1HeadingRad, boolean hasMt2, boolean hasMt1,
+                @Nullable Pose mt1Pedro, @Nullable Pose mt2Pedro,
                 int tagCount, double avgDistM,
                 double avgAreaPct, double spanM, double stddevXYIn,
                 double latencyMs, long stalenessMs,
@@ -191,6 +236,8 @@ public class Vision {
             this.mt1HeadingRad = mt1HeadingRad;
             this.hasMt2 = hasMt2;
             this.hasMt1 = hasMt1;
+            this.mt1Pedro = mt1Pedro;
+            this.mt2Pedro = mt2Pedro;
             this.tagCount = tagCount;
             this.avgDistM = avgDistM;
             this.avgAreaPct = avgAreaPct;
@@ -313,6 +360,10 @@ public class Vision {
 
         // MT1 yaw through the SAME mapping (offset + sign + Pedro shift) as
         // positions, so both axes share one frame. NaN when MT1 absent.
+        // NOTE: Heading fusing is handled entirely in VisionFusion via mt1HeadingRad.
+        // pedroPose heading is not used for fusion (it's overridden per-axis in fuse()).
+        // MT2 heading (seed-echo) must NEVER fuse — that's ensured by the NaN-mask
+        // in VisionFusion.fuse() which builds yaw from mt1HeadingRad only.
         double mt1Heading = Double.NaN;
         if (yawSource != null) {
             try {
@@ -403,7 +454,23 @@ public class Vision {
         } catch (Exception ignored) {
         }
 
-        return new Reading(pedro, mt1HeadingRad, hasMt2, hasMt1, tags, dist, area, span,
+        // Raw per-solve Pedro poses for the dashboard overlay: EACH solve mapped
+        // independently through the same LL_* mapping (no axis mixing). Null when
+        // that solve was absent/disabled — the renderer skips nulls. Cheap
+        // (two pose mappings per frame, same math poll() already does).
+        Pose mt1Pedro = null;
+        Pose mt2Pedro = null;
+        try {
+            if (mt1 != null) mt1Pedro = toPedroPose(mt1);
+        } catch (Exception ignored) {
+        }
+        try {
+            if (mt2 != null) mt2Pedro = toPedroPose(mt2);
+        } catch (Exception ignored) {
+        }
+
+        return new Reading(pedro, mt1HeadingRad, hasMt2, hasMt1, mt1Pedro, mt2Pedro,
+                tags, dist, area, span,
                 stdXY, latMs, staleMs, ids, clusterOnly, botPitchDeg, botRollDeg, botZM, llYawDeg,
                 mt1RawDeg, mt2RawDeg);
     }
@@ -447,8 +514,11 @@ public class Vision {
      * Uses the LL_* mapping tunables; see class javadoc.
      */
     public static Pose toPedroPose(Pose3D botpose) {
-        double xFieldIn = botpose.getPosition().toUnit(DistanceUnit.INCH).x * LL_X_SIGN + LL_X_OFFSET_IN;
-        double yFieldIn = botpose.getPosition().toUnit(DistanceUnit.INCH).y * LL_Y_SIGN + LL_Y_OFFSET_IN;
+        double xIn = botpose.getPosition().toUnit(DistanceUnit.INCH).x * LL_X_SIGN + LL_X_OFFSET_IN;
+        double yIn = botpose.getPosition().toUnit(DistanceUnit.INCH).y * LL_Y_SIGN + LL_Y_OFFSET_IN;
+        // Frame rotation (see LL_SWAP_XY): LL frame is -90deg off the FTC frame.
+        double xFieldIn = LL_SWAP_XY ? yIn : xIn;
+        double yFieldIn = LL_SWAP_XY ? -xIn : yIn;
         double llYawRad = botpose.getOrientation().getYaw(AngleUnit.RADIANS);
         double fieldYawRad = wrapPi(llYawRad * LL_YAW_SIGN + Math.toRadians(LL_YAW_OFFSET_DEG));
         return PedroFieldBridge.fieldToPedro(xFieldIn, yFieldIn, fieldYawRad);
@@ -473,6 +543,18 @@ public class Vision {
             }
         } catch (Exception ignored) {
         }
+    }
+
+    /**
+     * Seed MT2 with a Pedro-frame heading, converting it to Limelight frame.
+     * <p>Use this when you already have the fused heading in Pedro frame and want to
+     * seed the Limelight without manually converting to field frame first.
+     * Pipeline: Pedro (0=+X) -> Field (0=+Y, -90deg) -> Limelight.
+     */
+    public void seedYawPedroFrame(double pedroHeadingRad) {
+        // Convert Pedro frame -> Field frame: field = pedro - π/2
+        double fieldHeadingRad = wrapPi(pedroHeadingRad - Math.PI / 2.0);
+        seedYaw(Math.toDegrees(fieldHeadingRad));
     }
 
     // ---- legacy API (kept for compatibility) ----

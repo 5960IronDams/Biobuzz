@@ -35,7 +35,8 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
  * </pre>
  * {@code update()} must run once per loop, AFTER {@code RobotRunPeriodic}, because
  * it applies the follower powers (aim PID output from the scheduler, or fresh stick
- * powers) with a trailing {@code follower.update()} + field draw.
+ * powers) with a trailing {@code follower.update()} + vision correct. The field
+ * draw happens once per loop in {@code flushTelemetry()}, after this returns.
  *
  * <p>Subsystems are hardware-only: they expose Panels-tunable state plus command-safe
  * APIs and never touch a gamepad. Every button/stick lives here. Gamepad2 is currently
@@ -129,8 +130,8 @@ public class KeyBindings {
         robot.follower.update();
         // Correct AFTER the trailing update (same predict->correct order as RobotMain).
         // Same-frame re-poll no-ops inside VisionFusion; a new LL frame still fuses.
+        // No field draw here — flushTelemetry() paints once per loop (final pose).
         if (robot.visionFusion != null) robot.visionFusion.correct();
-        robot.fieldRenderer.drawPedroPose(robot.follower.pose());
     }
 
     private void cancelAim() {

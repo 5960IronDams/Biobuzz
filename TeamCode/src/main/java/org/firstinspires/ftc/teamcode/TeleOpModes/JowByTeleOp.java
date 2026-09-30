@@ -19,7 +19,10 @@ public class JowByTeleOp extends OpMode {
         keys = new KeyBindings(this, robot);
         //setAutonPose();
 
-
+        // Flush once so the telemetry log captures the init phase too (without
+        // this, the log jumps straight from "RobotMain initialized" to the
+        // first loop tick after play is pressed).
+        robot.flushTelemetry();
     }
     @Override
     public void start() {
@@ -36,6 +39,9 @@ public class JowByTeleOp extends OpMode {
     public void stop() {
         if (keys != null) {
             keys.stop();
+        }
+        if (robot != null) {
+            robot.shutdown();
         }
     }
 

@@ -85,7 +85,13 @@ public abstract class AutoOpMode extends OpMode {
     }
     @Override
     public void stop() {
-        RobotMain.autonomousEndPose = robot.follower.pose(); //saves your position in that file
+        if (robot != null) {
+            try {
+                RobotMain.autonomousEndPose = robot.follower.pose(); //saves your position in that file
+            } catch (Exception ignored) {
+            }
+            robot.shutdown();
+        }
         telemetry.addData("AutonEndPose", "saved");
         telemetry.update();
     }
@@ -106,17 +112,13 @@ public abstract class AutoOpMode extends OpMode {
         telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
         telemetry.addData("Follower Mode", robot.follower.mode());
         telemetry.update();
-        // Mirror to Panels + draw (addData only — caller flushes once at the end).
+        // Mirror to Panels (addData only — flushTelemetry() draws the field once
+        // at the end of the tick, so init()/init_loop() paint too).
         RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
         RobotMain.DashTelemetry.addData("X", robot.follower.pose().x());
         RobotMain.DashTelemetry.addData("Y", robot.follower.pose().y());
         RobotMain.DashTelemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
         RobotMain.DashTelemetry.addData("Follower Mode", robot.follower.mode());
-        // Draw the Pedro pose on the Panels field widget (Pedro-native;
-        // conversion handled inside the renderer).
-        if (robot.follower != null && robot.follower.pose() != null) {
-            robot.fieldRenderer.drawPedroPose(robot.follower.pose());
-        }
     }
 
 
