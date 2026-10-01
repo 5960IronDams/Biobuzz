@@ -8,9 +8,8 @@ import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 import com.pedropathing.ivy.Command;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.AutoOpMode;
 
-public class _L_ShootLFlowerShootL extends AutoOpMode {
+public class _L_ShootLFlowerShootL extends AutoOpModeBase {
 
     public _L_ShootLFlowerShootL()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
     {

@@ -20,6 +20,7 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.teamcode.IronConstants;
 
 /**
  * Pedro Pathing 3 wiring: drivetrain + localizer + algorithm factories and the
@@ -44,10 +45,10 @@ public class Constants {
     // Paste the tuner's generated block here. Motor names MUST match your RC
     // config (yours: leftFront / leftBack / rightFront / rightBack).
     public static MecanumConfig drivetrainConfig = new MecanumConfig(c -> {
-        c.frontLeftName.set("leftFront");
-        c.frontRightName.set("rightFront");
-        c.backLeftName.set("leftBack");
-        c.backRightName.set("rightBack");
+        c.frontLeftName.set(IronConstants.FLMotor);
+        c.frontRightName.set(IronConstants.FRMotor);
+        c.backLeftName.set(IronConstants.RLMotor);
+        c.backRightName.set(IronConstants.RRMotor);
         c.frontLeftDirection.set(DcMotorSimple.Direction.FORWARD);
         c.frontRightDirection.set(DcMotorSimple.Direction.REVERSE);
         c.backLeftDirection.set(DcMotorSimple.Direction.FORWARD);
@@ -58,7 +59,7 @@ public class Constants {
     // You have the goBILDA Pinpoint computer (RC name "odo"). Paste the tuner's
     // generated block here (pod type, offsets, directions).
     public static PinpointConfig localizerConfig = new PinpointConfig(c -> {
-        c.name.set("odo");
+        c.name.set(IronConstants.PinpointOdometryName);
         c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
         c.xPodOffset.set(0.5851424209714875);
         c.yPodOffset.set(-1.3573616508423814);

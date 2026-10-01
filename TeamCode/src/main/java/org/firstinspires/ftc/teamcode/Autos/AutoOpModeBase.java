@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.killerwatts.lib;
+package org.firstinspires.ftc.teamcode.Autos;
 
 import static com.pedropathing.ivy.Scheduler.schedule;
 
@@ -9,11 +9,13 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
-import org.firstinspires.ftc.teamcode.killerwatts.PPFile;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.killerwatts.lib.PPFile;
+import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
 
 //@Autonomous(name = "Red_AutoOpMode", group = "Autos")
 @Disabled
-public abstract class AutoOpMode extends OpMode {
+public abstract class AutoOpModeBase extends OpMode {
     public RobotMain robot;
     public PoseFactory poseFactory = PoseFactory.degrees();//we design for red, then mirror for blue
     /**
@@ -67,11 +69,18 @@ public abstract class AutoOpMode extends OpMode {
     @Override
     public void init_loop() {
         // init_loop runs every cycle while sitting on the init screen.
-        // Re-assert the start pose each time so the Panels Field always shows
-        // THIS auto's start — even if another auto was previewed before,
-        // or the localizer drifted while waiting.
-        if (robot == null || pp == null || robot.follower == null) return;
-        robot.follower.setPose(pp.getStartPose());
+        // Vision ticks here (LL connect + solve + fuse) so the drivers see the
+        // real fused pose on the Field widget BEFORE pressing play.
+        robot.InitRunPeriodic();
+
+        // Re-assert the start pose AFTER the vision tick so the Panels Field
+        // always shows THIS auto's start — even if another auto was previewed
+        // before, or the (parked) odometry/vision drifted while waiting. This
+        // keeps init corrections display-only: the pose the auto launches from
+        // is always the path's start pose.
+        //
+        // OR disable to accept the vision and not reset the pose from auton init
+        if(!VisionFusion.ENABLED){}robot.follower.setPose(pp.getStartPose());
         robot.follower.update();
         UpdateTelemetry();
         robot.flushTelemetry();

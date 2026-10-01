@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.killerwatts;
+package org.firstinspires.ftc.teamcode.Subsystems;
 
 import static org.firstinspires.ftc.teamcode.killerwatts.lib.killaUtils.clamp;
 
@@ -7,7 +7,7 @@ import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.killaUtils;
+
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
@@ -34,7 +34,7 @@ import java.util.Locale;
  * then drive from code with {@link #setPosition}, {@link #toggle}, etc.
  */
 @Configurable
-public class PositionalServo extends SubsystemBase {
+public class ShootGateServo extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- TODO: edit these per mechanism (hardcoded, one servo per subsystem) ----
@@ -66,7 +66,7 @@ public class PositionalServo extends SubsystemBase {
     private double lastTime = Double.NaN;
 
 
-    public PositionalServo(OpMode opMode) {
+    public ShootGateServo(OpMode opMode) {
         servo = opMode.hardwareMap.get(Servo.class, Servoname);
 
         target = clamp(POS_A, POS_MIN, POS_MAX);

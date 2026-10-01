@@ -13,7 +13,7 @@ import com.pedropathing.utils.Angle;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.killerwatts.TipCompensator;
 import org.firstinspires.ftc.teamcode.killerwatts.TipSanityFilter;
-import org.firstinspires.ftc.teamcode.killerwatts.Vision;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision;
 
 import java.lang.reflect.Field;
 import java.util.Locale;
@@ -144,6 +144,19 @@ public class VisionFusion {
      * XY proves sane vs Pinpoint, this is the working source.
      */
     public static boolean USE_MT1_XY = false;
+    /**
+     * CAMERA LEVER-ARM COMPENSATION (2026-09-30): Limelight botpose is the
+     * CAMERA's position, but the follower's pose is the ROBOT CENTER. Blending
+     * the camera pose into the center pose without offset compensation makes
+     * the error rotate with heading — during arcs the robot chases a lever-arm
+     * phantom and swings wide (observed: residual (−5.6, ·) at H≈0 and
+     * (+1.4, +6.2) at H≈90 ⇒ center ≈ 5.6" forward, 1.4" left of camera).
+     * These tunables are the ROBOT-CENTER position relative to the CAMERA,
+     * in the ROBOT frame (forward, left), inches. The measurement becomes
+     * meas = visionPose + R(fusedHeading)·offset. Zero disables.
+     */
+    public static double CAM_OFFSET_FWD_IN = 5.6;
+    public static double CAM_OFFSET_LEFT_IN = 1.4;
 
     // ================= moving-cluster / attitude gates (BIOBUZZ) =================
     // BIOBUZZ localizes off the 4 hive-cell clusters (IDs 30-45), whose REST pose
@@ -526,6 +539,17 @@ public class VisionFusion {
         if (USE_MT1_XY && rd.mt1Pedro != null) {
             measPose = rd.mt1Pedro;
             lastXySrc = "MT1";
+        }
+        // Camera lever-arm compensation: convert the camera-frame solve into a
+        // robot-center pose using the CURRENT fused heading. See the tunables'
+        // javadoc — heading-dependent residuals during arcs are this offset.
+        if (CAM_OFFSET_FWD_IN != 0 || CAM_OFFSET_LEFT_IN != 0) {
+            double h = fused.heading();
+            double c = Math.cos(h), s = Math.sin(h);
+            measPose = new Pose(
+                    measPose.x() + c * CAM_OFFSET_FWD_IN - s * CAM_OFFSET_LEFT_IN,
+                    measPose.y() + s * CAM_OFFSET_FWD_IN + c * CAM_OFFSET_LEFT_IN,
+                    measPose.heading());
         }
         double compRScale = 1.0;
         if (TipCompensator.ENABLED) {

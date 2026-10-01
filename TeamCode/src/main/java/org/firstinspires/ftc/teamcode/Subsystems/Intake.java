@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.killerwatts;
+package org.firstinspires.ftc.teamcode.Subsystems;
 
 import com.bylazar.configurables.annotations.Configurable;
 import com.bylazar.telemetry.PanelsTelemetry;

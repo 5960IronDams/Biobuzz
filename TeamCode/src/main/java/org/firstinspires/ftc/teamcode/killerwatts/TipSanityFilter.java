@@ -5,6 +5,8 @@ import androidx.annotation.Nullable;
 import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.math.Pose;
 
+import org.firstinspires.ftc.teamcode.Subsystems.Vision;
+
 /**
  * Stage 1 (WIRED IN, ON by default): rest-pose sanity filter for vision poses.
  *

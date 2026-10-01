@@ -9,10 +9,9 @@ import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 import com.pedropathing.ivy.Command;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.AutoOpMode;
 
 //@Autonomous(name = "Red_RightAuto",group = "Autos")
-public class _RightAuto extends AutoOpMode {
+public class _RightAuto extends AutoOpModeBase {
 
     public _RightAuto()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
     {

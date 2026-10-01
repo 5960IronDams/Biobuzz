@@ -16,13 +16,13 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import org.firstinspires.ftc.teamcode.pedro.shadow.InstrumentedFusionLocalizer;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.teamcode.killerwatts.Flywheel;
+import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
 import org.firstinspires.ftc.teamcode.killerwatts.HiveCellMonitor;
-import org.firstinspires.ftc.teamcode.killerwatts.Intake;
-import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
+import org.firstinspires.ftc.teamcode.Subsystems.Intake;
+import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.PanelsFieldRenderer;
-import org.firstinspires.ftc.teamcode.killerwatts.Vision;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
 import org.firstinspires.ftc.teamcode.utils.TelemetryFileLogger;
@@ -39,7 +39,7 @@ public class RobotMain {
     public Follower follower;// = SharedObjects.follower;
     public Intake intake;
     public Flywheel flywheel;
-    public PositionalServo PosServ;
+    public ShootGateServo PosServ;
     /** Null when no Limelight3A is in the RC config (Pinpoint-only mode). */
     @Nullable
     public Vision vision;
@@ -58,6 +58,82 @@ public class RobotMain {
         Scheduler.reset(); //clears all scheduler commands in ivy after opmode switch.
         //subsystems
         follower = Constants.create(opmode.hardwareMap);
+        OverrideFollowerLocalizer();
+        SetupStartingPositionFromPinPointOrAuton();
+        SetupLimelightVision(opmode);
+        // Relative cell monitor shares the same Limelight (no extra HW handle).
+        cells = new HiveCellMonitor(vision);
+        // First paint so the Field widget shows a pose even before init_loop
+        // ticks (TeleOp never resets the pose). Steady-state drawing lives in
+        // flushTelemetry() — exactly one batched draw per loop/init tick.
+        drawField();
+        intake = new Intake(opmode);
+        flywheel = new Flywheel(opmode);
+        PosServ = new ShootGateServo(opmode);
+
+
+        //after all subsystems are started (i.e their variables point to an object). Build the command factory
+        CommandF = new CommandFactory(follower,intake,flywheel,PosServ, opmode.hardwareMap);
+
+        // Initialize telemetry file logger (optional: comment out to disable logging).
+        // Must pass appContext: the RC app UID can only write to its app-private
+        // dirs — /data/local/tmp is shell-owned and gives Permission denied.
+        // Tag with the OpMode name: every init opens a new timestamped file, so
+        // the tag tells you which file belongs to which run.
+        telemetryLogger = TelemetryFileLogger.create(
+                opmode.hardwareMap.appContext, opmode.getClass().getSimpleName());
+        if (telemetryLogger != null) {
+            telemetryLogger.log("Event", "RobotMain initialized");
+        }
+
+        //declare what alliance we are on to BOTH telemetry outputs
+        //this is for one good final double check for the driver and co pilot
+        opmode.telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        opmode.telemetry.update();
+        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        RobotMain.DashTelemetry.update();
+    }
+
+    private void SetupLimelightVision(OpMode opmode) {
+        // Limelight is optional: absent in tuning configs -> fused filter runs
+        // Pinpoint-only (VisionFusion reports "no-limelight-configured").
+        vision = Vision.tryCreate(opmode.hardwareMap);
+        Log.i("IronLog","Vision Loaded");
+        if (vision != null) vision.start(0);
+        Log.i("IronLog","Vision Started");
+        visionFusion = new VisionFusion(follower, vision);
+        Log.i("IronLog","VisionFusion Started");
+    }
+
+    private void SetupStartingPositionFromPinPointOrAuton() {
+        // Seed the filter from the Pinpoint's retained pose (the Pinpoint holds
+        // the end-of-auto pose across OpModes). Without this, TeleOp starts at
+        // (0,0,0) and the first update composes the full pose delta into the
+        // Kalman history — that startup transient is the window vision fuses
+        // get back-dated into, and re-propagating across it corrupts the
+        // heading (the 90->255deg flips seen at 23:04/23:22). Also fixes the
+        // init-screen (0,0) display.
+        try {
+            Field drField = FusionLocalizer.class.getDeclaredField("deadReckoning");
+            drField.setAccessible(true);
+            Object dr = drField.get(follower.localizer);
+            if (dr instanceof Localizer) {
+                Pose p = ((Localizer) dr).pose();
+                if (p != null && (p.x() != 0 || p.y() != 0)) {
+                    follower.setPose(p);
+                    Log.i("IronLog", "Follower pose seeded from Pinpoint: " + p);
+                }
+            }
+        } catch (Exception e) {
+            Log.w("IronLog", "Pinpoint pose seed failed; falling back to autonomousEndPose", e);
+            try {
+                if (autonomousEndPose != null) follower.setPose(autonomousEndPose);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void OverrideFollowerLocalizer() {
         // Swap in the instrumented FusionLocalizer: SAME math (subclass), but
         // every addMeasurement call diffs the filter history and dumps any
         // heading injection (>2deg) to logcat (IronLog-Fuse) + Dashboard keys
@@ -97,70 +173,6 @@ public class RobotMain {
         } catch (Throwable t) {
             Log.w("IronLog", "Instrumented localizer swap failed; stock FusionLocalizer stays", t);
         }
-        // Seed the filter from the Pinpoint's retained pose (the Pinpoint holds
-        // the end-of-auto pose across OpModes). Without this, TeleOp starts at
-        // (0,0,0) and the first update composes the full pose delta into the
-        // Kalman history — that startup transient is the window vision fuses
-        // get back-dated into, and re-propagating across it corrupts the
-        // heading (the 90->255deg flips seen at 23:04/23:22). Also fixes the
-        // init-screen (0,0) display.
-        try {
-            Field drField = FusionLocalizer.class.getDeclaredField("deadReckoning");
-            drField.setAccessible(true);
-            Object dr = drField.get(follower.localizer);
-            if (dr instanceof Localizer) {
-                Pose p = ((Localizer) dr).pose();
-                if (p != null && (p.x() != 0 || p.y() != 0)) {
-                    follower.setPose(p);
-                    Log.i("IronLog", "Follower pose seeded from Pinpoint: " + p);
-                }
-            }
-        } catch (Exception e) {
-            Log.w("IronLog", "Pinpoint pose seed failed; falling back to autonomousEndPose", e);
-            try {
-                if (autonomousEndPose != null) follower.setPose(autonomousEndPose);
-            } catch (Exception ignored) {
-            }
-        }
-        // Limelight is optional: absent in tuning configs -> fused filter runs
-        // Pinpoint-only (VisionFusion reports "no-limelight-configured").
-        vision = Vision.tryCreate(opmode.hardwareMap);
-        Log.i("IronLog","Vision Loaded");
-        if (vision != null) vision.start(0);
-        Log.i("IronLog","Vision Started");
-        visionFusion = new VisionFusion(follower, vision);
-        Log.i("IronLog","VisionFusion Started");
-        // Relative cell monitor shares the same Limelight (no extra HW handle).
-        cells = new HiveCellMonitor(vision);
-        // First paint so the Field widget shows a pose even before init_loop
-        // ticks (TeleOp never resets the pose). Steady-state drawing lives in
-        // flushTelemetry() — exactly one batched draw per loop/init tick.
-        drawField();
-        intake = new Intake(opmode);
-        //flywheel = new Flywheel(opmode);
-        PosServ = new PositionalServo(opmode);
-
-
-        //after all subsystems are started (i.e their variables point to an object). Build the command factory
-        CommandF = new CommandFactory(follower,intake,null,PosServ, opmode.hardwareMap);
-
-        // Initialize telemetry file logger (optional: comment out to disable logging).
-        // Must pass appContext: the RC app UID can only write to its app-private
-        // dirs — /data/local/tmp is shell-owned and gives Permission denied.
-        // Tag with the OpMode name: every init opens a new timestamped file, so
-        // the tag tells you which file belongs to which run.
-        telemetryLogger = TelemetryFileLogger.create(
-                opmode.hardwareMap.appContext, opmode.getClass().getSimpleName());
-        if (telemetryLogger != null) {
-            telemetryLogger.log("Event", "RobotMain initialized");
-        }
-
-        //declare what alliance we are on to BOTH telemetry outputs
-        //this is for one good final double check for the driver and co pilot
-        opmode.telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        opmode.telemetry.update();
-        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        RobotMain.DashTelemetry.update();
     }
 
 
@@ -175,6 +187,29 @@ public class RobotMain {
         RunPeriodic();//run all registered subsystems periodic (addData only, no update)
         Scheduler.execute(); //eun the Ivy scheduler periodic (AimAtGoal adds data, no update)
         looptime(); //adds loop-time lines, no update — OpMode loop must end with flushTelemetry()
+    }
+
+    /**
+     * Init-screen periodic: same vision/odometry ticking as
+     * {@link #RobotRunPeriodic()}, minus the things that must not run before
+     * START (subsystem actuation, the Ivy scheduler, loop-time lines).
+     * Call from every OpMode's {@code init_loop()} followed by
+     * {@link #flushTelemetry()} so the LL connects, solves, and reports
+     * {@code Fusion/*} while the drivers are still setting up.
+     *
+     * <p>Safe for autos: the vision correction does NOT move the robot and
+     * re-running it during init is exactly what the drivers see on the Field
+     * widget. Autos still re-assert their start pose AFTER this runs
+     * (see the base init_loop) so the correction cannot drift a stored pose.
+     */
+    public void InitRunPeriodic()
+    {
+        follower.update(); // predict step: keeps the pose fresh (robot is parked)
+        if (visionFusion != null) visionFusion.correct(); // LL connect + solve + fuse
+        if (cells != null) {
+            cells.update(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE ? 'B' : 'R');
+        }
+        // RunPeriodic()/Scheduler/looptime() intentionally omitted — see above.
     }
 
     /**

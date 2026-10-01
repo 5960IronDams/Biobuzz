@@ -10,7 +10,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.teamcode.RobotMain;
-import org.firstinspires.ftc.teamcode.killerwatts.Vision;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision;
 
 import java.lang.reflect.Field;
 

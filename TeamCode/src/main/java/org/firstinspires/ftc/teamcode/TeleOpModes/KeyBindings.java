@@ -9,7 +9,8 @@ import com.qualcomm.robotcore.hardware.Gamepad;
 
 import org.firstinspires.ftc.teamcode.AimAtGoal;
 import org.firstinspires.ftc.teamcode.RobotMain;
-import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
+import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
+import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
 /**
@@ -74,13 +75,20 @@ public class KeyBindings {
     public void update() {
         handleAimScheduling();
         handleIntake();
+        handleFlywheel();
         handleServo();
         handleRelocalize();
         handleOperator();
         applyDrive();
         reportTelemetry();
     }
-
+    public void handleFlywheel(){
+        if(gamepad1.leftBumperWasPressed()){
+            robot.CommandF.SetFlywheelRpm(Flywheel.TARGET_RPM).schedule();
+        } else if (gamepad1.leftBumperWasReleased()) {
+            robot.CommandF.StopFlywheel().schedule();
+        }
+    }
     /** Cancel a held aim (call from the OpMode's stop()). Safe when not aiming. */
     public void stop() {
         cancelAim();
@@ -190,11 +198,11 @@ public class KeyBindings {
         lastNudgeNs = nowNs;
 
         if (robot.PosServ != null) {
-            if (gamepad1.left_bumper) {
-                robot.PosServ.nudge(-PositionalServo.NUDGE_RATE * dt);
+            if (gamepad1.dpad_up) {
+                robot.PosServ.nudge(-ShootGateServo.NUDGE_RATE * dt);
             }
-            if (gamepad1.right_bumper) {
-                robot.PosServ.nudge(PositionalServo.NUDGE_RATE * dt);
+            if (gamepad1.dpad_down) {
+                robot.PosServ.nudge(ShootGateServo.NUDGE_RATE * dt);
             }
         }
     }

@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.killerwatts;
+package org.firstinspires.ftc.teamcode.Subsystems;
 
 import androidx.annotation.Nullable;
 
@@ -17,6 +17,11 @@ import org.firstinspires.ftc.teamcode.pedro.PedroFieldBridge;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 /**
  * Limelight3A MegaTag pose source: MT2-XY + MT1-yaw split solver.
@@ -304,9 +309,74 @@ public class Vision {
             limelight.pipelineSwitch(pipeline);
         } catch (Exception ignored) {
         }
+        pushCameraPoseToLimelight();
         try {
             limelight.start();
         } catch (Exception ignored) {
+        }
+    }
+
+    // ---- Programmatic camera->robot transform (MegaTag2 geometry) ----
+
+
+
+    /** Camera offset forward (robot +X), meters. Set before first poll. */
+    public static double CAM_X_M = 0.110;
+    /** Camera offset left (robot +Y), meters. */
+    public static double CAM_Y_M = 0.0;
+    /** Camera height above the floor, meters. */
+    public static double CAM_Z_M = 0.5;
+    /** Camera roll (deg).  • Roll: Rotation around the X-axis (tilting the horizon side-to-side).*/
+    public static double CAM_ROLL_DEG = 0.0;
+    /** Camera pitch (deg). • Pitch: Rotation around the Y-axis. Tilting the camera downward toward the floor is a negative pitch (e.g., -20.0), while angling it up is positive. */
+    public static double CAM_PITCH_DEG = 50.0;
+    /** Camera yaw (deg). ccw+? • Yaw: Rotation around the Z-axis (turning left or right). */
+    public static double CAM_YAW_DEG = 5.0;
+
+    /**
+     * Push the cameraPoseRobotSpace transform to the Limelight over HTTP
+     * (POST /api/configset, port 5807) so the mounting geometry is set
+     * programmatically each time the OpMode boots — no web-UI step.
+     * Blocking (network round-trip): call from init(), never the hot loop.
+     * Values come from the CAM_* configurables above; inch-based helpers
+     * {@link #setCameraPoseInches} are available too.
+     */
+    public boolean pushCameraPoseToLimelight() {
+        String json = String.format(Locale.US,
+                "{\"camerapose_robotspace\":[%.6f,%.6f,%.6f,%.6f,%.6f,%.6f]}", //Old:cameraPoseRobotSpace
+                CAM_X_M, CAM_Y_M, CAM_Z_M, CAM_ROLL_DEG, CAM_PITCH_DEG, CAM_YAW_DEG);
+        return postConfig(json);
+    }
+
+    /** Convenience: set the CAM_* constants from inches/degrees and push. */
+    public boolean setCameraPoseInches(double xIn, double yIn, double zIn,
+                                       double rollDeg, double pitchDeg, double yawDeg) {
+        CAM_X_M = xIn * 0.0254;
+        CAM_Y_M = yIn * 0.0254;
+        CAM_Z_M = zIn * 0.0254;
+        CAM_ROLL_DEG = rollDeg;
+        CAM_PITCH_DEG = pitchDeg;
+        CAM_YAW_DEG = yawDeg;
+        return pushCameraPoseToLimelight();
+    }
+
+    /** Fire one POST /api/configset request at the Limelight web server. */
+    private boolean postConfig(String json) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL("http://limelight:5807/api/configset").openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(1000);
+            conn.setReadTimeout(1000);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(json.getBytes(StandardCharsets.UTF_8));
+            }
+            return conn.getResponseCode() == 200;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 

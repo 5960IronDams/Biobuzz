@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.killerwatts;
+package org.firstinspires.ftc.teamcode.killerwatts.lib;
 
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.api.Paths;

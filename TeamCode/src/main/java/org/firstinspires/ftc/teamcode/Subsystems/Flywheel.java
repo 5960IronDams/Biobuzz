@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.killerwatts;
+package org.firstinspires.ftc.teamcode.Subsystems;
 
 import com.bylazar.configurables.annotations.Configurable;
 import com.bylazar.telemetry.PanelsTelemetry;
@@ -39,14 +39,15 @@ public class Flywheel extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     /** Active PID setpoint. Written by {@link #setTargetRpm} / coast-arrive, tunable live. */
-    public static double TARGET_RPM = 2500;
+    public static double TARGET_RPM = 50;
     /** Coast destination + PID hold point after the coast arrives. */
-    public static double IDLE_RPM = 1200;
-    public static double TICKS_PER_REV = 537.7; // goBILDA 5203 312rpm = 537.7; adjust to your motor
+    public static double IDLE_RPM = 20;
+    //Ungeared / Encoder Shaft (1:1 ratio): 28 ticks per revolution (28 PPR) at the encoder/motor shaft
+    public static double TICKS_PER_REV = 28.0;//537.7; // goBILDA 5203 312rpm = 537.7; adjust to your motor
     public static double kP = 20;
     public static double kI = 0;
     public static double kD = 0;
-    public static double kF = 12;
+    public static double kF = 14;
     public static boolean MOTOR_REVERSED = false;
     /** Within this of TARGET counts as "at speed" for sequencing / telemetry. */
     public static double AT_SPEED_TOLERANCE_RPM = 75;
@@ -56,6 +57,7 @@ public class Flywheel extends SubsystemBase {
     private enum Mode {
         STOPPED,
         HOLDING,
+        FLOATING,
         COASTING_TO_IDLE
     }
 
@@ -133,7 +135,7 @@ public class Flywheel extends SubsystemBase {
     /** PID-brake to zero. Cancels any coast. */
     public void stop() {
         engagePidMode();
-        mode = Mode.STOPPED;
+        mode = Mode.FLOATING;
         motor.setVelocity(0);
     }
 
@@ -159,7 +161,7 @@ public class Flywheel extends SubsystemBase {
         if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
             motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         }
-        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
     }
 
     private void applyPids(boolean force) {

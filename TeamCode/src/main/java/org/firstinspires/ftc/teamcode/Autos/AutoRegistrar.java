@@ -6,7 +6,6 @@ import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;
 
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.AutoOpMode;
 
 import java.lang.reflect.Constructor;
 
@@ -24,16 +23,17 @@ public final class AutoRegistrar {
     private AutoRegistrar() {}
 
     /** Every concrete Red auto. The Blue mirror is generated, not written. */
-    private static final Class<? extends AutoOpMode>[] RED_AUTOS = new Class[]{
+    private static final Class<? extends AutoOpModeBase>[] RED_AUTOS = new Class[]{
             _RightAuto.class,//shoot and turn
             _R_ShootPark.class,//shoot Right, then go park.
             _L_ShootLFlowerShootL.class
+            //Right auto That Shoots, goes under middle, shoots again, grabs flower, shoots again, parks.
             // Red_LeftAuto.class,  // <-- just add the class here when you write it
     };
 
     @OpModeRegistrar
     public static void register(OpModeManager manager) {
-        for (Class<? extends AutoOpMode> redClass : RED_AUTOS) {
+        for (Class<? extends AutoOpModeBase> redClass : RED_AUTOS) {
             String simple = redClass.getSimpleName(); // "Red_RightAuto"
             String suffix = simple.startsWith("Red_") ? simple.substring("Red_".length()) : simple;
 
@@ -57,11 +57,11 @@ public final class AutoRegistrar {
 
     /** Instantiates the Red class, then flips its alliance field for the Blue copy. */
     private static OpMode newInstance(
-            Class<? extends AutoOpMode> cls, ALLIANCE_COLOR alliance) {
+            Class<? extends AutoOpModeBase> cls, ALLIANCE_COLOR alliance) {
         try {
-            Constructor<? extends AutoOpMode> ctor = cls.getDeclaredConstructor();
+            Constructor<? extends AutoOpModeBase> ctor = cls.getDeclaredConstructor();
             ctor.setAccessible(true);
-            AutoOpMode auto = ctor.newInstance();
+            AutoOpModeBase auto = ctor.newInstance();
             auto.SetRobotToThisColor = alliance;
             return auto;
         } catch (Exception e) {

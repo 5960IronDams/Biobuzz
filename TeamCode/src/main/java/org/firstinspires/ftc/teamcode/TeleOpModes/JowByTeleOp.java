@@ -24,6 +24,17 @@ public class JowByTeleOp extends OpMode {
         // first loop tick after play is pressed).
         robot.flushTelemetry();
     }
+
+    @Override
+    public void init_loop() {
+        // Vision ticks during init: the LL connects, solves, and the Field
+        // widget shows the real fused pose (drivers can verify the seed pose
+        // against MT1/MT2 BEFORE pressing play).
+        robot.InitRunPeriodic();
+        UpdateTelemetry();
+        robot.flushTelemetry();
+    }
+
     @Override
     public void start() {
 

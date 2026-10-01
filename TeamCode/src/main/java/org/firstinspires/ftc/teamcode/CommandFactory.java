@@ -9,9 +9,9 @@ import com.pedropathing.ivy.behaviors.ConflictBehavior;
 import com.pedropathing.ivy.behaviors.EndCondition;
 import com.pedropathing.ivy.behaviors.InterruptedBehavior;
 
-import org.firstinspires.ftc.teamcode.killerwatts.Flywheel;
-import org.firstinspires.ftc.teamcode.killerwatts.Intake;
-import org.firstinspires.ftc.teamcode.killerwatts.PositionalServo;
+import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
+import org.firstinspires.ftc.teamcode.Subsystems.Intake;
+import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
 
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
@@ -23,9 +23,9 @@ public class CommandFactory {
     public final Follower follower;
     public final Intake intake;
     public final Flywheel flywheel;
-    public final PositionalServo PosServ;
+    public final ShootGateServo PosServ;
     public final HardwareMap hardwareMap;
-    public CommandFactory(Follower _follower, Intake _intake, Flywheel _flywheel, PositionalServo _posServ, HardwareMap _hardwareMap) {
+    public CommandFactory(Follower _follower, Intake _intake, Flywheel _flywheel, ShootGateServo _posServ, HardwareMap _hardwareMap) {
         follower = _follower;
         intake = _intake;
         flywheel = _flywheel;

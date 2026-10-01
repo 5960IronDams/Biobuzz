@@ -1,17 +1,14 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
-import static com.pedropathing.ivy.commands.Commands.waitMs;
-import static com.pedropathing.ivy.groups.Groups.parallel;
 import static com.pedropathing.ivy.groups.Groups.sequential;
 import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 
 import com.pedropathing.ivy.Command;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.AutoOpMode;
 
 //@Autonomous(name = "Red_R_Shoot_Park",group = "Autos")
-public class _R_ShootPark extends AutoOpMode {
+public class _R_ShootPark extends AutoOpModeBase {
 
     public _R_ShootPark()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
     {
