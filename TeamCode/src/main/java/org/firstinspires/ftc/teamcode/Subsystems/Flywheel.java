@@ -39,9 +39,9 @@ public class Flywheel extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     /** Active PID setpoint. Written by {@link #setTargetRpm} / coast-arrive, tunable live. */
-    public static double TARGET_RPM = 50;
+    public static double TARGET_RPM = 2000;
     /** Coast destination + PID hold point after the coast arrives. */
-    public static double IDLE_RPM = 20;
+    public static double IDLE_RPM = 500;
     //Ungeared / Encoder Shaft (1:1 ratio): 28 ticks per revolution (28 PPR) at the encoder/motor shaft
     public static double TICKS_PER_REV = 28.0;//537.7; // goBILDA 5203 312rpm = 537.7; adjust to your motor
     public static double kP = 20;

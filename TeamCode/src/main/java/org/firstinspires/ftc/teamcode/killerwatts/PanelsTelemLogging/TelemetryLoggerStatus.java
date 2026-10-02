@@ -1,7 +1,6 @@
-package org.firstinspires.ftc.teamcode.utils;
+package org.firstinspires.ftc.teamcode.killerwatts.PanelsTelemLogging;
 
 import android.util.Log;
-import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 /**
  * Utility for verifying telemetry logging is working correctly.
