@@ -10,10 +10,8 @@ import com.pedropathing.follower.Follower;
 import com.pedropathing.ivy.Scheduler;
 import com.pedropathing.localization.FusionLocalizer;
 import com.pedropathing.localization.Localizer;
-import com.pedropathing.math.Matrix;
 import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
-import org.firstinspires.ftc.teamcode.pedro.shadow.InstrumentedFusionLocalizer;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
@@ -58,7 +56,6 @@ public class RobotMain {
         Scheduler.reset(); //clears all scheduler commands in ivy after opmode switch.
         //subsystems
         follower = Constants.create(opmode.hardwareMap);
-        OverrideFollowerLocalizer();
         SetupStartingPositionFromPinPointOrAuton();
         SetupLimelightVision(opmode);
         // Relative cell monitor shares the same Limelight (no extra HW handle).
@@ -132,49 +129,6 @@ public class RobotMain {
             }
         }
     }
-
-    private void OverrideFollowerLocalizer() {
-        // Swap in the instrumented FusionLocalizer: SAME math (subclass), but
-        // every addMeasurement call diffs the filter history and dumps any
-        // heading injection (>2deg) to logcat (IronLog-Fuse) + Dashboard keys
-        // Fuse/injDh / injBefore / injAfter. Parameters are reflected off the
-        // stock instance so the filter behaves identically. Follower.localizer
-        // is public final in 3.0.1, so the swap is a reflective instance-final
-        // write (works on ART; if it ever fails we keep the stock filter).
-        try {
-            Localizer original = follower.localizer;
-            if (original instanceof FusionLocalizer) {
-                Field f = FusionLocalizer.class.getDeclaredField("deadReckoning");
-                f.setAccessible(true);
-                Localizer dr = (Localizer) f.get(original);
-                f = FusionLocalizer.class.getDeclaredField("P");
-                f.setAccessible(true);
-                Matrix Pm = (Matrix) f.get(original);
-                f = FusionLocalizer.class.getDeclaredField("Q");
-                f.setAccessible(true);
-                Matrix Qm = (Matrix) f.get(original);
-                f = FusionLocalizer.class.getDeclaredField("R");
-                f.setAccessible(true);
-                Matrix Rm = (Matrix) f.get(original);
-                f = FusionLocalizer.class.getDeclaredField("bufferSize");
-                f.setAccessible(true);
-                int buf = f.getInt(original);
-                double[] pd = Pm.getDiagonal(), qd = Qm.getDiagonal(), rd = Rm.getDiagonal();
-                InstrumentedFusionLocalizer inst = new InstrumentedFusionLocalizer(dr,
-                        new Pose(pd[0], pd[1], pd[2]),
-                        new Pose(qd[0], qd[1], qd[2]),
-                        new Pose(rd[0], rd[1], rd[2]),
-                        buf);
-                Field locF = Follower.class.getField("localizer");
-                locF.setAccessible(true);
-                locF.set(follower, inst);
-                Log.i("IronLog", "InstrumentedFusionLocalizer swapped in; bufferSize=" + buf);
-            }
-        } catch (Throwable t) {
-            Log.w("IronLog", "Instrumented localizer swap failed; stock FusionLocalizer stays", t);
-        }
-    }
-
 
     public void RobotRunPeriodic()
     {

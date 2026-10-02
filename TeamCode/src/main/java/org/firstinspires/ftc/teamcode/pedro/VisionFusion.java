@@ -64,62 +64,18 @@ public class VisionFusion {
     /** Set false (Panels) to run Pinpoint-only, e.g. while debugging vision. */
     public static boolean ENABLED = true;
     /**
-     * Master switch for fusing MT1's independent yaw into the heading.
-     * DISABLED (2026-09-29): ANY finite-yaw measurement corrupts the heading
-     * in this Pedro build — run 23-22: ONE sane MT1 yaw fuse (innovation
-     * -12.9deg) flipped the heading 90 -> 255.6deg on an unmoved robot; run
-     * 23-04: neutral-yaw fuses stepped it 90 -> 189.9 -> 283.7 in
-     * measurement-sized steps. The corruption is inside Pedro's
-     * fuse/history re-propagation, not our mapping. While false the heading
-     * rides Pinpoint-only (stable to ~0.0005deg across every run) and MT1's
-     * mapped yaw still logs (Fusion/mt1RawDeg) for calibration. Re-enable
-     * only after a bench test proves addMeasurement's heading handling.
+     * Fuses MT1's independent yaw into the heading under the strict gates below
+     * (multi-tag, slow, small residual, |innov| <= 90deg). Pedro's heading-handling
+     * bug was fixed upstream (2026-09-30: the Pose.log() 2pi-wrap hole), so this
+     * is safe again. The gate stack + innovation guard stay as corruption armor:
+     * a flipped single-tag solve can never snap the heading.
      */
-    public static boolean MT1_YAW_FUSING = false;
+    public static boolean MT1_YAW_FUSING = true;
     /**
-     * Diagnostic/kill switch for the XY fuse itself. Keeps poll, gates, seed
-     * and ALL Fusion/* logging alive but never calls addMeasurement. Pedro's
-     * fuse has corrupted the heading in every run where a measurement was
-     * applied (23-04 neutral-yaw steps, 23-22 sane yaw fuse, 23-47 XY-only
-     * fuses with yaw NaN-masked). Bytecode says the masked axis is inert, so
-     * the corruption lives in Pedro's fuse-side history re-propagation or the
-     * Pinpoint feed — Fusion/pinpointHdec decides. Set false until isolated;
-     * matches run with FUSE_XY=false and MT1_YAW_FUSING=false = Pinpoint-only.
+     * Kill switch for the vision correction itself. False = Pinpoint-only
+     * (predict runs, the LL still connects, all Fusion/* logging stays live).
      */
     public static boolean FUSE_XY = true;
-    /**
-     * Direct-blend XY gain per accepted LL frame (0-1). Applied as
-     * alpha = FUSE_GAIN × (BASE_R_XY / rXY), so every R inflation (residual
-     * ramp, seed disagreement, tilt, stddev) scales it down automatically.
-     * 0.01 = conservative until the fmap is verified; raise toward 0.05-0.1
-     * once Fusion/visionX/Y tracks Pinpoint truth on a verified map.
-     */
-    public static double FUSE_GAIN = 0.01;
-    /**
-     * HUNT MODE (2026-09-30): when true, accepted corrections are routed
-     * through Pedro's {@code FusionLocalizer.addMeasurement} INSTEAD of the
-     * direct blend, with the instrumented subclass (InstrumentedFusionLocalizer,
-     * swapped in by RobotMain) dumping the filter history around every call.
-     * Purpose: reproduce the one-time ~138-206deg heading injection on-robot
-     * and catch which history entry it touches. Default FALSE — the direct
-     * blend is the production path. Statuses are prefixed "pedro-" while
-     * hunting so the two paths never blur in the logs.
-     */
-    public static boolean USE_PEDRO_FUSE = true;
-    /**
-     * Direct-blend MT1-yaw gain per accepted frame (0-1). THE SAFE injection
-     * path for vision heading: a direct heading write via setPose — no Pedro
-     * fuse involved, so no corruption risk. Only corrects on sane innovations
-     * (|innov| <= 90deg). Default 0 = OFF (heading rides Pinpoint-only, which
-     * tracked to 0.1deg through the full rotation test). Raise ~0.02-0.05 only
-     * after a bench test shows acceptable Pinpoint yaw drift, and only with a
-     * verified fmap (MT1's mapped yaw is only as good as the map's tag
-     * orientations — currently ±4deg wobble from the hand-dragged 34/35).
-     * Independent of MT1_YAW_FUSING (that switch gates the dead Pedro-fuse
-     * path and is kept for reference).
-     */
-    public static double FUSE_GAIN_H = 0.0;
-
     // ================= absolute reject gates (garbage only) =================
     /** Reject frames older than this (LL poll + USB + loop delay), ms. */
     public static double MAX_STALENESS_MS = 350.0;
@@ -755,66 +711,21 @@ public class VisionFusion {
             return;
         }
 
-        // ===== HUNT MODE: route through Pedro's addMeasurement =====
-        // The instrumented subclass (swapped in by RobotMain) snapshots the
-        // history around every call and dumps any heading change > 2deg to
-        // logcat (IronLog-Fuse) + Fuse/injDh / injBefore / injAfter telemetry.
-        if (USE_PEDRO_FUSE) {
-            double huntLatMs = Math.min(Math.max(rd.latencyMs, 0.0), MAX_LATENCY_MS);
-            long huntStampNs = System.nanoTime() - (long) (huntLatMs * 1.0e6);
-            try {
-                fuse(fusion, measPose, rd.mt1HeadingRad, fused.heading(), fuseYaw,
-                        huntStampNs, rXY, rH);
-                if (!"compensated".equals(lastStatus)) {
-                    String base = fuseYaw ? "fused-xy-yaw" : "fused-xy";
-                    lastStatus = "pedro-" + (dxy > MAX_JUMP_XY_IN ? base + "-bigjump" : base);
-                }
-            } catch (Exception e) {
-                lastStatus = "pedro-addMeasurement-exception";
-            }
-            return;
-        }
+        // Back-date the stamp to the exposure midpoint so Pedro's filter
+        // interpolates the history at the moment the frame was captured.
+        double latMs = Math.min(Math.max(rd.latencyMs, 0.0), MAX_LATENCY_MS);
+        long stampNs = System.nanoTime() - (long) (latMs * 1.0e6);
 
-        // ===== DIRECT POSE CORRECTION (bypasses Pedro's addMeasurement) =====
-        // EMPIRICAL VERDICT (logs 23-04/23-22/23-47/00-23): ANY addMeasurement
-        // call injects a one-time ~+166deg heading offset — even XY-only fuses
-        // with the yaw NaN-masked (bytecode-proven inert in the gain math!),
-        // and the offset is CONSTANT thereafter (fused = pinpoint + 166.7
-        // through the whole rotation sequence, log 00-23-05 @2499ms). The
-        // 00-23-59 run with FUSE_XY off proved the Pinpoint innocent: fused ≡
-        // pinpoint to 0.1 through the full CW/CCW rotation sequence. The
-        // corruption lives inside Pedro's fuse/history machinery, so we stop
-        // using it: blend the accepted vision XY directly into the pose via
-        // setPose (no history walk, no gain matrix), and NEVER touch the
-        // heading — it rides Pinpoint-only.
-        //
-        // Cost of dropping the back-dated stamp: ~latencyMs of lag, ~0.1in at
-        // 30in/s — negligible next to Pedro's corruption risk.
-        double alphaXY = FUSE_GAIN * (BASE_R_XY / Math.max(rXY, BASE_R_XY));
         try {
-            Pose fusedNow = follower.pose();
-            double h = fusedNow.heading();
-            // Optional MT1-yaw drift correction — the SAFE injection path: a
-            // direct heading write via setPose, no Pedro fuse involved.
-            // Default 0 = off. Only corrects on sane innovations (|innov| <=
-            // 90deg; the flip guard above already rejects wilder ones).
-            // Independent of MT1_YAW_FUSING (that switch gates the dead
-            // Pedro-fuse path). Raise ~0.02-0.05 after a drift bench test.
-            if (FUSE_GAIN_H > 0 && Double.isFinite(lastYawInnovDeg)
-                    && Math.abs(lastYawInnovDeg) <= 90.0) {
-                h += FUSE_GAIN_H * Math.toRadians(lastYawInnovDeg);
-            }
-            Pose blended = new Pose(
-                    fusedNow.x() + alphaXY * lastDx,
-                    fusedNow.y() + alphaXY * lastDy,
-                    h);
-            follower.setPose(blended);
+            fuse(fusion, measPose, rd.mt1HeadingRad, fused.heading(), fuseYaw,
+                    stampNs, rXY, rH);
             // Preserve the compensated marker when Stage 2 actually rescued.
             if (!"compensated".equals(lastStatus)) {
-                lastStatus = dxy > MAX_JUMP_XY_IN ? "fused-xy-bigjump" : "fused-xy";
+                String base = fuseYaw ? "fused-xy-yaw" : "fused-xy";
+                lastStatus = dxy > MAX_JUMP_XY_IN ? base + "-bigjump" : base;
             }
         } catch (Exception e) {
-            lastStatus = "setPose-exception";
+            lastStatus = "addMeasurement-exception";
         }
     }
 
@@ -967,12 +878,10 @@ public class VisionFusion {
     private void fuse(FusionLocalizer fusion, Pose xyPose, double mt1HeadingRad,
                       double fusedHeadingRad,
                       boolean fuseYaw, long stampNs, double rXY, double rH) {
-        // Yaw-skipped frames pass NaN — bytecode-verified in FusionLocalizer
-        // 3.0.1: the per-axis mask (hasX/hasY/hasH) zeroes the innovation AND
-        // the gain's H-row, so a masked fuse cannot move the heading. DO NOT
-        // pass a finite "neutral" yaw instead: runs 23-04/23-22 proved any
-        // finite-yaw measurement corrupts the heading inside Pedro's
-        // fuse/history re-propagation (90 -> 255.6deg on an unmoved robot).
+        // Yaw-skipped frames pass NaN. Pedro's FusionLocalizer masks NaN axes
+        // per-axis (the innovation is zeroed AND the gain's H-row is zeroed),
+        // so a masked fuse cannot move the heading. Keep it NaN — a finite
+        // "neutral" yaw would make the heading fuse from a non-measurement.
         double yaw = Double.NaN;
         if (fuseYaw && Double.isFinite(mt1HeadingRad)) {
             yaw = fusedHeadingRad + Angle.normalizeSigned(mt1HeadingRad - fusedHeadingRad);
