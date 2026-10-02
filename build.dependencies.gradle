@@ -23,7 +23,6 @@ dependencies {
     implementation "com.pedropathing:revhub:${rootProject.findProperty('pedroVersion')}"
     // Pedro AutoTune (tuning procedures + Sloth). we are using sloth for sloth panels this must stay active.
     implementation 'com.pedropathing:tuning:1.0.1'
-    implementation 'com.pedropathing.ivy:pedro:1.1.1'
     // FTControl Panels, subset (2026-09-19): core + 10 plugins instead of
     // com.bylazar:fullpanels:1.0.13 (which bundles ~15 modules incl. Themes,
     // LimelightProxy, Docs, Lights, CameraStream). Smaller dex/assets = shorter

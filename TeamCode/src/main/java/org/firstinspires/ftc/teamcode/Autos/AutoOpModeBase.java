@@ -1,9 +1,8 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
-import static com.pedropathing.ivy.Scheduler.schedule;
-
 import com.pedropathing.api.PoseFactory;
-import com.pedropathing.ivy.Command;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.CommandScheduler;
 import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
@@ -90,7 +89,7 @@ public abstract class AutoOpModeBase extends OpMode {
 
     @Override
     public void start() {
-        schedule(autoRoutine());
+        CommandScheduler.getInstance().schedule(autoRoutine());
     }
     @Override
     public void stop() {

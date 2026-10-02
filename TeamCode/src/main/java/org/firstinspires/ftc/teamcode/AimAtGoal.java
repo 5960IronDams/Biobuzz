@@ -5,19 +5,17 @@ import com.pedropathing.api.PoseFactory;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.follower.ManualDrive;
-import com.pedropathing.ivy.Command;
-import com.pedropathing.ivy.behaviors.BlockedBehavior;
-import com.pedropathing.ivy.behaviors.ConflictBehavior;
-import com.pedropathing.ivy.behaviors.EndCondition;
-import com.pedropathing.ivy.behaviors.InterruptedBehavior;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.CommandBase;
 import com.pedropathing.math.Pose;
 import com.pedropathing.utils.Angle;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.seattlesolvers.solverslib.command.Subsystem;
+import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.PPFile;
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
-import java.util.Set;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
@@ -35,8 +33,9 @@ import java.util.function.Supplier;
  * -&gt; AimAtGoal). Forward/strafe come from the supplied sticks, so the
  * driver can still translate while aiming.
  *
- * <p>This is a normal Ivy {@link Command}: it runs until cancelled, so hold
- * the left trigger to aim and compose it with the flywheel, e.g.
+ * <p>This is a normal SolversLib {@link Command}
+ * (a {@link CommandBase}): it runs until cancelled, so hold the left trigger
+ * to aim and compose it with the flywheel, e.g.
  * <pre>
  * // TeleOp hold-to-aim wiring (see JowByTeleOp):
  * if (AimAtGoal.held(gamepad1.left_trigger) && aimCmd == null) {
@@ -56,7 +55,7 @@ import java.util.function.Supplier;
  * </pre>
  */
 @Configurable
-public class AimAtGoal implements Command {
+public class AimAtGoal extends CommandBase {
 
     // ---- Panels-tunable heading PID (Panels -> AimAtGoal) ----
     /** Proportional gain on heading error (radians) -> turn power. */
@@ -108,6 +107,8 @@ public class AimAtGoal implements Command {
     public AimAtGoal(Follower follower, PPFile aimPoints,
                      DoubleSupplier forward, DoubleSupplier strafe,
                      Supplier<ALLIANCE_COLOR> alliance) {
+        // Own the follower while running (SolversLib requirement).
+        addRequirements(followerSubsystem);
         if (follower == null) {
             throw new IllegalArgumentException("AimAtGoal needs a non-null Follower");
         }
@@ -152,10 +153,14 @@ public class AimAtGoal implements Command {
         return triggerValue > TRIGGER_THRESHOLD;
     }
 
+    /** SolversLib requires Subsystem requirements; the Follower is wrapped here. */
+    private final Subsystem followerSubsystem =
+            new SubsystemBase() {};
+
     // ---- Command lifecycle (runs until cancelled : hold trigger to aim) ----
 
     @Override
-    public void start() {
+    public void initialize() {
         integral = 0.0;
         prevError = 0.0;
         firstRun = true;
@@ -205,12 +210,12 @@ public class AimAtGoal implements Command {
     }
 
     @Override
-    public boolean done() {
+    public boolean isFinished() {
         return false; // hold-to-aim: cancel on trigger release or compose with .until(...)
     }
 
     @Override
-    public void end(EndCondition endCondition) {
+    public void end(boolean interrupted) {
         integral = 0.0;
         firstRun = true;
         // Hand translation straight back to the driver with zero turn so the
@@ -221,32 +226,7 @@ public class AimAtGoal implements Command {
                 forward.getAsDouble(), strafe.getAsDouble(), 0.0, heading));
     }
 
-    // ---- Requirements: owns the follower while running ----
-
-    @Override
-    public Set<Object> requirements() {
-        return Set.of(follower);
-    }
-
-    @Override
-    public int priority() {
-        return 0;
-    }
-
-    @Override
-    public InterruptedBehavior interruptedBehavior() {
-        return InterruptedBehavior.END;
-    }
-
-    @Override
-    public ConflictBehavior conflictBehavior() {
-        return ConflictBehavior.OVERRIDE;
-    }
-
-    @Override
-    public BlockedBehavior blockedBehavior() {
-        return BlockedBehavior.CANCEL;
-    }
+    // ---- Requirements are declared via addRequirements(followerSubsystem) above ----
 
     // ---- Target selection ----
 

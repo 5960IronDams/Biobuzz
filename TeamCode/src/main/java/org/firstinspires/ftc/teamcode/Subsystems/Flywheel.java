@@ -5,11 +5,12 @@ import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
+import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 /**
  * Velocity-PID flywheel subsystem.
@@ -78,6 +79,7 @@ public class Flywheel extends SubsystemBase {
         motor.setVelocity(0);
         applyPids(true);
         mode = Mode.STOPPED;
+        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     /** RPM -> encoder ticks/sec for DcMotorEx.setVelocity(). */
@@ -122,7 +124,7 @@ public class Flywheel extends SubsystemBase {
 
     /**
      * Spin (or re-spin) to an explicit RPM via velocity PID. Cancels any coast.
-     * Fire-and-forget: the PID hold runs in {@link #Periodic}, so the command
+     * Fire-and-forget: the PID hold runs in {@link #periodic}, so the command
      * wrapping this can be instant; sequence on {@link #isAtTargetRpm} if needed.
      */
     public void setTargetRpm(double rpm) {
@@ -182,7 +184,7 @@ public class Flywheel extends SubsystemBase {
     }
 
     @Override
-    public void Periodic() {
+    public void periodic() {
         applyPids(false);
 
         switch (mode) {

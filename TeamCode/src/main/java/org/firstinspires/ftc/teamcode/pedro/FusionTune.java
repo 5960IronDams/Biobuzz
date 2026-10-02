@@ -6,6 +6,7 @@ import com.pedropathing.localization.FusionLocalizer;
 import com.pedropathing.localization.Localizer;
 import com.pedropathing.math.Pose;
 import com.pedropathing.utils.Angle;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
@@ -38,6 +39,7 @@ import java.lang.reflect.Field;
  * raw vision pose is telemetry-only so a bad frame map can't confuse the
  * drawing.
  */
+@Disabled
 @TeleOp(name = "Fusion Tune", group = "Tuning")
 public class FusionTune extends OpMode {
 

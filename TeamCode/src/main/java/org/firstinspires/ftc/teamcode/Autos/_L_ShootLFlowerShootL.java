@@ -1,11 +1,11 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
-import static com.pedropathing.ivy.commands.Commands.waitMs;
-import static com.pedropathing.ivy.groups.Groups.parallel;
-import static com.pedropathing.ivy.groups.Groups.sequential;
-import static com.pedropathing.ivy.pedro.PedroCommands.follow;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.ParallelCommandGroup;
+import com.seattlesolvers.solverslib.command.SequentialCommandGroup;
+import com.seattlesolvers.solverslib.command.WaitCommand;
 
-import com.pedropathing.ivy.Command;
+import static org.firstinspires.ftc.teamcode.pedro.PedroFollow.follow;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
@@ -18,15 +18,15 @@ public class _L_ShootLFlowerShootL extends AutoOpModeBase {
     }
     @Override
     public Command autoRoutine() {
-        return sequential(
+        return new SequentialCommandGroup(
                 //wait for hive to tip to left
-                waitMs(3000),
+                new WaitCommand(3000),
                 //shoot pre-load into hive
                 robot.CommandF.ServoToPos(0.5),
                 //drive to flower ready position
                 follow(robot.follower, pp.getPathByLineName("ReadyFlowerPos")),
                 // Drive into flower command group
-                parallel(
+                new ParallelCommandGroup(
                         //drop servo for flowerintake scoop
                         //activate intake
                         robot.CommandF.RunIntake(),
@@ -34,10 +34,10 @@ public class _L_ShootLFlowerShootL extends AutoOpModeBase {
                         follow(robot.follower, pp.getPath("IntoFlower1"))
                 ),
                 //wait for all pollen to be intaken
-                waitMs(500),
+                new WaitCommand(500),
                 robot.CommandF.StopIntake(),
                 //drive back to second shot on left hive
-                sequential(
+                new SequentialCommandGroup(
                         follow(robot.follower, pp.getPath("Shot2Left"))
                 ),
                 //drive to park while intaking
@@ -45,7 +45,7 @@ public class _L_ShootLFlowerShootL extends AutoOpModeBase {
                 follow(robot.follower, pp.getPath("ToPark")),
                 //ready for teleop?
                 robot.CommandF.ServoToPos(1.0),
-                waitMs(1500),
+                new WaitCommand(1500),
                 robot.CommandF.ServoToPos(0.0)
 
         );

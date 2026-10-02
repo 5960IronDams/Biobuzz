@@ -36,6 +36,15 @@ android {
 
 dependencies {
     implementation project(':FtcRobotController')
+
+    // SolversLib core (command base, triggers, InterpolationMap).
+    // 0.3.6 requires Pedro Pathing 3.0.0+ (we use com.pedropathing:revhub 3.x).
+    // Repo (repo.dairy.foundation/releases) is in build.dependencies.gradle.
+    // NOTE: FTCLib and SolversLib cannot coexist - do not add org.ftclib.ftclib:core.
+    // Ivy commands (com.pedropathing.ivy.Command) are NOT SolversLib commands;
+    // schedule Ivy commands from SolversLib triggers via runnables, e.g.
+    //   gamepadEx.getGamepadButton(Button.A).onTrue(() -> CommandF.RunIntake().schedule());
+    implementation 'org.solverslib:core:0.3.6'
 }
 
 // Pedro tuning toggle (pairs with the pedroTuning flag in gradle.properties

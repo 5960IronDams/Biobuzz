@@ -1,13 +1,10 @@
 package org.firstinspires.ftc.teamcode;
 
-import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.RunPeriodic;
-import static org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase.clearAll;
-
 import androidx.annotation.Nullable;
 import android.util.Log;
 import com.bylazar.telemetry.PanelsTelemetry;
 import com.pedropathing.follower.Follower;
-import com.pedropathing.ivy.Scheduler;
+import com.seattlesolvers.solverslib.command.CommandScheduler;
 import com.pedropathing.localization.FusionLocalizer;
 import com.pedropathing.localization.Localizer;
 import com.pedropathing.math.Pose;
@@ -25,10 +22,25 @@ import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
 import org.firstinspires.ftc.teamcode.killerwatts.PanelsTelemLogging.TelemetryFileLogger;
 
+import com.bylazar.configurables.annotations.Configurable;
+
 import java.lang.reflect.Field;
 
+@Configurable
 public class RobotMain {
     public static ALLIANCE_COLOR CurrentAlliance = ALLIANCE_COLOR.ALLIANCE_RED;
+
+    // ---- Loop-time I/O switches (Panels -> RobotMain). All ON = full debug
+    // richness (~30-50ms loops); turn OFF for matches / fast loops. ----
+    /** Master switch for the telemetry FILE logger (disk write+flush per tick). */
+    public static boolean TELEMETRY_IO = true;
+    /**
+     * Master switch for the Panels dashboard: field canvas draw, Fusion/*
+     * report lines, captureSnapshot, and the Panels update() send. False =
+     * lean loop (DS telemetry only). Panels-tunable but takes effect from the
+     * NEXT flushTelemetry() call.
+     */
+    public static boolean DASHBOARD = true;
 
     /** Panels telemetry (Panels web UI). DS telemetry stays on opmode.telemetry. */
     public static Telemetry DashTelemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
@@ -52,8 +64,7 @@ public class RobotMain {
     public static Pose autonomousEndPose = new Pose(0, 0, 0);
     public RobotMain(OpMode opmode)
     {
-        clearAll(); // avoid double-registration of subsystem on re-run or Opmode switch
-        Scheduler.reset(); //clears all scheduler commands in ivy after opmode switch.
+            CommandScheduler.getInstance().reset(); //clears all scheduled commands + subsystem registrations after opmode switch.
         //subsystems
         follower = Constants.create(opmode.hardwareMap);
         SetupStartingPositionFromPinPointOrAuton();
@@ -138,8 +149,7 @@ public class RobotMain {
         if (cells != null) {
             cells.update(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE ? 'B' : 'R');
         }
-        RunPeriodic();//run all registered subsystems periodic (addData only, no update)
-        Scheduler.execute(); //eun the Ivy scheduler periodic (AimAtGoal adds data, no update)
+        CommandScheduler.getInstance().run(); //runs subsystem periodic()s + scheduled commands (AimAtGoal adds data, no update)
         looptime(); //adds loop-time lines, no update — OpMode loop must end with flushTelemetry()
     }
 
@@ -215,10 +225,22 @@ public class RobotMain {
      * update is already applied, so the painted pose is never a loop stale.
      */
     public void flushTelemetry() {
+        if (!DASHBOARD) {
+            // Dashboard off: no field draw, no Fusion/* lines, no capture, no
+            // Panels send. The only Panels interaction left is the file logger
+            // (its own switch) — and it must NOT read pending lines before
+            // DashTelemetry.update() would have consumed them, so snapshot
+            // capture is also skipped: the file logger's log(key, value)
+            // event API still works for explicit diagnostics.
+            if (telemetryLogger != null && TELEMETRY_IO) {
+                telemetryLogger.log("Loop", "dashboard off");
+            }
+            return;
+        }
         drawField();
         if (visionFusion != null) visionFusion.report();
         // Capture telemetry snapshot BEFORE update
-        if (telemetryLogger != null) {
+        if (telemetryLogger != null && TELEMETRY_IO) {
             telemetryLogger.captureSnapshot(DashTelemetry);
         }
         DashTelemetry.update();

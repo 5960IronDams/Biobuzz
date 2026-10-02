@@ -1,9 +1,9 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
-import static com.pedropathing.ivy.groups.Groups.sequential;
-import static com.pedropathing.ivy.pedro.PedroCommands.follow;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.SequentialCommandGroup;
 
-import com.pedropathing.ivy.Command;
+import static org.firstinspires.ftc.teamcode.pedro.PedroFollow.follow;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
@@ -17,7 +17,7 @@ public class _R_ShootPark extends AutoOpModeBase {
     }
     @Override
     public Command autoRoutine() {
-        return sequential(
+        return new SequentialCommandGroup(
                 //shoot
                 robot.CommandF.ServoToPos(0.5),
                 robot.CommandF.RunIntake(),

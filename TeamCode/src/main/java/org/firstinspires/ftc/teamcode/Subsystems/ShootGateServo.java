@@ -10,7 +10,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
+import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 import java.util.Locale;
 
@@ -74,6 +74,7 @@ public class ShootGateServo extends SubsystemBase {
         servo.setDirection(REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD);
         servo.setPosition(current);
         timer.reset();
+        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     // ---- Code API (KeyBindings + CommandFactory drive these; autos use them too) ----
@@ -124,7 +125,7 @@ public class ShootGateServo extends SubsystemBase {
     }
 
     @Override
-    public void Periodic() {
+    public void periodic() {
         double now = timer.seconds();
         double rawDt = Double.isNaN(lastTime) ? 0.02 : Math.max(0, now - lastTime);
         double dtSec = Math.min(rawDt, 0.25); // Panels pause shouldn't slingshot servos

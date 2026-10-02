@@ -1,12 +1,11 @@
 package org.firstinspires.ftc.teamcode.Autos;
 
-import static com.pedropathing.ivy.Scheduler.schedule;
-import static com.pedropathing.ivy.commands.Commands.waitMs;
-import static com.pedropathing.ivy.groups.Groups.parallel;
-import static com.pedropathing.ivy.groups.Groups.sequential;
-import static com.pedropathing.ivy.pedro.PedroCommands.follow;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.ParallelCommandGroup;
+import com.seattlesolvers.solverslib.command.SequentialCommandGroup;
+import com.seattlesolvers.solverslib.command.WaitCommand;
 
-import com.pedropathing.ivy.Command;
+import static org.firstinspires.ftc.teamcode.pedro.PedroFollow.follow;
 
 import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
 
@@ -20,20 +19,20 @@ public class _RightAuto extends AutoOpModeBase {
     }
     @Override
     public Command autoRoutine() {
-        return sequential(
+        return new SequentialCommandGroup(
                 //fire or whatever.
                 robot.CommandF.ServoToPos(0.5),
                 //move out of way
                 follow(robot.follower, pp.getPathByLineName("StartToOffset")),
                 // move to next location
-                parallel(
+                new ParallelCommandGroup(
                         robot.CommandF.RunIntake(),
                         follow(robot.follower, pp.getPathByLineName("OffsetToPark"))
                 ),
                 //stop intakeing and other functions.
                 robot.CommandF.StopIntake(),
                 robot.CommandF.ServoToPos(1.0),
-                waitMs(1500),
+                new WaitCommand(1500),
                 robot.CommandF.ServoToPos(0.0)
 
         );

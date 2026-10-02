@@ -5,11 +5,12 @@ import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
+import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 /**
  * Velocity-PID intake subsystem.
@@ -54,6 +55,7 @@ public class Intake extends SubsystemBase {
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         applyPids(true);
+        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     /** RPM -> encoder ticks/sec for DcMotorEx.setVelocity(). */
@@ -100,7 +102,7 @@ public class Intake extends SubsystemBase {
     }
 
     @Override
-    public void Periodic() {
+    public void periodic() {
         applyPids(false);
 
         // NOTE: addData only, no update() here. Panels TelemetryManager sends AND

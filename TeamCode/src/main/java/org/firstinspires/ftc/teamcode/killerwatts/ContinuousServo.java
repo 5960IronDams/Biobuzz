@@ -6,7 +6,9 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.CRServo;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.SubsystemBase;
+
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 import java.util.Locale;
 
@@ -58,6 +60,7 @@ public class ContinuousServo extends SubsystemBase {
 
         servo.setDirection(REVERSED ? CRServo.Direction.REVERSE : CRServo.Direction.FORWARD);
         servo.setPower(0);
+        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     // ---- Code API (KeyBindings drives these; autos set a hold power and forget) ----
@@ -97,7 +100,7 @@ public class ContinuousServo extends SubsystemBase {
     }
 
     @Override
-    public void Periodic() {
+    public void periodic() {
         // Live-tune support: Panels edits apply without restart.
         servo.setDirection(REVERSED ? CRServo.Direction.REVERSE : CRServo.Direction.FORWARD);
         requested = cap(requested);
