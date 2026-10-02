@@ -25,7 +25,7 @@ import org.firstinspires.ftc.teamcode.killerwatts.lib.PanelsFieldRenderer;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
-import org.firstinspires.ftc.teamcode.utils.TelemetryFileLogger;
+import org.firstinspires.ftc.teamcode.killerwatts.PanelsTelemLogging.TelemetryFileLogger;
 
 import java.lang.reflect.Field;
 
