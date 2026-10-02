@@ -20,7 +20,7 @@ dependencies {
     // (core + plugins below). Panels provides telemetry, live-tuning
     // (@Configurable) and the Field widget; Dashboard's TelemetryPacket
     // field overlay + @Config are replaced by PanelsFieldRenderer.
-    implementation 'com.pedropathing:revhub:3.0.1'
+    implementation "com.pedropathing:revhub:${rootProject.findProperty('pedroVersion')}"
     // Pedro AutoTune (tuning procedures + Sloth). we are using sloth for sloth panels this must stay active.
     implementation 'com.pedropathing:tuning:1.0.1'
     implementation 'com.pedropathing.ivy:pedro:1.1.1'

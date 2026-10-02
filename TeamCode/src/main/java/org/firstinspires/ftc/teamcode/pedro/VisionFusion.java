@@ -105,7 +105,7 @@ public class VisionFusion {
      * blend is the production path. Statuses are prefixed "pedro-" while
      * hunting so the two paths never blur in the logs.
      */
-    public static boolean USE_PEDRO_FUSE = false;
+    public static boolean USE_PEDRO_FUSE = true;
     /**
      * Direct-blend MT1-yaw gain per accepted frame (0-1). THE SAFE injection
      * path for vision heading: a direct heading write via setPose — no Pedro

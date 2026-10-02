@@ -60,6 +60,21 @@ import java.util.Locale;
  */
 @Configurable
 public class Vision {
+    //SET THE CAMERA POSITION IN ROBOT SPACE VIA WEB GUI! this is for reference only!!
+    //this does not work.
+    /** Camera offset forward (robot +X), meters. Set before first poll. */
+    public static double CAM_X_M = 0.110;
+    /** Camera offset left (robot +Y), meters. */
+    public static double CAM_Y_M = 0.0;
+    /** Camera height above the floor, meters. */
+    public static double CAM_Z_M = 0.5;
+    /** Camera roll (deg).  • Roll: Rotation around the X-axis (tilting the horizon side-to-side).*/
+    public static double CAM_ROLL_DEG = 0.0;
+    /** Camera pitch (deg). • Pitch: Rotation around the Y-axis. Tilting the camera downward toward the floor is a negative pitch (e.g., -20.0), while angling it up is positive. */
+    public static double CAM_PITCH_DEG = 50.0;
+    /** Camera yaw (deg). ccw+? • Yaw: Rotation around the Z-axis (turning left or right). */
+    public static double CAM_YAW_DEG = 5.0;
+    //
 
     // ---- Frame mapping (Panels -> Vision). See class javadoc VERIFY step. ----
     /** Sign applied to Limelight X (meters) before inches conversion. */
@@ -309,31 +324,20 @@ public class Vision {
             limelight.pipelineSwitch(pipeline);
         } catch (Exception ignored) {
         }
-        pushCameraPoseToLimelight();
+        //pushCameraPoseToLimelight();
         try {
             limelight.start();
         } catch (Exception ignored) {
         }
     }
 
-    // ---- Programmatic camera->robot transform (MegaTag2 geometry) ----
 
 
 
-    /** Camera offset forward (robot +X), meters. Set before first poll. */
-    public static double CAM_X_M = 0.110;
-    /** Camera offset left (robot +Y), meters. */
-    public static double CAM_Y_M = 0.0;
-    /** Camera height above the floor, meters. */
-    public static double CAM_Z_M = 0.5;
-    /** Camera roll (deg).  • Roll: Rotation around the X-axis (tilting the horizon side-to-side).*/
-    public static double CAM_ROLL_DEG = 0.0;
-    /** Camera pitch (deg). • Pitch: Rotation around the Y-axis. Tilting the camera downward toward the floor is a negative pitch (e.g., -20.0), while angling it up is positive. */
-    public static double CAM_PITCH_DEG = 50.0;
-    /** Camera yaw (deg). ccw+? • Yaw: Rotation around the Z-axis (turning left or right). */
-    public static double CAM_YAW_DEG = 5.0;
+
 
     /**
+     * This does not work. there is no rest api for this. as not seen here https://docs.limelightvision.io/docs/docs-limelight/apis/rest-http-api
      * Push the cameraPoseRobotSpace transform to the Limelight over HTTP
      * (POST /api/configset, port 5807) so the mounting geometry is set
      * programmatically each time the OpMode boots — no web-UI step.
@@ -341,24 +345,24 @@ public class Vision {
      * Values come from the CAM_* configurables above; inch-based helpers
      * {@link #setCameraPoseInches} are available too.
      */
-    public boolean pushCameraPoseToLimelight() {
-        String json = String.format(Locale.US,
-                "{\"camerapose_robotspace\":[%.6f,%.6f,%.6f,%.6f,%.6f,%.6f]}", //Old:cameraPoseRobotSpace
-                CAM_X_M, CAM_Y_M, CAM_Z_M, CAM_ROLL_DEG, CAM_PITCH_DEG, CAM_YAW_DEG);
-        return postConfig(json);
-    }
+//    public boolean pushCameraPoseToLimelight() {
+//        String json = String.format(Locale.US,
+//                "{\"camerapose_robotspace\":[%.6f,%.6f,%.6f,%.6f,%.6f,%.6f]}", //Old:cameraPoseRobotSpace
+//                CAM_X_M, CAM_Y_M, CAM_Z_M, CAM_ROLL_DEG, CAM_PITCH_DEG, CAM_YAW_DEG);
+//        return postConfig(json);
+//    }
 
     /** Convenience: set the CAM_* constants from inches/degrees and push. */
-    public boolean setCameraPoseInches(double xIn, double yIn, double zIn,
-                                       double rollDeg, double pitchDeg, double yawDeg) {
-        CAM_X_M = xIn * 0.0254;
-        CAM_Y_M = yIn * 0.0254;
-        CAM_Z_M = zIn * 0.0254;
-        CAM_ROLL_DEG = rollDeg;
-        CAM_PITCH_DEG = pitchDeg;
-        CAM_YAW_DEG = yawDeg;
-        return pushCameraPoseToLimelight();
-    }
+//    public boolean setCameraPoseInches(double xIn, double yIn, double zIn,
+//                                       double rollDeg, double pitchDeg, double yawDeg) {
+//        CAM_X_M = xIn * 0.0254;
+//        CAM_Y_M = yIn * 0.0254;
+//        CAM_Z_M = zIn * 0.0254;
+//        CAM_ROLL_DEG = rollDeg;
+//        CAM_PITCH_DEG = pitchDeg;
+//        CAM_YAW_DEG = yawDeg;
+//        return pushCameraPoseToLimelight();
+//    }
 
     /** Fire one POST /api/configset request at the Limelight web server. */
     private boolean postConfig(String json) {

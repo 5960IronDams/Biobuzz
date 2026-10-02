@@ -21,6 +21,11 @@ plugins {
 // google() repository beginning with version 3.2 of the Android Gradle Plugin
 allprojects {
     repositories {
+        // Local fixed Pedro Pathing (see useLocalPedro in gradle.properties).
+        // Must be first so our mavenLocal 3.0.1 shadows Maven Central's.
+        if ((rootProject.findProperty('useLocalPedro') ?: 'false').toString().toBoolean()) {
+            mavenLocal()
+        }
         mavenCentral()
         google()
     }
