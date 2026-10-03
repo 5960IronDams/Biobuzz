@@ -10,14 +10,17 @@ import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.FunctionalCommand;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 /**
  * Velocity-PID flywheel subsystem.
  *
- * <p>Hardware only - gamepad bindings live in {@code KeyBindings}, commands live in
- * {@code CommandFactory} ({@code SetFlywheelRpm} / {@code StopFlywheel} /
- * {@code CoastFlywheelToIdle}).
+ * <p>Hardware + its own single-subsystem commands ({@code toRpm} /
+ * {@code holdTunable} / {@code stopCmd} / {@code coastToIdleCmd}) -
+ * gamepad bindings live in {@code KeyBindings}, multi-subsystem
+ * compositions live in {@code CommandFactory}.
  * Panels-tunable (Panels -&gt; Flywheel): TARGET_RPM, IDLE_RPM plus the
  * RUN_USING_ENCODER PIDF gains live.
  *
@@ -79,7 +82,6 @@ public class Flywheel extends SubsystemBase {
         motor.setVelocity(0);
         applyPids(true);
         mode = Mode.STOPPED;
-        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     /** RPM -> encoder ticks/sec for DcMotorEx.setVelocity(). */
@@ -139,6 +141,45 @@ public class Flywheel extends SubsystemBase {
         engagePidMode();
         mode = Mode.FLOATING;
         motor.setVelocity(0);
+    }
+
+    // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----
+
+    /**
+     * Spin the flywheel to an explicit RPM via velocity PID (fire-and-forget).
+     * The PID hold runs in {@code periodic()}, so this finishes instantly -
+     * sequence on {@code isAtTargetRpm()} (e.g. {@code .until(...)}) if the
+     * next step needs it up to speed first.
+     */
+    public Command toRpm(double rpm) {
+        return runOnce(() -> setTargetRpm(rpm));
+    }
+
+    /**
+     * Hold the flywheel at TARGET_RPM, re-asserting every loop so live Panels
+     * retunes of TARGET_RPM apply immediately (PID hold also runs in periodic()).
+     */
+    public Command holdTunable() {
+        return run(() -> setTargetRpm(TARGET_RPM));
+    }
+
+    /** PID-brake the flywheel to zero. */
+    public Command stopCmd() {
+        return runOnce(this::stop);
+    }
+
+    /**
+     * Cut drive (FLOAT) and free-spin toward idle, then re-engage the normal PID
+     * to hold idle on arrival. Finishes when {@code isHoldingIdle()} -
+     * i.e. coast arrived AND PID is holding idle - so autos can sequence on it.
+     */
+    public Command coastToIdleCmd() {
+        return new FunctionalCommand(
+                this::coastToIdle,   // initialize
+                () -> {},            // execute (PID hold runs in periodic())
+                (interrupted) -> {}, // end
+                this::isHoldingIdle, // isFinished
+                this);               // requirement
     }
 
     /**

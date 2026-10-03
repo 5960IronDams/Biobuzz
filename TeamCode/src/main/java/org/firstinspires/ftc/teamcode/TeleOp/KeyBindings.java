@@ -21,10 +21,10 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
  *   <li>Drive: field-centric sticks on gamepad1, or the {@link AimAtGoal} command
  *       while the left trigger is held (aim owns turn, sticks keep translation).</li>
  *   <li>Intake: right trigger press/release schedules
- *       {@code CommandF.RunIntake()} / {@code CommandF.StopIntake()}.</li>
+ *       {@code intake.holdCmd()} / {@code intake.stopCmd()}.</li>
  *   <li>Flywheel: left bumper press/release schedules
- *       {@code CommandF.SetFlywheelRpm(TARGET_RPM)} / {@code CommandF.StopFlywheel()}.</li>
- *   <li>Servo: X toggles presets via {@code CommandF.ServoTogglePos},
+ *       {@code flywheel.holdTunable()} / {@code flywheel.stopCmd()}.</li>
+ *   <li>Servo: X toggles presets via {@code PosServ.toggleCmd},
  *       dpad nudges while held.</li>
  *   <li>Localize: start resets the Pedro pose to the alliance start.</li>
  * </ol>
@@ -81,29 +81,29 @@ public class KeyBindings {
                 .whileActiveOnce(aimCmd, true);
 
         // ---- Intake: right trigger press->run, release->stop ----
-        // HoldIntakeTunable is a RunCommand: INTAKE_RPM is re-read every loop, so
+        // holdCmd is a RunCommand: INTAKE_RPM is re-read every loop, so
         // live Panels retunes apply immediately while the trigger is held.
         gp1.rightTrigger(0.1)
-                .whenActive(robot.CommandF.HoldIntakeTunable())
-                .whenInactive(robot.CommandF.StopIntake());
+                .whenActive(robot.intake.holdCmd())
+                .whenInactive(robot.intake.stopCmd());
 
         // ---- Flywheel: left bumper press->spin up, release->stop ----
-        // HoldFlywheelTunable is a RunCommand: TARGET_RPM is re-asserted every
+        // holdTunable is a RunCommand: TARGET_RPM is re-asserted every
         // loop, so live Panels retunes apply immediately while the bumper is held.
         gp1.leftBumper()
-                .whenActive(robot.CommandF.HoldFlywheelTunable())
-                .whenInactive(robot.CommandF.StopFlywheel());
+                .whenActive(robot.flywheel.holdTunable())
+                .whenInactive(robot.flywheel.stopCmd());
 
         // ---- Servo toggle: X, edge-triggered (persistent instance; reusable) ----
-        gp1.x().whenActive(robot.CommandF.ServoTogglePos);
+        gp1.x().whenActive(robot.PosServ.toggleCmd());
 
         // ---- Servo nudge: dpad_up/dpad_down, run-while-held ----
         // Each command computes its own dt so nudging rate is loop-time
         // independent; the slew + hardware write still happen in
         // ShootGateServo.periodic(). Requires PosServ so dpad nudges cancel
         // any servo preset command still running.
-        gp1.dpadUp().whileActiveOnce(robot.CommandF.NudgeServo(true), true);
-        gp1.dpadDown().whileActiveOnce(robot.CommandF.NudgeServo(false), true);
+        gp1.dpadUp().whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
+        gp1.dpadDown().whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
     }
 
     /** Poll every binding once. Call once per loop, after {@code robot.RobotRunPeriodic()}. */
@@ -198,7 +198,7 @@ public class KeyBindings {
     /** Operator (gamepad2) bindings - nothing assigned yet; add flywheel/etc. here. */
     private void handleOperator() {
         // TODO: move operator controls here as mechanism commands land, e.g.
-        // new Trigger(() -> gamepad2.y).whenActive(robot.CommandF.RunFlywheel());
+        // new Trigger(() -> gamepad2.y).whenActive(robot.flywheel.toRpm(2000));
     }
 
     // ------------------------------------------------------------------ telemetry

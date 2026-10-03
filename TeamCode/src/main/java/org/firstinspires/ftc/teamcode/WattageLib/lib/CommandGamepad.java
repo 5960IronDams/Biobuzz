@@ -16,12 +16,12 @@ import java.util.function.BooleanSupplier;
  * <pre>
  * CommandGamepad controller = new CommandGamepad(opMode.gamepad1);
  *
- * controller.a().whenActive(robot.CommandF.ServoTogglePos);
- * controller.leftBumper().whenActive(robot.CommandF.HoldFlywheelTunable())
- *                        .whenInactive(robot.CommandF.StopFlywheel());
+ * controller.a().whenActive(robot.PosServ.toggleCmd());
+ * controller.leftBumper().whenActive(robot.flywheel.holdTunable())
+ *                        .whenInactive(robot.flywheel.stopCmd());
  * controller.leftTrigger().whileActiveOnce(aimCmd, true);  // default 0.5 threshold
  * controller.leftTrigger(0.3).whileActiveOnce(aimCmd, true);
- * controller.povUp().whileActiveOnce(robot.CommandF.NudgeServo(true), true);
+ * controller.povUp().whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
  * controller.axisGreaterThan(AXIS_LEFT_X, 0.5).whenActive(cmd);  // generic axes
  * controller.a().and(controller.b()).whenActive(cmd);            // logical chain
  * </pre>

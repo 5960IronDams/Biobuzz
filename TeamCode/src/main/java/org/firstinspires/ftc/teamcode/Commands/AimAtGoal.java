@@ -52,7 +52,7 @@ import java.util.function.Supplier;
  * schedule(deadline(
  *     robot.CommandF.AimAtClosestGoal(fwd, strafe)
  *         .until(() -&gt; gamepad1.left_trigger &lt; 0.3),
- *     robot.CommandF.RunIntake()));
+ *     robot.intake.runCmd()));
  * </pre>
  */
 @Configurable

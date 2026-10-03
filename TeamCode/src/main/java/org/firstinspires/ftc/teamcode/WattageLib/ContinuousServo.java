@@ -59,7 +59,6 @@ public class ContinuousServo extends SubsystemBase {
 
         servo.setDirection(REVERSED ? CRServo.Direction.REVERSE : CRServo.Direction.FORWARD);
         servo.setPower(0);
-        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     // ---- Code API (KeyBindings drives these; autos set a hold power and forget) ----

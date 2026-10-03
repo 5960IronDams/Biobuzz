@@ -23,6 +23,7 @@ public final class AutoRegistrar {
     private AutoRegistrar() {}
 
     /** Every concrete Red auto. The Blue mirror is generated, not written. */
+    @SuppressWarnings("unchecked")
     private static final Class<? extends AutoOpModeBase>[] RED_AUTOS = new Class[]{
             RightAuto.class,//shoot and turn
             R_ShootPark.class,//shoot Right, then go park.

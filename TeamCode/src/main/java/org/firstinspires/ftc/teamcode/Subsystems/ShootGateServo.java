@@ -10,6 +10,8 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import com.seattlesolvers.solverslib.command.Command;
+import com.seattlesolvers.solverslib.command.FunctionalCommand;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 import java.util.Locale;
@@ -17,8 +19,9 @@ import java.util.Locale;
 /**
  * Single positional servo (claw, wrist, arm, diverter...).
  *
- * <p>Hardware only in this class - gamepad bindings live in {@code KeyBindings}
- * to use a gamepad inputs and control this mechanism add them there. ).
+ * <p>Hardware + its own single-subsystem commands ({@code toggleCmd} /
+ * {@code toPos} / {@code nudgeCmd}) - gamepad bindings live in
+ * {@code KeyBindings}, multi-subsystem compositions live in {@code CommandFactory}.
  *
  * <p>To make a new mechanism: copy this file, rename the class, change
  * add the MotorName to constants then Get it from the HardwareMap. That's it.
@@ -64,6 +67,8 @@ public class ShootGateServo extends SubsystemBase {
     private double target;
     private double current;
     private double lastTime = Double.NaN;
+    /** Shared dt tracker for the nudge commands (rate * dt, loop-time independent). */
+    private long lastNudgeNs = -1L;
 
 
     public ShootGateServo(OpMode opMode) {
@@ -74,10 +79,9 @@ public class ShootGateServo extends SubsystemBase {
         servo.setDirection(REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD);
         servo.setPosition(current);
         timer.reset();
-        register(); // required for CommandScheduler.run() to call periodic()
     }
 
-    // ---- Code API (KeyBindings + CommandFactory drive these; autos use them too) ----
+    // ---- Code API (KeyBindings drives these; autos use them too) ----
 
     /** Command a position (0..1, clamped to MIN/MAX). Slew-limited on the way out. */
     public void setPosition(double position) {
@@ -122,6 +126,48 @@ public class ShootGateServo extends SubsystemBase {
 
     public boolean isAtPosition() {
         return Math.abs(target - current) <= TOLERANCE;
+    }
+
+    // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----
+
+    /**
+     * Toggle between POS_A and POS_B, holding the requirement until the slew
+     * arrives so a preset can't be interrupted mid-travel by another servo cmd.
+     */
+    public Command toggleCmd() {
+        return new FunctionalCommand(
+                this::toggle,        // initialize
+                () -> {},            // execute (slew runs in periodic())
+                (interrupted) -> {}, // end
+                this::isAtPosition,  // isFinished
+                this);               // requirement
+    }
+
+    /** Go to an absolute position, holding the requirement until arrival. */
+    public Command toPos(double gotoPos) {
+        return new FunctionalCommand(
+                () -> setPosition(gotoPos), // initialize
+                () -> {},                   // execute (slew runs in periodic())
+                (interrupted) -> {},        // end
+                this::isAtPosition,         // isFinished
+                this);                      // requirement
+    }
+
+    /**
+     * Nudge the servo target each loop the command runs (loop-time independent:
+     * dt is measured internally). Rate and direction per ShootGateServo.
+     *
+     * @param up true nudges toward one end, false toward the other (matches the
+     *           dpad_up/dpad_down binding directions)
+     */
+    public Command nudgeCmd(boolean up) {
+        return run(() -> {
+            long nowNs = System.nanoTime();
+            double dt = lastNudgeNs < 0 ? 0.02 : (nowNs - lastNudgeNs) / 1.0e9;
+            dt = Math.min(Math.max(dt, 0.0), 0.25);
+            lastNudgeNs = nowNs;
+            nudge((up ? -1 : 1) * NUDGE_RATE * dt);
+        });
     }
 
     @Override

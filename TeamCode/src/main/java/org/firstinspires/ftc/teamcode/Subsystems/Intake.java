@@ -10,13 +10,15 @@ import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 /**
  * Velocity-PID intake subsystem.
  *
- * <p>Hardware only - gamepad bindings live in {@code KeyBindings} (right trigger
- * press/release schedules {@code CommandF.RunIntake()} / {@code CommandF.StopIntake()}).
+ * <p>Hardware + its own single-subsystem commands - gamepad bindings live in
+ * {@code KeyBindings} (right trigger press/release schedules
+ * {@code holdCmd()} / {@code stopCmd()}).
  * Panels-tunable (Panels -> Intake): set INTAKE_RPM plus the
  * RUN_USING_ENCODER PIDF gains live.
  *
@@ -55,7 +57,6 @@ public class Intake extends SubsystemBase {
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         applyPids(true);
-        register(); // required for CommandScheduler.run() to call periodic()
     }
 
     /** RPM -> encoder ticks/sec for DcMotorEx.setVelocity(). */
@@ -82,6 +83,31 @@ public class Intake extends SubsystemBase {
 
     public void stop() {
         motor.setVelocity(0);
+    }
+
+    // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----
+
+    /**
+     * Fire-and-forget: spin the intake at INTAKE_RPM once (the motor keeps
+     * spinning until stopCmd). For autos / sequencing - pairs with
+     * {@link #stopCmd} in a sequence. NOT Panels-live-tunable.
+     */
+    public Command runCmd() {
+        return runOnce(this::runIntake);
+    }
+
+    /**
+     * Continuous hold: re-asserts INTAKE_RPM every scheduler loop, so live
+     * Panels retunes apply immediately while held. For TeleOp trigger
+     * bindings - releases should bind {@link #stopCmd}.
+     */
+    public Command holdCmd() {
+        return run(this::runIntake);
+    }
+
+    /** PID-brake the intake to zero. */
+    public Command stopCmd() {
+        return runOnce(this::stop);
     }
 
     private void applyPids(boolean force) {

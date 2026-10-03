@@ -19,8 +19,8 @@ public class R_ShootPark extends AutoOpModeBase {
     public Command autoRoutine() {
         return new SequentialCommandGroup(
                 //shoot
-                robot.CommandF.ServoToPos(0.5),
-                robot.CommandF.RunIntake(),
+                robot.PosServ.toPos(0.5),
+                robot.intake.runCmd(),
                 //goto park
                 follow(robot.follower, pp.getPathByLineName("ParkPlace"))
         );
