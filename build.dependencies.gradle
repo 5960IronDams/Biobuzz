@@ -16,17 +16,8 @@ dependencies {
     implementation 'org.firstinspires.ftc:FtcCommon:12.0.0'
     implementation 'org.firstinspires.ftc:Vision:12.0.0'
     implementation 'androidx.appcompat:appcompat:1.2.0'
-    // FTC Dashboard removed 2026-09-19: superseded by FTControl Panels
-    // (core + plugins below). Panels provides telemetry, live-tuning
-    // (@Configurable) and the Field widget; Dashboard's TelemetryPacket
-    // field overlay + @Config are replaced by PanelsFieldRenderer.
     implementation "com.pedropathing:revhub:${rootProject.findProperty('pedroVersion')}"
     // Pedro AutoTune (tuning procedures + Sloth). we are using sloth for sloth panels this must stay active.
     implementation 'com.pedropathing:tuning:1.0.1'
-    // FTControl Panels, subset (2026-09-19): core + 10 plugins instead of
-    // com.bylazar:fullpanels:1.0.13 (which bundles ~15 modules incl. Themes,
-    // LimelightProxy, Docs, Lights, CameraStream). Smaller dex/assets = shorter
-    // ClassManager scan = stays under the system ANR watchdog. Versions are
-    // latest per https://mymaven.bylazar.com/releases as of 2026-09-19.
-    implementation("com.bylazar.sloth:fullpanels:0.3.2+1.0.13")
+    implementation "com.bylazar:fullpanels:1.0.17"
 }

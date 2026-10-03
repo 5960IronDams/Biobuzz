@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.Subsystems;
 
-import static org.firstinspires.ftc.teamcode.killerwatts.lib.killaUtils.clamp;
+import static org.firstinspires.ftc.teamcode.WattageLib.lib.killaUtils.clamp;
 
 import com.bylazar.configurables.annotations.Configurable;
 import com.bylazar.telemetry.PanelsTelemetry;

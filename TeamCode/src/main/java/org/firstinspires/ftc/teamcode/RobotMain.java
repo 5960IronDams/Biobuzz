@@ -11,16 +11,17 @@ import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.Commands.CommandFactory;
 import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
-import org.firstinspires.ftc.teamcode.killerwatts.HiveCellMonitor;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision.HiveCellMonitor;
 import org.firstinspires.ftc.teamcode.Subsystems.Intake;
 import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.PanelsFieldRenderer;
-import org.firstinspires.ftc.teamcode.Subsystems.Vision;
-import org.firstinspires.ftc.teamcode.pedro.Constants;
-import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
-import org.firstinspires.ftc.teamcode.killerwatts.PanelsTelemLogging.TelemetryFileLogger;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsFieldRenderer;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision.Vision;
+import org.firstinspires.ftc.teamcode.Subsystems.pedro.Constants;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision.VisionFusion;
+import org.firstinspires.ftc.teamcode.WattageLib.PanelsTelemLogging.TelemetryFileLogger;
 
 import com.bylazar.configurables.annotations.Configurable;
 

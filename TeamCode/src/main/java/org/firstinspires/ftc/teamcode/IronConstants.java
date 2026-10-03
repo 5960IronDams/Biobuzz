@@ -17,6 +17,9 @@ public class IronConstants {
     public static final String FlywheelMotorName = "flywheel";
     public static final String FrontServoName = "shootgate";
 
+    // Alliance reset poses for extreme localization loss, should be in a known location.
+    public static final Pose RED_RESET_POSE = new Pose(10.5, 10.5, Math.toRadians(0));
+    public static final Pose BLUE_RESET_POSE = new Pose(20.5, 20.5, Math.toRadians(180));
 
 
     //TODO: Test todo.

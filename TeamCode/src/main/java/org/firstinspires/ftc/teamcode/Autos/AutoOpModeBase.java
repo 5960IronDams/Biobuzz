@@ -8,9 +8,9 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.PPFile;
-import org.firstinspires.ftc.teamcode.pedro.VisionFusion;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
+import org.firstinspires.ftc.teamcode.Subsystems.Vision.VisionFusion;
 
 //@Autonomous(name = "Red_AutoOpMode", group = "Autos")
 @Disabled

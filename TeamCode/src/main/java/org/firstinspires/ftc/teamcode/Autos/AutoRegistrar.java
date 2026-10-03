@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpModeManager;
 import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;
 
 import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta;
-import org.firstinspires.ftc.teamcode.killerwatts.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 
 import java.lang.reflect.Constructor;
 
@@ -24,9 +24,9 @@ public final class AutoRegistrar {
 
     /** Every concrete Red auto. The Blue mirror is generated, not written. */
     private static final Class<? extends AutoOpModeBase>[] RED_AUTOS = new Class[]{
-            _RightAuto.class,//shoot and turn
-            _R_ShootPark.class,//shoot Right, then go park.
-            _L_ShootLFlowerShootL.class
+            RightAuto.class,//shoot and turn
+            R_ShootPark.class,//shoot Right, then go park.
+            L_ShootLFlowerShootL.class
             //Right auto That Shoots, goes under middle, shoots again, grabs flower, shoots again, parks.
             // Red_LeftAuto.class,  // <-- just add the class here when you write it
     };
