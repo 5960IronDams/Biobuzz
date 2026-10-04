@@ -22,7 +22,7 @@ public class R_ShootPark extends AutoOpModeBase {
                 robot.PosServ.toPos(0.5),
                 robot.intake.runCmd(),
                 //goto park
-                follow(robot.follower, pp.getPathByLineName("ParkPlace"))
+                follow(robot.follower, pp.path("ParkPlace"))
         );
     }
 }

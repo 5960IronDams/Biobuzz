@@ -9,6 +9,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.PPAssets;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.VisionFusion;
 
@@ -40,15 +41,10 @@ public abstract class AutoOpModeBase extends OpMode {
         if(RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE)
         {
             // 180-degree rotation of the Red design around the field center.
-            // See PPFile.blueRotationFactory (built on Pedro's mirrorAroundPoint).
-            poseFactory = PPFile.blueRotationFactory(IronConstants.FieldCenter.x(), IronConstants.FieldCenter.y());
+            poseFactory = PoseFactory.degrees().mirrorAroundPoint(IronConstants.FieldCenter.x(), IronConstants.FieldCenter.y());
         }
         // after poseFactory is configured for Red/Blue load the pathfile:
-        try {
-            pp = PPFile.fromAsset(hardwareMap, assetPath, poseFactory);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        pp = PPAssets.fromAsset(hardwareMap, assetPath, poseFactory);
 
         //setupPathPoints();
 
@@ -56,7 +52,7 @@ public abstract class AutoOpModeBase extends OpMode {
         robot = new RobotMain(this);
 
         //for autons, set our robot in the known starting place
-        robot.follower.setPose(pp.getStartPose());
+        robot.follower.setPose(pp.startPoint());
         robot.follower.update();
 
         //update telemetry and draw where our robot is on the field.
@@ -79,7 +75,7 @@ public abstract class AutoOpModeBase extends OpMode {
         // is always the path's start pose.
         //
         // OR disable to accept the vision and not reset the pose from auton init
-        if(!VisionFusion.ENABLED){}robot.follower.setPose(pp.getStartPose());
+        if(!VisionFusion.ENABLED){}robot.follower.setPose(pp.startPoint());
         robot.follower.update();
         UpdateTelemetry();
         robot.flushTelemetry();

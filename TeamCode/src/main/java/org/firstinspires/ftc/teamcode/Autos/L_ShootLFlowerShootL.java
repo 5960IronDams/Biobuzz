@@ -24,25 +24,25 @@ public class L_ShootLFlowerShootL extends AutoOpModeBase {
                 //shoot pre-load into hive
                 robot.PosServ.toPos(0.5),
                 //drive to flower ready position
-                follow(robot.follower, pp.getPathByLineName("ReadyFlowerPos")),
+                follow(robot.follower, pp.path("ReadyFlowerPos")),
                 // Drive into flower command group
                 new ParallelCommandGroup(
                         //drop servo for flowerintake scoop
                         //activate intake
                         robot.intake.runCmd(),
                         //go into flower
-                        follow(robot.follower, pp.getPath("IntoFlower1"))
+                        follow(robot.follower, pp.path("IntoFlower1"))
                 ),
                 //wait for all pollen to be intaken
                 new WaitCommand(500),
                 robot.intake.stopCmd(),
                 //drive back to second shot on left hive
                 new SequentialCommandGroup(
-                        follow(robot.follower, pp.getPath("Shot2Left"))
+                        follow(robot.follower, pp.path("Shot2Left"))
                 ),
                 //drive to park while intaking
                 robot.intake.runCmd(),
-                follow(robot.follower, pp.getPath("ToPark")),
+                follow(robot.follower, pp.path("ToPark")),
                 //ready for teleop?
                 robot.PosServ.toPos(1.0),
                 new WaitCommand(1500),

@@ -14,6 +14,7 @@ import com.seattlesolvers.solverslib.command.Subsystem;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
 
 import org.firstinspires.ftc.teamcode.RobotMain;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.PPAssets;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 
@@ -116,7 +117,7 @@ public class AimAtGoal extends CommandBase {
         if (aimPoints == null) {
             throw new IllegalArgumentException("AimAtGoal needs a non-null PPFile");
         }
-        if (aimPoints.getPointCount() == 0) {
+        if (aimPoints.pointCount() == 0) {
             throw new IllegalArgumentException("AimAtGoal: " + ASSET_PATH + " has no points");
         }
         this.follower = follower;
@@ -138,7 +139,7 @@ public class AimAtGoal extends CommandBase {
                     "AimAtGoal needs a non-null HardwareMap to load " + ASSET_PATH);
         }
         try {
-            return PPFile.fromAsset(hardwareMap, ASSET_PATH, PoseFactory.degrees());
+            return PPAssets.fromAsset(hardwareMap, ASSET_PATH, PoseFactory.degrees());
         } catch (Exception e) {
             throw new RuntimeException("AimAtGoal: failed to load asset " + ASSET_PATH, e);
         }
@@ -244,12 +245,12 @@ public class AimAtGoal extends CommandBase {
 
         int best = -1;
         double bestD2 = Double.POSITIVE_INFINITY;
-        for (int i = 0; i < aimPoints.getPointCount(); i++) {
-            String name = aimPoints.getPointName(i);
+        for (int i = 0; i < aimPoints.pointCount(); i++) {
+            String name = aimPoints.pointName(i);
             if (name == null || !name.regionMatches(true, 0, prefix, 0, prefix.length())) {
                 continue;
             }
-            double d2 = dist2(robot, aimPoints.getPoint(i));
+            double d2 = dist2(robot, aimPoints.point(i));
             if (d2 < bestD2) {
                 bestD2 = d2;
                 best = i;
@@ -259,8 +260,8 @@ public class AimAtGoal extends CommandBase {
         if (best < 0) {
             // No alliance-prefixed points (file renamed?) - fall back to all
             // target points (skipping index 0, the "Robot" start point).
-            for (int i = 1; i < aimPoints.getPointCount(); i++) {
-                double d2 = dist2(robot, aimPoints.getPoint(i));
+            for (int i = 1; i < aimPoints.pointCount(); i++) {
+                double d2 = dist2(robot, aimPoints.point(i));
                 if (d2 < bestD2) {
                     bestD2 = d2;
                     best = i;
@@ -274,11 +275,11 @@ public class AimAtGoal extends CommandBase {
         if (best != targetIndex) {
             integral = 0.0;
             targetIndex = best;
-            targetPose = aimPoints.getPoint(best);
-            targetName = aimPoints.getPointName(best);
+            targetPose = aimPoints.point(best);
+            targetName = aimPoints.pointName(best);
         } else if (targetPose == null) {
-            targetPose = aimPoints.getPoint(best);
-            targetName = aimPoints.getPointName(best);
+            targetPose = aimPoints.point(best);
+            targetName = aimPoints.pointName(best);
         }
     }
 
@@ -326,6 +327,6 @@ public class AimAtGoal extends CommandBase {
 
     /** Number of points in the loaded aim file (expect 5: Robot + 4 targets). */
     public int getPointCount() {
-        return aimPoints.getPointCount();
+        return aimPoints.pointCount();
     }
 }

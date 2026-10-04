@@ -23,11 +23,11 @@ public class RightAuto extends AutoOpModeBase {
                 //fire or whatever.
                 robot.PosServ.toPos(0.5),
                 //move out of way
-                follow(robot.follower, pp.getPathByLineName("StartToOffset")),
+                follow(robot.follower, pp.path("StartToOffset")),
                 // move to next location
                 new ParallelCommandGroup(
                         robot.intake.runCmd(),
-                        follow(robot.follower, pp.getPathByLineName("OffsetToPark"))
+                        follow(robot.follower, pp.path("OffsetToPark"))
                 ),
                 //stop intakeing and other functions.
                 robot.intake.stopCmd(),
