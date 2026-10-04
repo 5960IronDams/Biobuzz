@@ -5,7 +5,6 @@ import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
@@ -74,6 +73,11 @@ public class Flywheel extends SubsystemBase {
     private double lastF = Double.NaN;
     private boolean lastReversed = false;
 
+    /** Last velocity setpoint actually written to hardware (ticks/sec). */
+    private double lastAppliedTicks = Double.NaN;
+    /** Last mode applied to hardware, so a mode change forces one re-write. */
+    private Mode lastAppliedMode = null;
+
     public Flywheel(OpMode opMode) {
         motor = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.FlywheelMotorName);
 
@@ -133,14 +137,14 @@ public class Flywheel extends SubsystemBase {
         TARGET_RPM = rpm;
         engagePidMode();
         mode = Mode.HOLDING;
-        motor.setVelocity(rpmToTicksPerSec(TARGET_RPM));
+        applyVelocity();
     }
 
     /** PID-brake to zero. Cancels any coast. */
     public void stop() {
         engagePidMode();
         mode = Mode.FLOATING;
-        motor.setVelocity(0);
+        applyVelocity();
     }
 
     // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----
@@ -160,7 +164,7 @@ public class Flywheel extends SubsystemBase {
      * retunes of TARGET_RPM apply immediately (PID hold also runs in periodic()).
      */
     public Command holdTunable() {
-        return run(() -> setTargetRpm(TARGET_RPM));
+        return runOnce(() -> setTargetRpm(TARGET_RPM));
     }
 
     /** PID-brake the flywheel to zero. */
@@ -199,6 +203,27 @@ public class Flywheel extends SubsystemBase {
         motor.setPower(0);
     }
 
+    /**
+     * Write the velocity setpoint for the current mode, but only when it differs
+     * from the last write. The motor controller holds its own velocity setpoint,
+     * so re-asserting every loop is unnecessary; a live Panels edit of TARGET_RPM
+     * (or a mode change) shows up as a change and gets written immediately.
+     */
+    private void applyVelocity() {
+        final double ticks;
+        if (mode == Mode.HOLDING || mode == Mode.COASTING_TO_IDLE) {
+            ticks = rpmToTicksPerSec(TARGET_RPM);
+        } else {
+            // STOPPED and FLOATING both drive to zero; FLOATING lets it spin
+            // down after the PID brake has done its job.
+            ticks = 0.0;
+        }
+        if (mode == lastAppliedMode && ticks == lastAppliedTicks) return;
+        if (!Double.isNaN(ticks)) motor.setVelocity(ticks);
+        lastAppliedTicks = ticks;
+        lastAppliedMode = mode;
+    }
+
     /** Back to RUN_USING_ENCODER + BRAKE for any PID-driven state. */
     private void engagePidMode() {
         if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
@@ -235,21 +260,21 @@ public class Flywheel extends SubsystemBase {
                     TARGET_RPM = IDLE_RPM;
                     engagePidMode();
                     mode = Mode.HOLDING;
-                    motor.setVelocity(rpmToTicksPerSec(TARGET_RPM));
                 }
                 // else: stay FLOAT + zero power, keep falling.
                 break;
-            case HOLDING:
-                motor.setVelocity(rpmToTicksPerSec(TARGET_RPM));
-                break;
             case STOPPED:
-                // Re-assert zero in case the mode was flipped under us; cheap and safe.
+                // Re-engage in case the mode was flipped under us.
                 if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
                     engagePidMode();
+                    lastAppliedMode = null; // force a fresh setpoint write
                 }
-                motor.setVelocity(0);
                 break;
         }
+
+        // Write the setpoint only when it changed (mode change, live Panels
+        // retune of TARGET_RPM, or recovery from an external motor-mode stomp).
+        applyVelocity();
 
         // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
         // clears its line buffer on every update(), so >1 update per loop sends
