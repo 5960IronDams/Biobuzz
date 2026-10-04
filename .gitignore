@@ -80,3 +80,4 @@ lint/outputs/
 lint/tmp/
 # lint/reports/
 /TeamCode/PedroPathing-main
+/TeamCode/src/main/java/org/firstinspires/ftc/teamcode/WattageLib/FieldFmap/__pycache__
