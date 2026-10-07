@@ -158,13 +158,13 @@ public class VisionFusion {
     // Constants.fusionDefaultMeasurementNoise(); the per-reading scaler below
     // multiplies them. Heading is rad^2: 6deg stddev -> 0.011 var.
     /** Base XY measurement variance, in^2 (3in stddev). MT2 XY fuses at this. */
-    public static double BASE_R_XY = 9.0;
+    public static double BASE_R_XY = 1.0;//9.0;
     /**
      * MT1 yaw measurement variance, rad^2. Ships at 18deg stddev (~0.10): slow
      * drift correction, never a snap. Shrink toward ~10deg (0.03) once the
      * split proves out on-field; grow if heading ever warps again.
      */
-    public static double BASE_R_HEADING = 0.10;
+    public static double BASE_R_HEADING = 0.05; //0.10;
 
     // ================= soft de-weight knobs =================
     // Each factor is multiplicative on R, i.e. trust /= factor. sXY feeds the
@@ -912,19 +912,5 @@ public class VisionFusion {
         if (deg > 180.0) deg -= 360.0;
         if (deg < -180.0) deg += 360.0;
         return deg;
-    }
-
-    /**
-     * Convert Pedro frame heading to Limelight frame heading for seeding MT2.
-     * Pipeline: Pedro (0=+X) -> Field (0=+Y, -90deg) -> Limelight (apply offset & sign).
-     * This ensures the Limelight gets its heading in its own native coordinate frame.
-     */
-    private static double pedroHeadingToLimelightDeg(double pedroHeadingRad) {
-        // Convert Pedro -> Field
-        double fieldHeadingRad = PedroFieldBridge.pedroHeadingToField(pedroHeadingRad);
-        double fieldHeadingDeg = Math.toDegrees(fieldHeadingRad);
-        // Convert Field -> Limelight (using Vision's mapping)
-        double llHeadingDeg = norm180Deg((fieldHeadingDeg - Vision.LL_YAW_OFFSET_DEG) * Vision.LL_YAW_SIGN);
-        return llHeadingDeg;
     }
 }

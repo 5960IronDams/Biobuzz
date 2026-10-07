@@ -102,14 +102,38 @@ public class AimAtGoal extends CommandBase {
     public AimAtGoal(Follower follower, HardwareMap hardwareMap,
                      DoubleSupplier forward, DoubleSupplier strafe,
                      Supplier<ALLIANCE_COLOR> alliance) {
-        this(follower, loadAimPoints(hardwareMap), forward, strafe, alliance);
+        this(follower, loadAimPoints(hardwareMap), forward, strafe, alliance, null);
+    }
+
+    /** Same, but with a SHARED follower requirement (see the full ctor). */
+    public AimAtGoal(Follower follower, HardwareMap hardwareMap,
+                     DoubleSupplier forward, DoubleSupplier strafe,
+                     Supplier<ALLIANCE_COLOR> alliance, Subsystem sharedFollowerReqt) {
+        this(follower, loadAimPoints(hardwareMap), forward, strafe, alliance,
+                sharedFollowerReqt);
     }
 
     /** Inject an already-loaded PPFile (tests, or a shared copy). */
     public AimAtGoal(Follower follower, PPFile aimPoints,
                      DoubleSupplier forward, DoubleSupplier strafe,
                      Supplier<ALLIANCE_COLOR> alliance) {
+        this(follower, aimPoints, forward, strafe, alliance, null);
+    }
+
+    /**
+     * Full ctor. Pass a SHARED follower requirement {@link Subsystem} (e.g. the
+     * one held by {@code CommandFactory}) so multiple AimAtGoal instances - a
+     * bare aim command and one inside a compound like ShootAtGoal - map to the
+     * SAME scheduler requirement and properly conflict/interrupt each other.
+     * With distinct per-instance wrappers the scheduler treats them as
+     * unrelated and two aims could fight over the follower. Null = private wrapper.
+     */
+    public AimAtGoal(Follower follower, PPFile aimPoints,
+                     DoubleSupplier forward, DoubleSupplier strafe,
+                     Supplier<ALLIANCE_COLOR> alliance, Subsystem sharedFollowerReqt) {
         // Own the follower while running (SolversLib requirement).
+        this.followerSubsystem =
+                sharedFollowerReqt != null ? sharedFollowerReqt : new SubsystemBase() {};
         addRequirements(followerSubsystem);
         if (follower == null) {
             throw new IllegalArgumentException("AimAtGoal needs a non-null Follower");
@@ -156,8 +180,7 @@ public class AimAtGoal extends CommandBase {
     }
 
     /** SolversLib requires Subsystem requirements; the Follower is wrapped here. */
-    private final Subsystem followerSubsystem =
-            new SubsystemBase() {};
+    private final Subsystem followerSubsystem;
 
     // ---- Command lifecycle (runs until cancelled : hold trigger to aim) ----
 

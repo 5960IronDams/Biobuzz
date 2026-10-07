@@ -18,12 +18,12 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
  *
  * <p>Declarative SolversLib bindings set up once in the constructor:
  * <ol>
- *   <li>Drive: field-centric sticks on gamepad1, or the {@link AimAtGoal} command
- *       while the left trigger is held (aim owns turn, sticks keep translation).</li>
+ *   <li>Drive: field-centric sticks on gamepad1.</li>
+ *   <li>Shoot: left trigger hold schedules {@code CommandF.ShootAtGoal} -
+ *       aim at the closest hive + distance-to-hive LUT RPM + gate opens at
+ *       speed; release closes the gate and coasts the flywheel to idle.</li>
  *   <li>Intake: right trigger press/release schedules
  *       {@code intake.holdCmd()} / {@code intake.stopCmd()}.</li>
- *   <li>Flywheel: left bumper press/release schedules
- *       {@code flywheel.holdTunable()} / {@code flywheel.stopCmd()}.</li>
  *   <li>Servo: X toggles presets via {@code PosServ.toggleCmd},
  *       dpad nudges while held.</li>
  *   <li>Localize: start resets the Pedro pose to the alliance start.</li>
@@ -46,10 +46,10 @@ public class KeyBindings {
     private final Gamepad gamepad1;
     private final Gamepad gamepad2;
     /** Fluent bindings facade over gamepad1 — see bindCommands(). */
-    private final CommandGamepad gp1;
+    private final CommandGamepad DriveController;
 
-    /** Non-null while the aim command is scheduled; it owns the follower turn axis. */
-    private Command aimCmd = null;
+    /** Non-null while the shoot compound is scheduled; it owns the follower turn axis. */
+    private Command shootCmd = null;
 
     // Manual rising-edge latch for the start-button relocalize (kept as a simple
     // poll; no dependency on SDK *WasPressed APIs).
@@ -62,7 +62,7 @@ public class KeyBindings {
         this.robot = robot;
         this.gamepad1 = opMode.gamepad1;
         this.gamepad2 = opMode.gamepad2;
-        this.gp1 = new CommandGamepad(gamepad1);
+        this.DriveController = new CommandGamepad(gamepad1);
         bindCommands();
     }
 
@@ -71,39 +71,34 @@ public class KeyBindings {
      * by {@code CommandScheduler.run()} (called from RobotMain.RobotRunPeriodic()).
      */
     private void bindCommands() {
-        // ---- Aim: left trigger hold-to-aim ----
-        // The aim command is built ONCE here with the live stick suppliers; while
-        // it is scheduled, applyDrive() skips manual drive (aim already wrote the
-        // powers during scheduler execution). interruptible=true so a new command
-        // can always take over if this one lingers.
-        aimCmd = robot.CommandF.AimAtClosestGoal(this::driveForward, this::driveStrafe);
-        gp1.leftTrigger(AimAtGoal.TRIGGER_THRESHOLD)
-                .whileActiveOnce(aimCmd, true);
+        // ---- Shoot: left trigger hold-to-shoot ----
+        // Compound (aim + LUT RPM + gate-at-speed) built ONCE here with the live
+        // stick suppliers; while it is scheduled, applyDrive() skips manual drive
+        // (the aim member already wrote the powers during scheduler execution).
+        // interruptible=true so a new command can always take over if this one
+        // lingers. On release the compound's end closes the gate + coasts the
+        // flywheel to idle.
+        shootCmd = robot.CommandF.ShootAtGoal(this::driveForward, this::driveStrafe);
+        DriveController.leftTrigger(AimAtGoal.TRIGGER_THRESHOLD)
+                .whileActiveOnce(shootCmd, true);
 
         // ---- Intake: right trigger press->run, release->stop ----
         // holdCmd is a RunCommand: INTAKE_RPM is re-read every loop, so
         // live Panels retunes apply immediately while the trigger is held.
-        gp1.rightTrigger(0.1)
+        DriveController.rightTrigger(0.1)
                 .whenActive(robot.intake.holdCmd())
                 .whenInactive(robot.intake.stopCmd());
 
-        // ---- Flywheel: left bumper press->spin up, release->stop ----
-        // holdTunable is a RunCommand: TARGET_RPM is re-asserted every
-        // loop, so live Panels retunes apply immediately while the bumper is held.
-        gp1.leftBumper()
-                .whenActive(robot.flywheel.holdTunable())
-                .whenInactive(robot.flywheel.stopCmd());
-
         // ---- Servo toggle: X, edge-triggered (persistent instance; reusable) ----
-        gp1.x().whenActive(robot.PosServ.toggleCmd());
+        DriveController.x().whenActive(robot.PosServ.toggleCmd());
 
         // ---- Servo nudge: dpad_up/dpad_down, run-while-held ----
         // Each command computes its own dt so nudging rate is loop-time
         // independent; the slew + hardware write still happen in
         // ShootGateServo.periodic(). Requires PosServ so dpad nudges cancel
         // any servo preset command still running.
-        gp1.dpadUp().whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
-        gp1.dpadDown().whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
+        DriveController.dpadUp().whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
+        DriveController.dpadDown().whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
     }
 
     /** Poll every binding once. Call once per loop, after {@code robot.RobotRunPeriodic()}. */
@@ -114,28 +109,29 @@ public class KeyBindings {
         reportTelemetry();
     }
 
-    /** Cancel a held aim (call from the OpMode's stop()). Safe when not aiming. */
+    /** Cancel a held shot (call from the OpMode's stop()). Safe when not shooting. */
     public void stop() {
-        cancelAim();
+        cancelShoot();
     }
 
-    /** True while the aim command owns the follower turn axis. */
-    public boolean isAiming() {
-        return aimCmd != null && aimCmd.isScheduled();
+    /** True while the shoot compound owns the follower turn axis. */
+    public boolean isShooting() {
+        return shootCmd != null && shootCmd.isScheduled();
     }
 
-    // ------------------------------------------------------------------ drive + aim
+    // ------------------------------------------------------------------ drive + shoot
 
     /**
-     * When aiming, the AimAtGoal command already called {@code follower.manual()} during
-     * {@code CommandScheduler.run()} - just refresh the follower so its powers apply.
-     * Otherwise, drive field-centric off the sticks.
+     * When shooting, the aim member of the compound already called
+     * {@code follower.manual()} during {@code CommandScheduler.run()} - just
+     * refresh the follower so its powers apply. Otherwise, drive field-centric
+     * off the sticks.
      */
     private void applyDrive() {
         if (robot.follower == null || robot.follower.pose() == null) {
             return;
         }
-        if (aimCmd == null || !aimCmd.isScheduled()) {
+        if (shootCmd == null || !shootCmd.isScheduled()) {
             DrivePowers powers = ManualDrive.fieldCentric(
                     driveForward(),
                     driveStrafe(),
@@ -151,9 +147,9 @@ public class KeyBindings {
         if (robot.visionFusion != null) robot.visionFusion.correct();
     }
 
-    private void cancelAim() {
-        if (aimCmd != null && aimCmd.isScheduled()) {
-            aimCmd.cancel();
+    private void cancelShoot() {
+        if (shootCmd != null && shootCmd.isScheduled()) {
+            shootCmd.cancel();
         }
     }
 
@@ -172,7 +168,7 @@ public class KeyBindings {
         return isRed() ? -gamepad1.left_stick_x : gamepad1.left_stick_x;
     }
 
-    /** Turn stick (+ = turn). Ignored while aiming (aim owns turn). */
+    /** Turn stick (+ = turn). Ignored while shooting (aim owns turn). */
     public double driveTurn() {
         return -gamepad1.right_stick_x;
     }
@@ -206,7 +202,7 @@ public class KeyBindings {
     private void reportTelemetry() {
         // addData only — flushed once via robot.flushTelemetry() at end of loop().
         RobotMain.DashTelemetry.addData("Drive mode",
-                isAiming() ? "AIM (LT held, sticks = translate)" : "manual field-centric");
+                isShooting() ? "SHOOT (LT held, sticks = translate)" : "manual field-centric");
         if (robot.follower != null && robot.follower.pose() != null) {
             Pose p = robot.follower.pose();
             RobotMain.DashTelemetry.addData("Robot X", p.x());

@@ -8,6 +8,7 @@ import com.seattlesolvers.solverslib.command.CommandScheduler;
 import com.pedropathing.localization.FusionLocalizer;
 import com.pedropathing.localization.Localizer;
 import com.pedropathing.math.Pose;
+import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
@@ -66,6 +67,19 @@ public class RobotMain {
     public RobotMain(OpMode opmode)
     {
             CommandScheduler.getInstance().reset(); //clears all scheduled commands + subsystem registrations after opmode switch.
+
+        // REV Hub bulk-read caching: batch all encoder/digital I2C reads on each
+        // hub into ONE transaction per loop instead of one-per-read. AUTO mode
+        // refreshes the cache automatically on first read each loop. Cuts
+        // multi-device loop latency (same win Pedro's tuners already use).
+        // Wrapped: skip silently on non-REV test rigs with no Lynx module.
+        try {
+            for (LynxModule hub : opmode.hardwareMap.getAll(LynxModule.class)) {
+                hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
+            }
+        } catch (Exception ignored) {
+        }
+
         //subsystems
         follower = Constants.create(opmode.hardwareMap);
         SetupStartingPositionFromPinPointOrAuton();

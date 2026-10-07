@@ -44,7 +44,7 @@ public class Flywheel extends SubsystemBase {
     /** Active PID setpoint. Written by {@link #setTargetRpm} / coast-arrive, tunable live. */
     public static double TARGET_RPM = 2000;
     /** Coast destination + PID hold point after the coast arrives. */
-    public static double IDLE_RPM = 500;
+    public static double IDLE_RPM = 0;
     //Ungeared / Encoder Shaft (1:1 ratio): 28 ticks per revolution (28 PPR) at the encoder/motor shaft
     public static double TICKS_PER_REV = 28.0;//537.7; // goBILDA 5203 312rpm = 537.7; adjust to your motor
     public static double kP = 20;
@@ -108,6 +108,16 @@ public class Flywheel extends SubsystemBase {
 
     public boolean isCoasting() {
         return mode == Mode.COASTING_TO_IDLE;
+    }
+
+    /**
+     * True while the velocity PID is actively holding a commanded setpoint
+     * (HOLDING mode). False in STOPPED/FLOATING/COASTING - so "at speed" checks
+     * like {@code isHoldingTarget() && isAtTargetRpm()} can't pass before any
+     * shoot RPM has been commanded (STOPPED reads as at-0).
+     */
+    public boolean isHoldingTarget() {
+        return mode == Mode.HOLDING;
     }
 
     /** Within {@link #AT_SPEED_TOLERANCE_RPM} of the active target (PID modes only). */
