@@ -156,6 +156,86 @@ public class RobotMain {
         }
     }
 
+    /**
+     * Resolve the FusionLocalizer's raw dead-reckoning localizer (the Pinpoint)
+     * by reflection — the same accessor {@link #SetupStartingPositionFromPinPointOrAuton()}
+     * uses. Returns null when there is no follower/localizer, it is not a
+     * FusionLocalizer, or the library's internal field changed; callers must
+     * handle null.
+     */
+    private Localizer deadReckoning() {
+        try {
+            if (follower == null || !(follower.localizer instanceof FusionLocalizer)) {
+                return null;
+            }
+            Field drField = FusionLocalizer.class.getDeclaredField("deadReckoning");
+            drField.setAccessible(true);
+            Object dr = drField.get(follower.localizer);
+            return (dr instanceof Localizer) ? (Localizer) dr : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Re-anchor the raw Pinpoint (dead-reckoning) to {@code pose} so the
+     * device-side pose matches the fused belief. The Pinpoint keeps integrating
+     * afterwards — it tracks pushes/coasting while disabled — and its retained
+     * pose is exactly what {@link #SetupStartingPositionFromPinPointOrAuton()}
+     * seeds the next OpMode from. Writing the fused pose here is what keeps a
+     * TeleOp restart from warping back to the raw Pinpoint's drifted pose.
+     *
+     * <p>Safe mid-run (the Pinpoint's setPosition is designed for runtime
+     * re-anchoring); a deliberate re-zero while moving may cause a one-tick
+     * velocity transient.
+     */
+    public void writePoseToPinpoint(Pose pose) {
+        if (pose == null) {
+            return;
+        }
+        Localizer dr = deadReckoning();
+        if (dr == null) {
+            Log.w("IronLog", "Pinpoint pose write skipped: no dead-reckoning localizer");
+            return;
+        }
+        try {
+            dr.setPose(pose);
+            Log.i("IronLog", "Pinpoint re-anchored to: " + pose);
+        } catch (Exception e) {
+            Log.w("IronLog", "Pinpoint pose write failed", e);
+        }
+    }
+
+    /**
+     * Save the CURRENT FUSED pose into the Pinpoint, sanity-gated. Call from
+     * every real-field OpMode's stop() (TeleOp + Auto) so the next OpMode seeds
+     * from a vision-corrected pose instead of raw drifted odometry. Never call
+     * from bench/tuning OpModes (FusionTune, tuners): their arbitrary bench
+     * poses would re-anchor the device off-field and poison the next real seed.
+     *
+     * <p>Also refreshes {@link #autonomousEndPose} (the seed's fallback), but
+     * only when the fused pose is sane — a diverged pose must never become the
+     * next run's seed, from either source.
+     */
+    public void saveFusedPoseToPinpoint() {
+        try {
+            Pose fused = follower.pose();
+            if (fused == null) {
+                return;
+            }
+            // Same 2x-field sanity bound as VisionFusion.correct(): a diverged
+            // fused pose must not become the next run's seed.
+            if (fused.x() < -144.0 || fused.x() > 288.0
+                    || fused.y() < -144.0 || fused.y() > 288.0) {
+                Log.w("IronLog", "Fused pose outside field bounds; Pinpoint NOT re-anchored: " + fused);
+                return;
+            }
+            writePoseToPinpoint(fused);
+            autonomousEndPose = fused;
+        } catch (Exception ignored) {
+        }
+    }
+
     public void RobotRunPeriodic()
     {
         follower.update();//updates this robots pedro Follower (predict: Pinpoint)

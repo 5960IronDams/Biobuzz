@@ -68,14 +68,17 @@ public abstract class AutoOpModeBase extends OpMode {
         // real fused pose on the Field widget BEFORE pressing play.
         robot.InitRunPeriodic();
 
-        // Re-assert the start pose AFTER the vision tick so the Panels Field
-        // always shows THIS auto's start — even if another auto was previewed
-        // before, or the (parked) odometry/vision drifted while waiting. This
-        // keeps init corrections display-only: the pose the auto launches from
-        // is always the path's start pose.
-        //
-        // OR disable to accept the vision and not reset the pose from auton init
-        if(!VisionFusion.ENABLED){}robot.follower.setPose(pp.startPoint());
+        // Launch-pose policy, applied AFTER the vision tick:
+        // - Vision ENABLED: accept the vision-corrected fused pose the drivers
+        //   verified on the Field widget — re-asserting the path start would
+        //   throw those corrections away.
+        // - Vision DISABLED (Pinpoint-only): nothing external to trust, so
+        //   keep re-asserting the path start — the auto always launches from
+        //   the pose its paths were drawn against, even if another auto was
+        //   previewed before, or the parked odometry drifted while waiting.
+        if (!VisionFusion.ENABLED) {
+            robot.follower.setPose(pp.startPoint());
+        }
         robot.follower.update();
         UpdateTelemetry();
         robot.flushTelemetry();
@@ -90,10 +93,10 @@ public abstract class AutoOpModeBase extends OpMode {
     @Override
     public void stop() {
         if (robot != null) {
-            try {
-                RobotMain.autonomousEndPose = robot.follower.pose(); //saves your position in that file
-            } catch (Exception ignored) {
-            }
+            // Fused end pose -> Pinpoint device (+ autonomousEndPose fallback,
+            // sanity-gated inside): TeleOp then seeds from where the auto
+            // actually ended, not from raw drifted odometry.
+            robot.saveFusedPoseToPinpoint();
             robot.shutdown();
         }
         telemetry.addData("AutonEndPose", "saved");

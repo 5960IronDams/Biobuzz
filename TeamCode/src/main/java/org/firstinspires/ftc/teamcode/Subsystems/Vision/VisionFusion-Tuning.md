@@ -191,3 +191,31 @@ map and watch which one tracks reality.
   localize off the clusters, so it ships false.
 * The inline `BOT_Z_MIN/MAX_M` height check in `correct()` is commented out —
   `TipSanityFilter` (Stage 1) owns height sanity now.
+
+---
+
+## 9. Pose persistence across OpModes (stop-time re-anchor)
+
+The fused pose lives in the `FusionLocalizer`, which is rebuilt with every
+OpMode; the raw Pinpoint device is the only thing that retains a pose across
+OpMode switches. On init, `RobotMain.SetupStartingPositionFromPinPointOrAuton()`
+seeds the fresh filter from the device pose — so whatever the device holds at
+init **is** the pose the run starts from.
+
+To keep that seed vision-corrected instead of raw-drifted, real-field OpModes
+call `RobotMain.saveFusedPoseToPinpoint()` from `stop()`:
+
+* TeleOp/Auto stop → fused pose written into the dead-reckoning localizer,
+  sanity-gated to the same 2×-field bound as `correct()`'s
+  `skip-fused-diverged` (a diverged fused pose must never become the next
+  run's seed, from the device or the `autonomousEndPose` fallback).
+* While disabled, the Pinpoint keeps integrating, so drivers pushing the robot
+  between runs are tracked on top of the written pose.
+* The next init seeds from that pose — no more warp-to-drifted-Pinpoint on
+  TeleOp restarts, and the Kalman history starts consistent with the device.
+
+Deliberately NOT done in bench OpModes (`FusionTune`, tuners): their arbitrary
+bench frames would re-anchor the device off-field and poison the next real
+seed. The Start-button relocalize (`KeyBindings.handleRelocalize`) writes its
+reset pose into the Pinpoint too, so the dead reckoning and the fused pose
+agree after a manual re-zero.

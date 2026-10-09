@@ -53,6 +53,9 @@ public class JowByTeleOp extends OpMode {
             keys.stop();
         }
         if (robot != null) {
+            // Fused pose -> Pinpoint: the next OpMode seeds from where we
+            // actually are (vision-corrected), not the raw drifted odometry.
+            robot.saveFusedPoseToPinpoint();
             robot.shutdown();
         }
     }

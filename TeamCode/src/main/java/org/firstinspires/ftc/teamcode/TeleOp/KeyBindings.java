@@ -31,7 +31,8 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsGamepadDebug;
  *       {@code intake.holdCmd()} / {@code intake.stopCmd()}.</li>
  *   <li>Servo: X toggles presets via {@code PosServ.toggleCmd},
  *       dpad nudges while held.</li>
- *   <li>Localize: start resets the Pedro pose to the alliance start.</li>
+ *   <li>Localize: start resets the Pedro pose to the alliance start and
+ *       re-anchors the Pinpoint to it.</li>
  * </ol>
  *
  * <p>Usage (see {@code JowByTeleOp}):
@@ -203,11 +204,17 @@ public class KeyBindings {
      * Kept as a manual poll — simple edge detection is fine here.
      */
     private void handleRelocalize() {
-        boolean pressed = DriveController.start().get();
+        boolean pressed = DriveController.back().get();
         if (pressed && !prevStartPressed && robot.follower != null) {
-            robot.follower.setPose(
-                    RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE
-                            ? IronConstants.BLUE_RESET_POSE : IronConstants.RED_RESET_POSE);
+            Pose resetPose = RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE
+                    ? IronConstants.BLUE_RESET_POSE : IronConstants.RED_RESET_POSE;
+            robot.follower.setPose(resetPose);
+            // Re-anchor the raw Pinpoint to the same pose. Without this the
+            // dead reckoning keeps its old frame: the fusion history and the
+            // next OpMode's Pinpoint seed would disagree with the pose this
+            // button just set. (One-tick velocity transient is acceptable for
+            // an emergency re-zero.)
+            robot.writePoseToPinpoint(resetPose);
         }
         prevStartPressed = pressed;
     }
