@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.TeleOp;
 
+import com.bylazar.gamepad.PanelsGamepad;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.follower.ManualDrive;
 import com.pedropathing.math.Pose;
@@ -12,13 +13,17 @@ import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.CommandGamepad;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.CommandXboxController;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsGamepadDebug;
 
 /**
  * Single home for every gamepad binding in TeleOp.
  *
  * <p>Declarative SolversLib bindings set up once in the constructor:
  * <ol>
- *   <li>Drive: field-centric sticks on gamepad1.</li>
+ *   <li>Drive: field-centric sticks on gamepad1 (Xbox axis remap via
+ *       {@link CommandXboxController}; live raw-vs-mapped axes on Panels via
+ *       {@link PanelsGamepadDebug}).</li>
  *   <li>Shoot: left trigger hold schedules {@code CommandF.ShootAtGoal} -
  *       aim at the closest hive + distance-to-hive LUT RPM + gate opens at
  *       speed; release closes the gate and coasts the flywheel to idle.</li>
@@ -43,10 +48,10 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 public class KeyBindings {
 
     private final RobotMain robot;
-    private final Gamepad gamepad1;
-    private final Gamepad gamepad2;
     /** Fluent bindings facade over gamepad1 — see bindCommands(). */
     private final CommandGamepad DriveController;
+    /** Example-style Panels gamepad dump (PanelsGamepad.firstManager combined pad; Panels > Configurables > PanelsGamepadDebug). */
+    private final PanelsGamepadDebug gamepadDebug;
 
     /** Non-null while the shoot compound is scheduled; it owns the follower turn axis. */
     private Command shootCmd = null;
@@ -60,9 +65,8 @@ public class KeyBindings {
             throw new IllegalArgumentException("KeyBindings needs a non-null OpMode and RobotMain");
         }
         this.robot = robot;
-        this.gamepad1 = opMode.gamepad1;
-        this.gamepad2 = opMode.gamepad2;
-        this.DriveController = new CommandGamepad(gamepad1);
+        this.DriveController = new CommandGamepad(opMode.gamepad1);
+        this.gamepadDebug = new PanelsGamepadDebug(opMode.gamepad1, "GP1");
         bindCommands();
     }
 
@@ -101,8 +105,27 @@ public class KeyBindings {
         DriveController.dpadDown().whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
     }
 
+    /**
+     * Refresh the controller's merged pad source for this tick: the Panels
+     * Gamepad plugin's browser pad (which sees the Xbox controller's right
+     * stick correctly, unlike the DS/Android HID lanes) layered over the DS
+     * pad. MUST run before anything polls the controller (triggers in the
+     * scheduler, drive reads). Called at the top of loop() via the OpMode and
+     * again at the top of update() as a belt-and-suspenders.
+     */
+    public void refreshPad() {
+        // DriveController is constructed as a CommandXboxController (Xbox remap
+        // + browser-pad merge); the field keeps the parent type so any other
+        // bindings stay drop-in compatible.
+        if (DriveController instanceof CommandXboxController) {
+            ((CommandXboxController) DriveController)
+                    .refreshPad(PanelsGamepad.INSTANCE.getFirstManager());
+        }
+    }
+
     /** Poll every binding once. Call once per loop, after {@code robot.RobotRunPeriodic()}. */
     public void update() {
+        refreshPad();
         handleRelocalize();
         handleOperator();
         applyDrive();
@@ -160,17 +183,17 @@ public class KeyBindings {
 
     /** Forward stick (+ = forward). Also fed to AimAtGoal so translation survives aiming. */
     public double driveForward() {
-        return isRed() ? -gamepad1.left_stick_y : gamepad1.left_stick_y;
+        return isRed() ? -DriveController.getLeftY() : DriveController.getLeftY();
     }
 
     /** Strafe stick (+ = right). Also fed to AimAtGoal so translation survives aiming. */
     public double driveStrafe() {
-        return isRed() ? -gamepad1.left_stick_x : gamepad1.left_stick_x;
+        return isRed() ? -DriveController.getLeftX() : DriveController.getLeftX();
     }
 
     /** Turn stick (+ = turn). Ignored while shooting (aim owns turn). */
     public double driveTurn() {
-        return -gamepad1.right_stick_x;
+        return -DriveController.getRightX();
     }
 
     // ------------------------------------------------------------------ subsystems
@@ -180,7 +203,7 @@ public class KeyBindings {
      * Kept as a manual poll — simple edge detection is fine here.
      */
     private void handleRelocalize() {
-        boolean pressed = gamepad1.start;
+        boolean pressed = DriveController.start().get();
         if (pressed && !prevStartPressed && robot.follower != null) {
             robot.follower.setPose(
                     RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE
@@ -201,6 +224,7 @@ public class KeyBindings {
 
     private void reportTelemetry() {
         // addData only — flushed once via robot.flushTelemetry() at end of loop().
+        gamepadDebug.report(); // raw-vs-mapped gamepad axes (toggle in Panels > Configurables)
         RobotMain.DashTelemetry.addData("Drive mode",
                 isShooting() ? "SHOOT (LT held, sticks = translate)" : "manual field-centric");
         if (robot.follower != null && robot.follower.pose() != null) {

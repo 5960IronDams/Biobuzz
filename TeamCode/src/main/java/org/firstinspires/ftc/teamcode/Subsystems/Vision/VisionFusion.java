@@ -88,6 +88,30 @@ public class VisionFusion {
      * affects a good XY frame.
      */
     public static double MAX_JUMP_XY_IN = 36.0;
+    /**
+     * Stationary-residual gate (see the ADAPTIVE RESIDUAL GATE in {@code correct()}):
+     * when Pinpoint speed is below {@link #STATIONARY_SPEED_IN_PER_SEC}, an XY
+     * residual above {@link #STATIONARY_RESIDUAL_REJECT_IN} rejects the frame
+     * (a big jump while "stationary" means MT2 teleported or the filter is way
+     * off). Both Panels-live.
+     *
+     * <p>Bench recipe (testing at an arbitrary pose): the Pinpoint pose starts
+     * wrong, the LL solve is right, residual &gt; limit — every frame rejects and
+     * the filter can never converge (it needs corrections to converge). While
+     * benching, raise {@link #STATIONARY_RESIDUAL_REJECT_IN} (e.g. 120) or flip
+     * {@link #BENCH_ACCEPT_STATIONARY} on; tighten both back for matches.
+     */
+    public static double STATIONARY_SPEED_IN_PER_SEC = 10.0;
+    public static double STATIONARY_RESIDUAL_REJECT_IN = 36.0;
+    /**
+     * Bench-test bypass for the stationary-residual gate: frames that would
+     * reject are accepted and marked {@code accept-bench} so it is obvious when
+     * left ON. Turn OFF for matches — it exists so an arbitrary bench pose can
+     * converge. (Corrections may still be gentle at huge residuals: the R ramp
+     * de-weights them up to {@link #MAX_TOTAL_SCALE}; raise that too for a
+     * snappier bench snap.)
+     */
+    public static boolean BENCH_ACCEPT_STATIONARY = false;
     /** Clamp on total pipeline latency used for back-dating, ms. */
     public static double MAX_LATENCY_MS = 250.0;
     /**
@@ -246,6 +270,10 @@ public class VisionFusion {
     private boolean lastVisionClusterOnly = false;
     private int lastTags = 0;
     private double lastResidualIn = Double.NaN;
+    /** Pinpoint speed at the last correct() call, in/s (drives the stationary gate). NaN before the first frame. */
+    private double lastSpeedIps = Double.NaN;
+    /** Stationary-gate snapshot for Panels: "v=x/limit res=y/limit (bench)" — why a frame rejected. */
+    private String lastStatGate = "n/a";
     /** MT1 yaw residual |MT1yaw − fused| this loop, deg (NaN when yaw skipped). */
     private double lastYawResidualDeg = Double.NaN;
     /** Signed yaw innovation (MT1 − fused, wrapped ±180), deg. Shows flips/wrap. */
@@ -585,11 +613,24 @@ public class VisionFusion {
         }
 
         // ADAPTIVE RESIDUAL GATE: when robot is moving slowly, reject large jumps.
-        // If velocity is < 10 in/s and residual > 36in, something is very wrong
-        // (either MT2 teleported or the filter state is way off).
-        if (speedIps < 10.0 && dxy > 36.0) {
-            lastStatus = "reject-residual-stationary";
-            return;
+        // If velocity is below STATIONARY_SPEED_IN_PER_SEC and residual above
+        // STATIONARY_RESIDUAL_REJECT_IN, something is very wrong (either MT2
+        // teleported or the filter state is way off). Both thresholds are
+        // Panels-live; BENCH_ACCEPT_STATIONARY bypasses the gate so an
+        // arbitrarily-seeded bench pose can converge (turn OFF for matches).
+        lastSpeedIps = speedIps;
+        lastStatGate = String.format(Locale.US,
+                "v=%.1f/%.1f res=%.1f/%.1f %s",
+                speedIps, STATIONARY_SPEED_IN_PER_SEC,
+                dxy, STATIONARY_RESIDUAL_REJECT_IN,
+                BENCH_ACCEPT_STATIONARY ? "(bench)" : "");
+        if (speedIps < STATIONARY_SPEED_IN_PER_SEC && dxy > STATIONARY_RESIDUAL_REJECT_IN) {
+            if (BENCH_ACCEPT_STATIONARY) {
+                lastStatus = "accept-bench";
+            } else {
+                lastStatus = "reject-residual-stationary";
+                return;
+            }
         }
 
         double sXY = 1.0;
@@ -793,6 +834,13 @@ public class VisionFusion {
         if (Double.isFinite(lastResidualIn)) {
             RobotMain.DashTelemetry.addData("Fusion/residualIn", "%.2f", lastResidualIn);
         }
+        // Stationary-gate tuning: Pinpoint speed vs its limit, residual vs its
+        // limit — shows exactly which side of the gate rejected (or "(bench)"
+        // while BENCH_ACCEPT_STATIONARY is overriding it).
+        RobotMain.DashTelemetry.addData("Fusion/speedIps",
+                Double.isFinite(lastSpeedIps)
+                        ? String.format(Locale.US, "%.2f", lastSpeedIps) : "n/a");
+        RobotMain.DashTelemetry.addData("Fusion/statGate", lastStatGate);
         if (Double.isFinite(lastDx) && Double.isFinite(lastDy)) {
             RobotMain.DashTelemetry.addData("Fusion/dxy", "%.1f, %.1f", lastDx, lastDy);
         }

@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.WattageLib.pedroHelpers;
+package org.firstinspires.ftc.teamcode.Subsystems.Vision;
 
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.follower.ManualDrive;
@@ -11,7 +11,9 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.teamcode.RobotMain;
-import org.firstinspires.ftc.teamcode.Subsystems.Vision.Vision;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.CommandGamepad;
+import org.firstinspires.ftc.teamcode.WattageLib.lib.CommandXboxController;
+import org.firstinspires.ftc.teamcode.WattageLib.pedroHelpers.PedroFieldBridge;
 
 import java.lang.reflect.Field;
 
@@ -45,10 +47,16 @@ public class FusionTune extends OpMode {
 
     private RobotMain robot;
     private boolean prevStart = false;
-
+    /** Fluent bindings facade over gamepad1 — see bindCommands(). */
+    private CommandGamepad DriveController;
+    public FusionTune()
+    {
+        DriveController = new CommandGamepad(gamepad1);
+    }
     @Override
     public void init() {
         robot = new RobotMain(this);
+
         RobotMain.DashTelemetry.addData("FusionTune", "drive with sticks; start = teleport (24,24,90deg)");
         robot.flushTelemetry();
     }
@@ -70,7 +78,7 @@ public class FusionTune extends OpMode {
         }
 
         // Teleport for repeatable runs (edge-triggered).
-        boolean pressed = gamepad1.start;
+        boolean pressed = DriveController.start().get();
         if (pressed && !prevStart) {
             robot.follower.setPose(new Pose(24, 24, Math.toRadians(90)));
         }
@@ -79,7 +87,7 @@ public class FusionTune extends OpMode {
         // Manual drive on the FUSED pose (same as match TeleOp).
         DrivePowers powers =
                 ManualDrive.fieldCentric(
-                        -gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x,
+                        -DriveController.getLeftY(), -DriveController.getLeftX(), -DriveController.getRightX(),
                         robot.follower.pose().heading());
         robot.follower.manual(powers);
         robot.follower.update();

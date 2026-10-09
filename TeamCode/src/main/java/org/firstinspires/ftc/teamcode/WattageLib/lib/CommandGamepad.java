@@ -43,6 +43,11 @@ import java.util.function.BooleanSupplier;
  *       per-method javadoc before porting FRC bindings verbatim.</li>
  * </ul>
  *
+ * <p>Xbox controllers: use {@link CommandXboxController}, a drop-in subclass of
+ * this class that remaps the right-stick/trigger axes (Xbox-BLE axis order puts
+ * the right stick on the trigger fields and vice versa), adds a configurable
+ * stick deadband, share/options buttons, and rumble/LED helpers.
+ *
  * <p>Trigger methods available on every returned {@link Trigger}:
  * {@code whenActive} (press), {@code whenInactive} (release),
  * {@code whileActiveOnce} (hold; interrupts on release),
@@ -67,7 +72,9 @@ public class CommandGamepad {
     /** Default stick activation threshold for {@code leftStick(...)}-style overloads. */
     public static final double DEFAULT_STICK_THRESHOLD = 0.5;
 
-    private final Gamepad gp;
+    /** Protected so the {@link CommandXboxController} subclass can remap axes for Xbox hardware
+     *  and (via refreshPad) re-point this at the Panels+DS merged pad each loop. */
+    protected Gamepad gp;
 
     /** Wrap an SDK gamepad (typically {@code opMode.gamepad1} or {@code gamepad2}). */
     public CommandGamepad(Gamepad gamepad) {
@@ -203,7 +210,8 @@ public class CommandGamepad {
         return trig(() -> Math.abs(axisValue(axis)) > threshold);
     }
 
-    private double axisValue(int axis) {
+    /** Protected hook so {@link CommandXboxController} can remap axis indices (see axisValueRemap). */
+    protected double axisValue(int axis) {
         switch (axis) {
             case AXIS_LEFT_X:      return gp.left_stick_x;
             case AXIS_LEFT_Y:      return gp.left_stick_y;

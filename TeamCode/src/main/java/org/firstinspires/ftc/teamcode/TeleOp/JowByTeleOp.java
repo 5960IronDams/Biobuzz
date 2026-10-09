@@ -41,6 +41,7 @@ public class JowByTeleOp extends OpMode {
     }
     @Override
     public void loop() {
+        keys.refreshPad(); // merged Panels+DS pad source BEFORE the scheduler polls triggers
         robot.RobotRunPeriodic();
         keys.update();
         UpdateTelemetry();
