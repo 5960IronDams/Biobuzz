@@ -43,10 +43,10 @@ public final class NoFireZones {
      * hive/goal positions from AimPoints.pp, and add any trapezoid / trench
      * zones the same way the IndianaJoe version did.
      */
-    public static double HiveNofireZoneSizeIn = 30.0; // 15" in each direction from center
     public static final java.util.List<NoFireZone> NO_FIRE_ZONES = java.util.List.of(
         /*Center No Fire Zone - Blocks out firing anywhere underneath the hives.  */
-            NoFireZone.fromCorners(46.0,48.0,95.0,93.0)//should encompass the entire middle no firezone corner to corner.
+            NoFireZone.fromCorners(2.0,52.0,130.0,90.0),//field edge to edge of hive width no fire zone. only able to shoot in outside ring of field. from lower left flower to upper right flower.
+            NoFireZone.fromCorners(46.0,48.0,95.0,93.0)//Under the hive area.
     );
 
     /**
