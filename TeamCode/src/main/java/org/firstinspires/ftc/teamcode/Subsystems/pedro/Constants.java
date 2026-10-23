@@ -44,30 +44,56 @@ public class Constants {
     // ================= Drivetrain (from Mecanum Tuner) =================
     // Paste the tuner's generated block here. Motor names MUST match your RC
     // config (yours: leftFront / leftBack / rightFront / rightBack).
-    public static MecanumConfig drivetrainConfig = new MecanumConfig(c -> {
-        c.frontLeftName.set(IronConstants.FLMotor);
-        c.frontRightName.set(IronConstants.FRMotor);
-        c.backLeftName.set(IronConstants.RLMotor);
-        c.backRightName.set(IronConstants.RRMotor);
-        c.frontLeftDirection.set(DcMotorSimple.Direction.FORWARD);
-        c.frontRightDirection.set(DcMotorSimple.Direction.REVERSE);
-        c.backLeftDirection.set(DcMotorSimple.Direction.FORWARD);
-        c.backRightDirection.set(DcMotorSimple.Direction.REVERSE);
-    });
+    public static MecanumConfig drivetrainConfig =
+        IronConstants.CompBot ?
+            new MecanumConfig(c -> { //tune this to tune the comp bot
+                c.frontLeftName.set(IronConstants.FLMotor);
+                c.frontRightName.set(IronConstants.FRMotor);
+                c.backLeftName.set(IronConstants.RLMotor);
+                c.backRightName.set(IronConstants.RRMotor);
+                c.frontLeftDirection.set(DcMotorSimple.Direction.REVERSE);
+                c.frontRightDirection.set(DcMotorSimple.Direction.FORWARD);
+                c.backLeftDirection.set(DcMotorSimple.Direction.REVERSE);
+                c.backRightDirection.set(DcMotorSimple.Direction.FORWARD);
+            })
+        :
+            new MecanumConfig(c -> { // tune this to tune the Decode Test Bot
+            c.frontLeftName.set(IronConstants.FLMotor);
+            c.frontRightName.set(IronConstants.FRMotor);
+            c.backLeftName.set(IronConstants.RLMotor);
+            c.backRightName.set(IronConstants.RRMotor);
+            c.frontLeftDirection.set(DcMotorSimple.Direction.FORWARD);
+            c.frontRightDirection.set(DcMotorSimple.Direction.REVERSE);
+            c.backLeftDirection.set(DcMotorSimple.Direction.FORWARD);
+            c.backRightDirection.set(DcMotorSimple.Direction.REVERSE);
+            });
 
     // ================= Localizer (from Pinpoint Tuner) =================
     // You have the goBILDA Pinpoint computer (RC name "odo"). Paste the tuner's
     // generated block here (pod type, offsets, directions).
-    public static PinpointConfig localizerConfig = new PinpointConfig(c -> {
-        c.name.set(IronConstants.PinpointOdometryName);
-        c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
-        c.xPodOffset.set(0.5851424209714875);
-        c.yPodOffset.set(-1.3573616508423814);
-        c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.FORWARD);
-        c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.FORWARD);
-        c.globalDistanceUnit.set(DistanceUnit.INCH);
-        c.offsetUnits.set(DistanceUnit.INCH);
-    });
+    public static PinpointConfig localizerConfig =
+        IronConstants.CompBot ?
+                new PinpointConfig(c -> { //COMP BOT CONFIGURATION
+                    c.name.set(IronConstants.PinpointOdometryName);
+                    c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
+                    c.xPodOffset.set(0.5851424209714875);
+                    c.yPodOffset.set(-1.3573616508423814);
+                    c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                    c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                    c.globalDistanceUnit.set(DistanceUnit.INCH);
+                    c.offsetUnits.set(DistanceUnit.INCH);
+                })
+        :
+                new PinpointConfig(c -> { //Decode Test Bot Config.
+                c.name.set(IronConstants.PinpointOdometryName);
+                c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
+                c.xPodOffset.set(0.5851424209714875);
+                c.yPodOffset.set(-1.3573616508423814);
+                c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.FORWARD);
+                c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.FORWARD);
+                c.globalDistanceUnit.set(DistanceUnit.INCH);
+                c.offsetUnits.set(DistanceUnit.INCH);
+                });
 
     // ================= Foresight algorithm (from Foresight Tuner) =================
     // Paste the tuner's generated block here once drivetrain+localizer are set.
@@ -99,9 +125,19 @@ public class Constants {
 
     /** Hub orientation for the TwoWheel/ThreeWheel+IMU localizers (if ever used). */
     public static RevHubOrientationOnRobot imuOrientation() {
-        return new RevHubOrientationOnRobot(
-                RevHubOrientationOnRobot.LogoFacingDirection.UP,
-                RevHubOrientationOnRobot.UsbFacingDirection.RIGHT);
+        if(IronConstants.CompBot)
+        {
+            return new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.RIGHT,
+                    RevHubOrientationOnRobot.UsbFacingDirection.UP);
+        }
+        else // decode test vehicle
+        {
+            return new RevHubOrientationOnRobot(
+                    RevHubOrientationOnRobot.LogoFacingDirection.UP,
+                    RevHubOrientationOnRobot.UsbFacingDirection.RIGHT);
+        }
+
     }
 
     // ================= Fusion covariances (Pinpoint predictor + vision corrections) =================

@@ -14,9 +14,11 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.Commands.CommandFactory;
 import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
+import org.firstinspires.ftc.teamcode.Subsystems.turret.TurretPivot;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.HiveCellMonitor;
 import org.firstinspires.ftc.teamcode.Subsystems.Intake;
 import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
+import org.firstinspires.ftc.teamcode.Subsystems.Transfer;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsFieldRenderer;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.Vision;
@@ -27,6 +29,7 @@ import org.firstinspires.ftc.teamcode.WattageLib.PanelsTelemLogging.TelemetryFil
 import com.bylazar.configurables.annotations.Configurable;
 
 import java.lang.reflect.Field;
+import java.util.Locale;
 
 @Configurable
 public class RobotMain {
@@ -50,8 +53,11 @@ public class RobotMain {
     //subsystems
     public Follower follower;// = SharedObjects.follower;
     public Intake intake;
+    public Transfer transfer;
     public Flywheel flywheel;
     public ShootGateServo PosServ;
+    /** Turret rotation (null when the turret hardware isn't in the RC config). */
+    public TurretPivot turret;
     /** Null when no Limelight3A is in the RC config (Pinpoint-only mode). */
     @Nullable
     public Vision vision;
@@ -91,12 +97,16 @@ public class RobotMain {
         // flushTelemetry() — exactly one batched draw per loop/init tick.
         drawField();
         intake = new Intake(opmode);
+        transfer = new Transfer(opmode);
         flywheel = new Flywheel(opmode);
         PosServ = new ShootGateServo(opmode);
+        // Optional subsystem: tryCreate logs + returns null instead of crashing
+        // every OpMode when the turret isn't in the RC config (Vision pattern).
+        turret = TurretPivot.tryCreate(opmode);
 
 
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
-        CommandF = new CommandFactory(follower,intake,flywheel,PosServ, opmode.hardwareMap);
+        CommandF = new CommandFactory(follower,intake,transfer,flywheel,PosServ,turret, opmode.hardwareMap);
 
         // Initialize telemetry file logger (optional: comment out to disable logging).
         // Must pass appContext: the RC app UID can only write to its app-private
@@ -297,6 +307,15 @@ public class RobotMain {
             }
         } catch (Exception ignored) {
         }
+        // Turret ray queues BEFORE drawFusedAndVision: that call queues the
+        // robot + ghost shapes and then flushes the whole frame in one send
+        // (the renderer's batching contract — never flush twice per loop).
+        try {
+            if (turret != null) {
+                fieldRenderer.drawTurretRay(fused, turret.getPosition());
+            }
+        } catch (Exception ignored) {
+        }
         try {
             fieldRenderer.drawFusedAndVision(fused, mt1, mt2);
         } catch (Exception ignored) {
@@ -334,11 +353,51 @@ public class RobotMain {
         }
         drawField();
         if (visionFusion != null) visionFusion.report();
+        reportTurret();
         // Capture telemetry snapshot BEFORE update
         if (telemetryLogger != null && TELEMETRY_IO) {
             telemetryLogger.captureSnapshot(DashTelemetry);
         }
         DashTelemetry.update();
+    }
+
+    /**
+     * Turret heading readout for the dashboard (requested session-2 feature):
+     * robot-relative comes straight from the turret encoder (0 = chassis
+     * forward, +CCW); field-relative adds the chassis heading from the
+     * follower (Pedro heading, CCW+ radians, 0 = +X) and normalizes to
+     * +/-180. Bench-verify the sign ONCE: hold the turret still, rotate the
+     * chassis CCW — the field-relative value should stay put (it moves with
+     * the turret's robot-relative reading, so a sign error shows up there).
+     */
+    public void reportTurret() {
+        if (turret == null) {
+            return;
+        }
+        try {
+            double robotRelDeg = turret.getPosition();
+            DashTelemetry.addData("Turret heading (robot)",
+                    String.format(Locale.US, "%+.1f deg", robotRelDeg));
+            double fieldRelDeg = robotRelDeg;
+            try {
+                Pose p = follower.pose();
+                if (p != null) {
+                    fieldRelDeg = normDeg180(Math.toDegrees(p.heading()) + robotRelDeg);
+                }
+            } catch (Exception ignored) {
+                // no follower pose yet — robot-relative value still reported
+            }
+            DashTelemetry.addData("Turret heading (field)",
+                    String.format(Locale.US, "%+.1f deg", fieldRelDeg));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Normalize degrees to [-180, 180). */
+    private static double normDeg180(double deg) {
+        double r = (deg + 180.0) % 360.0;
+        if (r < 0) r += 360.0;
+        return r - 180.0;
     }
 
     /**

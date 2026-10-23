@@ -21,7 +21,10 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.2.0'
     implementation "com.pedropathing:revhub:${rootProject.findProperty('pedroVersion')}"
     // Pedro AutoTune (tuning procedures + Sloth). we are using sloth for sloth panels this must stay active.
-    implementation 'com.pedropathing:tuning:1.0.1'
+    // LOCAL PATCH: 1.0.1-patched lives in ftcontrol-maven and carries a durable
+    // fix for the single-client WebSocket wedge (watchdog + claim-steal +
+    // reflective stream close). Revert to 1.0.1 when upstream ships the fix.
+    implementation 'com.pedropathing:tuning:1.0.1-patched'
     implementation "com.bylazar:fullpanels:1.0.18"
     // LOCAL DEV: unpublished panels builds — win over fullpanels' pinned versions
     // (panels 1.0.7, battery 1.0.5, capture 1.0.5, telemetry 1.0.7). Revert these

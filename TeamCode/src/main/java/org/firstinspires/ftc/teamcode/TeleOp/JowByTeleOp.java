@@ -37,7 +37,13 @@ public class JowByTeleOp extends OpMode {
 
     @Override
     public void start() {
-
+        // SESSION 5d: between init and PLAY the periodic loop is not running,
+        // so the turret can be hand-spun in that gap without the tracker seeing
+        // it. Re-run the CRT boot solve so the tracked position is re-anchored
+        // to wherever the turret actually is when the match begins.
+        if (robot != null && robot.turret != null) {
+            robot.turret.rezeroAtStart();
+        }
     }
     @Override
     public void loop() {

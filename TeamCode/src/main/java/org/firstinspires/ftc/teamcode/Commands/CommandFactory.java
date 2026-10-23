@@ -14,6 +14,8 @@ import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
 import org.firstinspires.ftc.teamcode.Subsystems.Intake;
 import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
+import org.firstinspires.ftc.teamcode.Subsystems.Transfer;
+import org.firstinspires.ftc.teamcode.Subsystems.turret.TurretPivot;
 
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
@@ -22,6 +24,7 @@ import java.util.function.DoubleSupplier;
 /**
  * Multi-subsystem compositions only. Single-subsystem commands live on their
  * subsystem ({@code intake.runCmd()/holdCmd()/stopCmd()},
+ * {@code transfer.runCmd()/holdCmd()/reverseCmd()/reverseHoldCmd()/stopCmd()},
  * {@code flywheel.toRpm()/holdTunable()/stopCmd()/coastToIdleCmd()},
  * {@code PosServ.toggleCmd()/toPos()/nudgeCmd()}).
  */
@@ -57,47 +60,61 @@ public class CommandFactory {
 
     public final Follower follower;
     public final Intake intake;
+    public final Transfer transfer;
     public final Flywheel flywheel;
     public final ShootGateServo PosServ;
+    public final TurretPivot turret;
     public final HardwareMap hardwareMap;
 
-    /**
-     * ONE shared follower requirement wrapper for every AimAtGoal instance
-     * (bare aim commands and the one inside ShootAtGoal). Sharing the object
-     * makes the scheduler see them as the same requirement, so two aims
-     * conflict/interrupt each other instead of silently fighting over the
-     * follower.
-     */
-    private final Subsystem aimFollowerReqt = new SubsystemBase() {};
-
-    public CommandFactory(Follower _follower, Intake _intake, Flywheel _flywheel, ShootGateServo _posServ, HardwareMap _hardwareMap) {
+    public CommandFactory(Follower _follower, Intake _intake, Transfer _transfer, Flywheel _flywheel, ShootGateServo _posServ, TurretPivot _turret, HardwareMap _hardwareMap) {
         follower = _follower;
         intake = _intake;
+        transfer = _transfer;
         flywheel = _flywheel;
         PosServ = _posServ;
+        turret = _turret;
         hardwareMap = _hardwareMap;
     }
 
     /**
-     * Hold-to-aim: faces the closest AimPoints.pp target for the current alliance
-     * (Red* / Blue* filtered, re-picked every loop) while {@code forward}/{@code strafe}
-     * keep the driver on translation. Runs until cancelled - hold the left trigger
-     * to aim, compose with the flywheel via {@code .until(...)} / parallel / deadline.
-     *
-     * <p>Pass the same alliance-aware stick mapping the TeleOp uses, e.g. for Red:
-     * {@code () -> -gamepad1.left_stick_y} and {@code () -> -gamepad1.left_stick_x}.
+     * Ball-flow compound: intake AND transfer both run FORWARD, re-reading
+     * their live RPMs every loop (Panels -&gt; Intake / Transfer retunes apply
+     * while held). Runs until replaced/stopped - pair with {@link #feedStopCmd()}
+     * (or bind releases to it). Requires both subsystems, so a manual intake or
+     * transfer command interrupts it.
      */
-    public Command AimAtClosestGoal(DoubleSupplier forward, DoubleSupplier strafe) {
-        return new AimAtGoal(follower, hardwareMap, forward, strafe,
-                () -> RobotMain.CurrentAlliance, aimFollowerReqt);
+    public Command feedCmd() {
+        return new ParallelCommandGroup(
+                new RunCommand(intake::runIntake, intake),
+                new RunCommand(transfer::runForward, transfer));
+    }
+
+    /** PID-brake BOTH ball-flow motors to zero (intake + transfer). */
+    public Command feedStopCmd() {
+        return new ParallelCommandGroup(
+                intake.stopCmd(),
+                transfer.stopCmd());
     }
 
     /**
-     * Hold-to-shoot: aims at the closest hive target AND spins the flywheel at
-     * an RPM looked up from the distance-to-hive LUT. The shoot gate opens only
-     * once the flywheel is at that RPM (WaitUntil -> open). On release (or any
-     * interrupt) the gate closes and the flywheel coasts to {@code IDLE_RPM}
-     * (soft FLOAT slowdown; the PID re-engages to hold idle on arrival).
+     * Hold-to-aim: SPINS THE TURRET to face the closest AimPoints.pp target
+     * for the current alliance (Red* / Blue* filtered, re-picked every loop)
+     * while the driver keeps full chassis control (translation AND rotation).
+     * Requires only the turret subsystem — the follower is read for the pose
+     * but never driven. Runs until cancelled - hold the left trigger to aim.
+     */
+    public Command AimAtClosestGoal() {
+        return new AimAtGoal(turret, follower, hardwareMap,
+                () -> RobotMain.CurrentAlliance);
+    }
+
+    /**
+     * Hold-to-shoot: SPINS THE TURRET to aim at the closest hive target AND
+     * spins the flywheel at an RPM looked up from the distance-to-hive LUT.
+     * The shoot gate opens only once the flywheel is at that RPM (WaitUntil
+     * -&gt; open). On release (or any interrupt) the gate closes and the
+     * flywheel coasts to {@code IDLE_RPM} (soft FLOAT slowdown; the PID
+     * re-engages to hold idle on arrival).
      *
      * <p>Per loop while held: aim re-picks the closest target, the distance to
      * it is fed through the linear LUT and SLEW-LIMITED (see
@@ -110,19 +127,16 @@ public class CommandFactory {
      * never stops the flywheel - it just closes the gate so no ball leaves
      * while unsafe.
      *
-     * <p>Requirements: aim's follower wrapper + flywheel + gate servo - so a
-     * manual servo toggle (X) or nudge (dpad) taken mid-shot interrupts the
-     * whole compound (manual override).
-     *
-     * <p>Pass the same alliance-aware stick mapping the TeleOp uses, e.g. for Red:
-     * {@code () -> -gamepad1.left_stick_y} and {@code () -> -gamepad1.left_stick_x}.
+     * <p>Requirements: turret (aim) + flywheel + gate servo - so a manual
+     * turret spin (right stick), servo toggle (X) or nudge (dpad) taken
+     * mid-shot interrupts the whole compound (manual override).
      */
-    public Command ShootAtGoal(DoubleSupplier forward, DoubleSupplier strafe) {
-        AimAtGoal aim = new AimAtGoal(follower, hardwareMap, forward, strafe,
-                () -> RobotMain.CurrentAlliance, aimFollowerReqt);
+    public Command ShootAtGoal() {
+        AimAtGoal aim = new AimAtGoal(turret, follower, hardwareMap,
+                () -> RobotMain.CurrentAlliance);
 
         return new ParallelCommandGroup(
-                // 1) Aim: owns the follower turn axis; sticks keep translation.
+                // 1) Aim: spins the TURRET to the target; chassis stays with the driver.
                 aim,
 
                 // 2) RPM manager: distance -> linear LUT -> slew-limited

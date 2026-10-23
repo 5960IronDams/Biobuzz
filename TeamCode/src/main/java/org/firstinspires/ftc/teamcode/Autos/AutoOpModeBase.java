@@ -88,6 +88,11 @@ public abstract class AutoOpModeBase extends OpMode {
 
     @Override
     public void start() {
+        // SESSION 5d: re-anchor the turret's CRT solve at PLAY — the turret can
+        // be hand-spun between init and start (the tracker is not running).
+        if (robot != null && robot.turret != null) {
+            robot.turret.rezeroAtStart();
+        }
         CommandScheduler.getInstance().schedule(autoRoutine());
     }
     @Override

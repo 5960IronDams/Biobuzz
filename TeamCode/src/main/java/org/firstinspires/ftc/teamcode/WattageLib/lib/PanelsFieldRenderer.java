@@ -87,6 +87,13 @@ public class PanelsFieldRenderer {
     public static String MT2_STROKE = "green";
     public static String MT2_FILL = "rgba(0,255,0,0.25)";
 
+    // ---- Turret overlay (session 2: TurretPivot heading ray) ----
+    /** Draw the turret heading ray in drawFusedAndVision()/drawTurretRay(). */
+    public static boolean DRAW_TURRET_RAY = true;
+    public static String TURRET_STROKE = "orange";
+    /** Turret ray length, inches (longer than the body tick so it reads past the robot circle). */
+    public static double TURRET_RAY_IN = 11.0;
+
     private final FieldManager field = PanelsField.INSTANCE.getField();
 
     public PanelsFieldRenderer() {
@@ -280,6 +287,35 @@ public class PanelsFieldRenderer {
         field.moveCursor(rx, ry);
         field.setOutline(stroke, OUTLINE_WIDTH);
         field.line(noseX, noseY);
+    }
+
+    /**
+     * Queue the turret heading ray (robot center -> turret direction); NO
+     * canvas send. Call BEFORE {@link #drawFusedAndVision} so the ray lands in
+     * the same single-canvas frame that call flushes (its batching contract:
+     * queue N shapes, exactly one flush per loop).
+     *
+     * @param fusedPedro    robot pose in Pedro frame (same pose drawFusedAndVision draws)
+     * @param turretDegRobot turret heading robot-relative, DEGREES, +CCW
+     *                      (TurretPivot convention: 0 = chassis forward)
+     */
+    public void drawTurretRay(Pose fusedPedro, double turretDegRobot) {
+        if (!DRAW_TURRET_RAY || !isDrawablePose(fusedPedro)) return;
+        if (!Double.isFinite(turretDegRobot)) return;
+        try {
+            double rx = fusedPedro.x() + ORIGIN_OFFSET_X;
+            double ry = fusedPedro.y() + ORIGIN_OFFSET_Y;
+            // Pedro heading is CCW+ radians from +X; the turret's robot-relative
+            // angle is +CCW degrees, so field heading = robot heading + turret.
+            double h = fusedPedro.heading() + Math.toRadians(turretDegRobot);
+            double tx = rx + TURRET_RAY_IN * Math.cos(h);
+            double ty = ry + TURRET_RAY_IN * Math.sin(h);
+            if (!Double.isFinite(tx) || !Double.isFinite(ty)) return;
+            field.moveCursor(rx, ry);
+            field.setOutline(TURRET_STROKE, OUTLINE_WIDTH);
+            field.line(tx, ty);
+        } catch (Exception ignored) {
+        }
     }
 
     /**
