@@ -13,6 +13,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.WattageLib.pedroHelpers.PedroFieldBridge;
 
 import java.util.ArrayList;
@@ -380,6 +381,52 @@ public class Vision {
             return false;
         } finally {
             if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * Frames older than this (ms) count as "no new pictures" for the
+     * driver-station failure board. The Limelight publishes frames at its
+     * pipeline FPS (staleness normally well under 300 ms); a dead/unplugged
+     * camera keeps serving its LAST result forever, so the staleness growing
+     * past this is the actual death signal.
+     */
+    public static final long LIMELIGHT_FRESH_MAX_MS = 1000;
+
+    /**
+     * HardwareHealth heartbeat for the driver-station failure board — call
+     * once per loop from RobotMain (both periodic paths), INDEPENDENT of the
+     * VisionFusion gates: a disabled filter or a diverged fused pose must not
+     * starve the liveness check. getLatestResult() is a cached read (the
+     * Limelight SDK polls in its own thread), so this costs nothing
+     * measurable.
+     *
+     * <p>Any frame young enough proves the camera is publishing — even one
+     * with no tags (aiming having no solution is gameplay, not a hardware
+     * failure, and never alarms). A null result reports nothing and lets the
+     * heartbeat go silent instead (HardwareHealth flags "no data" after its
+     * own window).
+     */
+    public void healthPing() {
+        if (limelight == null) return;
+        final LLResult r;
+        try {
+            r = limelight.getLatestResult();
+        } catch (Exception e) {
+            return;
+        }
+        if (r == null) return;
+        final long staleMs;
+        try {
+            staleMs = r.getStaleness();
+        } catch (Exception e) {
+            return;
+        }
+        if (staleMs <= LIMELIGHT_FRESH_MAX_MS) {
+            HardwareHealth.get().ok("LIMELIGHT");
+        } else {
+            HardwareHealth.get().report("LIMELIGHT",
+                    "no new frames (" + staleMs + "ms stale)");
         }
     }
 

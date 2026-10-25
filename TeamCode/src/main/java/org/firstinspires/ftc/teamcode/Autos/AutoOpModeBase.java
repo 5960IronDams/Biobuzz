@@ -6,6 +6,7 @@ import com.seattlesolvers.solverslib.command.CommandScheduler;
 import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
+import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
@@ -110,6 +111,13 @@ public abstract class AutoOpModeBase extends OpMode {
 
     @Override
     public void loop() {
+        // Shoot-readiness sensing, same as KeyBindings.update() does in TeleOp:
+        // advances the debounce/warmup timers and samples the chassis motion
+        // from the follower pose, so the isReadyToShoot()-gated auto-fire
+        // (CommandFactory.AutoShootAtGoal) behaves identically in autos.
+        // Without this the debouncers never tick and the motion checks would
+        // read a permanent "stable".
+        robot.CommandF.readinessPeriodic();
         robot.RobotRunPeriodic();
         UpdateTelemetry();
         robot.flushTelemetry(); // single flush LAST — see RobotMain.flushTelemetry()
@@ -123,6 +131,8 @@ public abstract class AutoOpModeBase extends OpMode {
         telemetry.addData("Y", robot.follower.pose().y());
         telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
         telemetry.addData("Follower Mode", robot.follower.mode());
+        // DS failure board (see HardwareHealth) — same screen, one more line.
+        telemetry.addData("HW", HardwareHealth.get().dsLine());
         telemetry.update();
         // Mirror to Panels (addData only — flushTelemetry() draws the field once
         // at the end of the tick, so init()/init_loop() paint too).

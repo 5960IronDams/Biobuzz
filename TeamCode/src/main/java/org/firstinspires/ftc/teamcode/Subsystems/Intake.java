@@ -32,13 +32,13 @@ public class Intake extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- Panels tuning ----
-    public static double INTAKE_RPM = 100;
+    public static double INTAKE_RPM = 400; // max measured speed 850
     /** goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6 (IronConstants helper - same motor + ratio as the transfer). */
     public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(5.2);
     public static double kP = 20;
     public static double kI = 0;
     public static double kD = 0;
-    public static double kF = 12;
+    public static double kF = 15;
     public static boolean MOTOR_REVERSED = true;
     public static double TRIGGER_THRESHOLD = 0.2;
 
@@ -81,6 +81,9 @@ public class Intake extends SubsystemBase {
     public void runIntake() {
         motor.setVelocity(rpmToTicksPerSec(INTAKE_RPM));
     }
+    public void runIntake(double atThisRPM) {
+        motor.setVelocity(rpmToTicksPerSec(atThisRPM));
+    }
 
     public void stop() {
         motor.setVelocity(0);
@@ -104,6 +107,9 @@ public class Intake extends SubsystemBase {
      */
     public Command holdCmd() {
         return run(this::runIntake);
+    }
+    public Command reverseCmd() {
+        return run(()->this.runIntake(-INTAKE_RPM));
     }
 
     /** PID-brake the intake to zero. */
@@ -141,4 +147,6 @@ public class Intake extends SubsystemBase {
         telemetry.addData("Intake target tps", "%.1f", rpmToTicksPerSec(INTAKE_RPM));
         telemetry.addData("Intake actual tps", "%.1f", motor.getVelocity());
     }
+
+
 }

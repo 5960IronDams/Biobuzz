@@ -70,9 +70,25 @@ public class RobotMain {
     //
     public CommandFactory CommandF;
     public static Pose autonomousEndPose = new Pose(0, 0, 0);
+    /** The owning OpMode — the DS failure board evaluates on its telemetry every flushTelemetry(). */
+    private final OpMode opmode;
+    /**
+     * PLAY signal for the DS failure board: RobotRunPeriodic() is ONLY called
+     * from OpMode loop() (the init path is InitRunPeriodic()), so seeing it
+     * means the match has started. Silence windows on the board only count
+     * from here on — init-time heartbeats are sporadic by design (the turret
+     * scheduler only runs post-PLAY).
+     */
+    private boolean runPeriodicSeen = false;
     public RobotMain(OpMode opmode)
     {
             CommandScheduler.getInstance().reset(); //clears all scheduled commands + subsystem registrations after opmode switch.
+        this.opmode = opmode;
+
+        // Fresh failure board per OpMode (see HardwareHealth): clears the
+        // singleton's entries and any banner WE own in the DS global-error
+        // slot — an SDK-authored error, if present, is left alone.
+        HardwareHealth.get().reset();
 
         // REV Hub bulk-read caching: batch all encoder/digital I2C reads on each
         // hub into ONE transaction per loop instead of one-per-read. AUTO mode
@@ -103,6 +119,12 @@ public class RobotMain {
         // Optional subsystem: tryCreate logs + returns null instead of crashing
         // every OpMode when the turret isn't in the RC config (Vision pattern).
         turret = TurretPivot.tryCreate(opmode);
+        // Driver-station failure board: the turret heartbeats every loop from
+        // periodic(); a failed tryCreate already reported "absent at init"
+        // (comp bot only — bench rigs legitimately run without the turret).
+        if (turret != null) {
+            HardwareHealth.get().expect("TURRET");
+        }
 
 
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
@@ -136,6 +158,16 @@ public class RobotMain {
         Log.i("IronLog","Vision Started");
         visionFusion = new VisionFusion(follower, vision);
         Log.i("IronLog","VisionFusion Started");
+        // Driver-station failure board: a Limelight present in the RC config
+        // is a REQUIRED game-day system (aiming depends on it) — expect a
+        // heartbeat every tick (vision.healthPing()). One absent from the
+        // config entirely gets flagged at init (bench rigs silence it via
+        // IronConstants.CompBot).
+        if (vision != null) {
+            HardwareHealth.get().expect("LIMELIGHT");
+        } else if (IronConstants.CompBot) {
+            HardwareHealth.get().report("LIMELIGHT", "absent at init (not in RC config)");
+        }
     }
 
     private void SetupStartingPositionFromPinPointOrAuton() {
@@ -248,8 +280,10 @@ public class RobotMain {
 
     public void RobotRunPeriodic()
     {
+        runPeriodicSeen = true; // post-PLAY marker for the DS failure board
         follower.update();//updates this robots pedro Follower (predict: Pinpoint)
         if (visionFusion != null) visionFusion.correct(); // correct: Limelight -> Kalman
+        if (vision != null) vision.healthPing(); // DS failure-board heartbeat — independent of fusion gates
         // Relative cell state (cluster tags). Never touches the global pose.
         if (cells != null) {
             cells.update(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE ? 'B' : 'R');
@@ -275,6 +309,7 @@ public class RobotMain {
     {
         follower.update(); // predict step: keeps the pose fresh (robot is parked)
         if (visionFusion != null) visionFusion.correct(); // LL connect + solve + fuse
+        if (vision != null) vision.healthPing(); // DS failure-board heartbeat during init too
         if (cells != null) {
             cells.update(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE ? 'B' : 'R');
         }
@@ -339,6 +374,14 @@ public class RobotMain {
      * update is already applied, so the painted pose is never a loop stale.
      */
     public void flushTelemetry() {
+        // Driver-station failure board FIRST: it must run even when the
+        // dashboard is off (the lean match loop) — the red banner is the
+        // game-day surface. It does NOT write the DS telemetry itself (the
+        // OpModes' UpdateTelemetry() own their DS screens and pull
+        // HardwareHealth.get().dsLine()); the Panels summary line is added
+        // further down, before the single update().
+        HardwareHealth.get().evaluate(runPeriodicSeen);
+
         if (!DASHBOARD) {
             // Dashboard off: no field draw, no Fusion/* lines, no capture, no
             // Panels send. The only Panels interaction left is the file logger
@@ -354,6 +397,9 @@ public class RobotMain {
         drawField();
         if (visionFusion != null) visionFusion.report();
         reportTurret();
+        // Same failure board, pit view: one summary line on Panels (the
+        // per-subsystem detail lines around it carry the full diagnostics).
+        DashTelemetry.addData("HW health", HardwareHealth.get().summary());
         // Capture telemetry snapshot BEFORE update
         if (telemetryLogger != null && TELEMETRY_IO) {
             telemetryLogger.captureSnapshot(DashTelemetry);

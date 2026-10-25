@@ -43,6 +43,23 @@ public class ShootGateServo extends SubsystemBase {
     // ---- TODO: edit these per mechanism (hardcoded, one servo per subsystem) ----
     /** Must match the RC config name. Changing it needs a restart. */
     public String Servoname = IronConstants.FrontServoName;
+    /**
+     * IS THE GATE PHYSICALLY BUILT? Set false until the mechanism actually
+     * exists on the robot.
+     *
+     * <p>While false the shooter must treat the gate as a non-entity:
+     * {@link CommandFactory} drops the gate from the readiness set, never
+     * writes the servo during a shot, and never blocks a transfer waiting for
+     * it. Commanding a servo that has no mechanism attached just wears it out,
+     * and — worse — gating the shot on "is the gate open?" when nothing can
+     * open it wedges the whole auto-fire.
+     *
+     * <p>Flip to true (Panels -&gt; ShootGateServo, or in code) once the gate is
+     * mounted and the POS_A/POS_B presets are calibrated. Everything else is
+     * already wired: the readiness member, the fire-half open/close, and the
+     * servo itself come back with this one flag.
+     */
+    public static boolean IMPLEMENTED = false;
     /** Preset A, e.g. closed / stowed. */
     public static double POS_A = 0.15;
     /** Preset B, e.g. open / scored. */
@@ -124,8 +141,35 @@ public class ShootGateServo extends SubsystemBase {
         return current;
     }
 
+    /**
+     * True once the SLEW RAMP has reached its target.
+     *
+     * <p><b>CAREFUL — this is a statement about the SOFTWARE ramp, not about
+     * the hardware.</b> There is no position feedback from a servo, so
+     * {@code current} is a value we generate ourselves by slewing toward
+     * {@code target} at {@link #SLEW} units/s. This returns true as soon as
+     * that ramp finishes, regardless of where the servo horn physically is.
+     *
+     * <p>It is also the reason a shot must never be gated on "the gate is
+     * settled" while OPENING it: opening sets the target, so this necessarily
+     * reports false until the ramp completes, which tears readiness down, which
+     * closes the gate, which makes it true again — an oscillator. Readiness
+     * gates on the gate being CLOSED ({@link #isClosed()}), which is a state
+     * the shot never asks the gate to leave. See {@code CommandFactory}.
+     */
     public boolean isAtPosition() {
         return Math.abs(target - current) <= TOLERANCE;
+    }
+
+    /**
+     * True when the gate is at (or on its way to) the CLOSED preset and that
+     * request is not fighting a competing one. This is the state the shooter
+     * actually needs before it lets a ball out, and unlike "settled" it is
+     * stable while the shot fires: the fire half only opens the gate once
+     * readiness has already passed, so this is not part of that decision.
+     */
+    public boolean isClosed() {
+        return !IMPLEMENTED || Math.abs(target - POS_A) <= TOLERANCE;
     }
 
     // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----

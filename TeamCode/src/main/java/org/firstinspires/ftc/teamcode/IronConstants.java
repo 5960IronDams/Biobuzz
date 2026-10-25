@@ -18,7 +18,8 @@ public class IronConstants {
     public static final String TransferMotorName = CompBot? "ehm1" :"transfer";
     public static final String FlywheelMotorName = CompBot? "ehm2" :"flywheel";
     public static final String FrontServoName = CompBot? "shootgate" :"shootgate";
-
+    public static final String TurretMotorName = CompBot? "ehm3" :"turret_motor";
+    public static final String TurretOctoQuadName = CompBot? "octoquad" :"octoquad"; //octoquad MK1
     // ---- Motor encoder constants ----
     /**
      * goBILDA 5203-series Yellow Jacket encoder: 28 ticks (PPR) per MOTOR-shaft
@@ -38,16 +39,7 @@ public class IronConstants {
         return GOBILDA_5203_TICKS_PER_MOTOR_REV * gearRatio;
     }
 
-    // Turret (ported from 2026-IndianaJoe TurretPivot — see TURRET_PORTING_NOTES.md)
-    /**
-     * goBILDA 5203 drive motor — the turret's only drive (the legacy CRServo
-     * path was retired). Configure on a motor port; the RC config motor type
-     * is not critical (we drive with setPower), but pick the 5203 variant
-     * matching your gearbox.
-     */
-    public static final String TurretMotorName = CompBot? "ehm3" :"turret_motor";
-    /** OctoQuad MK1 on Control Hub I2C port 3 (Comp bot has it on expansion hub i2c port 3); the Through Bores' ABS wires are on its channels 6 (B) and 7 (A). */
-    public static final String TurretOctoQuadName = CompBot? "octoquad" :"octoquad";
+
 
     // Alliance reset poses for extreme localization loss, should be in a known location.
     public static final Pose RED_RESET_POSE = new Pose(10.5, 10.5, Math.toRadians(0));

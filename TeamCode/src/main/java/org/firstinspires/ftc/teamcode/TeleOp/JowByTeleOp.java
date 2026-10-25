@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.TeleOp;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
+import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.RobotMain;
 
 @TeleOp(name = "JowBy_TeleOp", group = "TeleOp")//red_
@@ -47,7 +48,6 @@ public class JowByTeleOp extends OpMode {
     }
     @Override
     public void loop() {
-        keys.refreshPad(); // merged Panels+DS pad source BEFORE the scheduler polls triggers
         robot.RobotRunPeriodic();
         keys.update();
         UpdateTelemetry();
@@ -79,6 +79,13 @@ public class JowByTeleOp extends OpMode {
 
     public void UpdateTelemetry()
     {
+        // DS screen: re-added every tick because update() clears the buffer.
+        // "HW" is the driver-station failure board (see HardwareHealth) — the
+        // game-day surface when the Panels laptop is in the pits.
+        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+        telemetry.addData("HW", HardwareHealth.get().dsLine());
+        telemetry.update();
+
         // addData only — flushed once via flushTelemetry() at end of loop().
         RobotMain.DashTelemetry.addData("Status", "Running");
     }

@@ -14,6 +14,7 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.IronConstants;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.FunctionalCommand;
@@ -354,6 +355,16 @@ public class TurretPivot extends SubsystemBase {
             Log.w("IronLog", "TurretPivot skipped — needs '" + IronConstants.TurretMotorName
                     + "' (5203 motor) and '" + IronConstants.TurretOctoQuadName
                     + "' (OctoQuad on I2C) in the RC config", e);
+            // Driver-station failure board: on the comp bot a missing turret
+            // IS a match-critical condition (no aiming) — the DS gets the red
+            // banner before PLAY. Bench rigs (CompBot=false) legitimately run
+            // without the turret and stay silent.
+            if (IronConstants.CompBot) {
+                String detail = e.getMessage();
+                HardwareHealth.get().report("TURRET", "absent at init ("
+                        + e.getClass().getSimpleName()
+                        + (detail == null ? ")" : ": " + detail + ")"));
+            }
             return null;
         }
     }
@@ -702,17 +713,30 @@ public class TurretPivot extends SubsystemBase {
         setPointPosition = wantedDeg;
         desiredVelocityDps = velocityDps;
         setpointActive = true;
+        // Re-engage active holding: BRAKE() left the drive in FLOAT (neutral),
+        // so the first goto after a release has to put BRAKE back on.
+        if (motor.getZeroPowerBehavior() != DcMotor.ZeroPowerBehavior.BRAKE) {
+            motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        }
     }
 
     /**
-     * FRC BRAKE: 0 power + the 5203's BRAKE zero-power behavior holds position
-     * actively. The next goto re-engages the PID.
+     * FRC BRAKE (kept name): release the PID and return the drive to NEUTRAL —
+     * 0 power AND the 5203's FLOAT zero-power behavior, so nothing is
+     * electrically holding the turret any more. This is what runs when the aim
+     * command ends (trigger release): before, the command ended but the motor
+     * was left in BRAKE with the PID still latched, so the turret stayed
+     * actively locked wherever the driver had been aiming and had to be
+     * pushed to move. The next goto switches back to BRAKE + PID.
      */
     public void BRAKE() {
         State = SubSystemState.BRAKED;
         setpointActive = false;
         iAccum = 0;
         lastAppliedPower = 0;
+        desiredVelocityDps = 0;
+        stuckTimer = 0;
+        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         motor.setPower(0);
     }
 
@@ -744,7 +768,7 @@ public class TurretPivot extends SubsystemBase {
         ).setName("TurretGotoPosition");
     }
 
-    /** FRC parity: stop and park the drive (0 power + BRAKE hold). */
+    /** FRC parity: stop the drive and return the motor to neutral (PID released). */
     public Command C_Stop() {
         return new InstantCommand(this::BRAKE).setName("StopTurret");
     }
@@ -858,6 +882,13 @@ public class TurretPivot extends SubsystemBase {
 
         TurretPivot_OK = ENCODER_OK && !faultEncoderStuck && !tracker.isEncoderDeadAtBoot();
 
+        // Driver-station failure board: one heartbeat or one fault line per
+        // loop; the full per-loop diagnostics stay on the Panels telemetry
+        // below. The latched fault string is exactly the "critical" set.
+        String faultStr = faultString();
+        HardwareHealth.get().report("TURRET",
+                faultStr.equals("none") ? null : faultStr);
+
         // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
         // clears its line buffer on every update(), so >1 update per loop sends
         // partial frames (flicker) and drops lines. RobotMain.flushTelemetry()
@@ -914,7 +945,7 @@ public class TurretPivot extends SubsystemBase {
         telemetry.addData("Turret mot-enc ticks", tracker.motorEncTicksText());
         telemetry.addData("Turret anchor corr", tracker.anchorCorrText());
         telemetry.addData("Turret boot dir (motor)", tracker.bootDirMotText());
-        telemetry.addData("Turret faults", faultString());
+        telemetry.addData("Turret faults", faultStr);
         telemetry.addData("Turret OK", TurretPivot_OK);
     }
 
@@ -1094,6 +1125,7 @@ public class TurretPivot extends SubsystemBase {
         if (tracker.isEncoderDirectionFaulted()) sb.append("B_DIR_MISMATCH ");
         if (tracker.isMotorEncFaulted()) sb.append("MOTOR_ENC ");
         if (tracker.isMotorEncDirFaulted()) sb.append("MOTOR_ENC_DIR ");
+        if (tracker.isAbsStreamLost()) sb.append("ABS_STREAM_LOST ");
         if (sb.length() == 0) return "none";
         return sb.toString();
     }

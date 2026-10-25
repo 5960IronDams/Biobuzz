@@ -16,6 +16,7 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 import org.firstinspires.ftc.teamcode.WattageLib.Ballistics.NoFireZones;
 
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -36,11 +37,35 @@ import java.util.function.Supplier;
  * {@link TurretPivot#GotoSafeAngle(double, double)} together with a
  * chassis-yaw-rate feedforward so the turret tracks the field aim while the
  * chassis turns, and lets the turret's own soft limits + PID do the motion.
- * On release the turret HOLDS its last angle (no park) — the driver's right
- * stick takes over manually the moment the trigger drops.
+ * On release the turret motor goes NEUTRAL ({@link TurretPivot#BRAKE()}: PID
+ * released, 0 power, FLOAT) — it no longer stays PID-locked wherever it was
+ * aiming. The aim command only requires the turret, so the chassis is
+ * untouched and driving continues without a blip.
  *
  * <p>Requirements: the turret subsystem ONLY. The follower is read (pose) but
  * never required, so driving is never interrupted.
+ *
+ * <p><b>SESSION 6 — always-live aiming math.</b> The class used to be the only
+ * place a target could be chosen, and it did that from {@code execute()} as a
+ * COMMAND — so nothing outside the command could answer "which target?" or
+ * "how far?" without an instance of it being scheduled. Readiness checks need
+ * both every loop, whether or not anybody is aiming (IndianaJoe's
+ * {@code isReadyToShoot} is a set of plain {@code Trigger}s reading live
+ * targets). So the math now lives in its own executable methods:
+ * <ul>
+ *   <li>{@link #alliancePoints()} — the current alliance's aim points (what
+ *       {@link CommandFactory#TrackTarget()} and its fire group scan).</li>
+ *   <li>{@link #liveTarget()} — the closest point for the current alliance,
+ *       re-picked every call. The locked {@link #getTargetPose() target} is
+ *       preferred (that instance has hysteresis and is the one the turret
+ *       tracks); the follower alone answers when it is not aiming.</li>
+ *   <li>{@link #distanceTo(Pose)} — shooter-to-point distance, the flywheel
+ *       LUT input. A command running this instance uses
+ *       {@link #getDistanceInches()} instead, so the LUT and the readiness
+ *       check always agree on the same point.</li>
+ * </ul>
+ * {@code execute()} is now just "resolve the aim point, then
+ * {@link #commandTurretTo(Pose)}" — behavior on the robot is unchanged.
  */
 @Configurable
 public class AimAtGoal extends CommandBase {
@@ -87,8 +112,47 @@ public class AimAtGoal extends CommandBase {
      * between hives so range noise at a near-tie can't flip the aim.
      */
     public static double AIM_SWITCH_MARGIN_IN = 6.0;
-    /** |error| below this (degrees) counts as "on target" for telemetry. */
+    /**
+     * Aim-error floor (deg) for the "on target" cone: the tolerance never goes
+     * below this, no matter how close or slow the shot is.
+     */
     public static double TOLERANCE_DEG = 2.0;
+    /**
+     * SESSION 6: how long the turret may be out of the live aim tolerance
+     * before "on target" drops (s). A falling-edge debounce, the FTC sibling
+     * of the FRC readiness set's {@code shootReadyDebounceS} on
+     * {@code isFlywheelAtSpeed()}: one noisy bearing sample must not tear the
+     * transfer down mid-shot. 0 = no debounce.
+     */
+    public static double ON_TARGET_DEBOUNCE_S = 0.15;
+
+    // ---- SESSION 6: target-aware tolerance scaling (IndianaJoe parity) ----
+    /**
+     * Aim error (deg) at or below which the shot counts as aligned regardless
+     * of distance — the "close enough" floor. Distant targets get a looser
+     * cone because the same angular error is a much smaller lateral miss far
+     * away (FRC scaled its tolerances by distance exactly this way).
+     */
+    public static double AIM_TOL_MIN_DEG = 2.0;
+    /** Distance (in) beyond which the aim tolerance starts to loosen (below it: MIN_DEG). */
+    public static double AIM_TOL_NEAR_DEG = 24.0;
+    /** Extra degrees of aim tolerance per inch of distance past {@link #AIM_TOL_NEAR_DEG}. */
+    public static double AIM_TOL_SLOPE_DEG_PER_IN = 0.05;
+    /** Hard ceiling on the distance-scaled aim tolerance (deg). */
+    public static double AIM_TOL_MAX_DEG = 8.0;
+    /**
+     * Shot speed (RPM) below which a shot earns the MINIMUM aim band, expressed
+     * as a FRACTION of {@link #TOL_RPM_REF}. Between this and the reference RPM
+     * the band ramps linearly from {@link #AIM_TOL_MIN_DEG} to the full
+     * distance band. 0 disables the RPM term entirely (distance only).
+     */
+    public static double TOL_RPM_FLOOR_FRAC = 0.25;
+    /**
+     * Shot speed (RPM) that earns the FULL distance band. Slower shots have the
+     * band squeezed toward {@link #AIM_TOL_MIN_DEG} (see {@link #aimToleranceDeg}).
+     * 0 = ignore RPM, scale by distance only.
+     */
+    public static double TOL_RPM_REF = 2000.0;
 
     /** Asset path of the aim-point file. Already contains BOTH alliances' points. */
     public static final String ASSET_PATH = "pathfiles/AimPoints.pp";
@@ -97,6 +161,14 @@ public class AimAtGoal extends CommandBase {
     private final Follower follower;
     private final PPFile aimPoints;
     private final Supplier<ALLIANCE_COLOR> alliance;
+    /**
+     * SESSION 6: the RPM the flywheel manager is driving to right now — the
+     * one piece of shoot state that lives outside this class (CommandFactory
+     * owns the distance -> RPM LUT and its slew). Used to scale the aim
+     * tolerance: a slow shot is more forgiving of bearing error than a fast
+     * one. null (or NaN) = scale by distance only.
+     */
+    private final DoubleSupplier targetRpm;
 
     // Per-run state (also surfaced for telemetry / flywheel compositions).
     private int targetIndex = -1;
@@ -111,16 +183,46 @@ public class AimAtGoal extends CommandBase {
     private long lastExecNs = 0L;
     /** SESSION 5g: measured command loop period (s) — no hard-coded 0.02. */
     private double loopDtSec = 0.02;
+    /** Distance to the locked point as of the last execute() (in). */
+    private double lastDistanceIn = Double.NaN;
+    /** Distance-scaled aim tolerance for the current target (deg). */
+    private double toleranceDeg = TOLERANCE_DEG;
+
+    // SESSION 6: cached alliance point set (alliance changes at most once per
+    // OpMode; the scan is O(points) but fire-group and readiness both ask).
+    private ALLIANCE_COLOR cachedAlliance = null;
+    private int[] cachedIndices = new int[0];
+    private boolean cachedFallback = false;
+
+    // SESSION 6: "on target" with a falling-edge debounce.
+    private boolean rawOnTarget = false;
+    private boolean onTargetDebounced = false;
+    private long onTargetFalseSinceNs = 0L;
+    private long onTargetDebounceNs = -1L;
+    /** Set while this command is scheduled; {@link #liveTarget()} prefers the locked target then. */
+    private boolean aiming = false;
 
     /** Load aim points from assets and aim the TURRET with the driver in full control. */
     public AimAtGoal(TurretPivot turret, Follower follower, HardwareMap hardwareMap,
                      Supplier<ALLIANCE_COLOR> alliance) {
-        this(turret, follower, loadAimPoints(hardwareMap), alliance);
+        this(turret, follower, loadAimPoints(hardwareMap), alliance, null);
+    }
+
+    /** Load aim points and scale the aim tolerance with the live flywheel RPM target. */
+    public AimAtGoal(TurretPivot turret, Follower follower, HardwareMap hardwareMap,
+                     Supplier<ALLIANCE_COLOR> alliance, DoubleSupplier targetRpm) {
+        this(turret, follower, loadAimPoints(hardwareMap), alliance, targetRpm);
     }
 
     /** Inject an already-loaded PPFile (tests, or a shared copy). */
     public AimAtGoal(TurretPivot turret, Follower follower, PPFile aimPoints,
                      Supplier<ALLIANCE_COLOR> alliance) {
+        this(turret, follower, aimPoints, alliance, null);
+    }
+
+    /** Full constructor: injected aim file + a live RPM-source for tolerance scaling. */
+    public AimAtGoal(TurretPivot turret, Follower follower, PPFile aimPoints,
+                     Supplier<ALLIANCE_COLOR> alliance, DoubleSupplier targetRpm) {
         if (turret == null) {
             throw new IllegalArgumentException("AimAtGoal needs a non-null TurretPivot");
         }
@@ -133,7 +235,9 @@ public class AimAtGoal extends CommandBase {
         this.follower = follower; // read-only: pose source for target bearing
         this.aimPoints = aimPoints;
         this.alliance = alliance != null ? alliance : () -> ALLIANCE_COLOR.ALLIANCE_RED;
+        this.targetRpm = targetRpm;
     }
+
 
     /**
      * Load the aim file with a plain degrees factory (NO Blue mirroring).
@@ -169,7 +273,10 @@ public class AimAtGoal extends CommandBase {
     public void initialize() {
         prevHeadingRad = Double.NaN;
         lastExecNs = 0L;
+        aiming = true;
         pickClosestTarget();
+        RobotMain.DashTelemetry.addData("Aim cmd", "START ("
+                + (targetName == null || targetName.isEmpty() ? "no target yet" : targetName) + ")");
     }
 
     @Override
@@ -182,11 +289,49 @@ public class AimAtGoal extends CommandBase {
         if (targetPose == null) {
             return;
         }
+        commandTurretTo(robot);
+        reportTelemetry();
+    }
 
+    @Override
+    public boolean isFinished() {
+        return false; // hold-to-aim: cancel on trigger release or compose with .until(...)
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        aiming = false;
+        // Drop the per-run shot state: the install is no longer tracking that
+        // target, so anything asking afterwards must fall back to the live
+        // closest-point answer rather than a stale distance/tolerance.
+        lastDistanceIn = Double.NaN;
+        rawOnTarget = false;
+        onTargetDebounced = false;
+        onTargetFalseSinceNs = 0L;
+        // Release the turret back to NEUTRAL when the button is let go: this
+        // used to be a no-op, so GotoSafeAngle's setpoint stayed latched and
+        // PID kept the turret locked wherever it was last aimed (capture
+        // 20261024-232657: it sat at its aim angle with the button released).
+        // BRAKE() drops the setpoint and puts the 5203 in FLOAT at 0 power —
+        // the next aim/jog re-engages the PID. Chassis is untouched (never
+        // required) so driving continues without a blip.
+        turret.BRAKE();
+        RobotMain.DashTelemetry.addData("Aim cmd", "END (" + (interrupted ? "interrupted" : "finished") + ")");
+    }
+
+    /**
+     * One aim step against an already-resolved {@code robot} pose: bearing,
+     * yaw-rate feedforward, turret command, and the aim/readiness state the
+     * dashboard and the readiness triggers consume. Extracted from
+     * {@code execute()} so the same math is used every loop regardless of who
+     * calls it.
+     */
+    private void commandTurretTo(Pose robot) {
         // Shots originate from the SHOOTER pivot, not the robot center — rotate
         // the robot pose through its heading to apply the pivot offset, then
         // aim from that point.
         Pose shooter = getShooterPose(robot);
+        lastDistanceIn = Math.hypot(targetPose.x() - shooter.x(), targetPose.y() - shooter.y());
 
         // Field bearing to the target from the SHOOTER, converted to a TURRET
         // angle: desired robot-relative bearing (deg, +CCW, 0 = chassis forward)
@@ -195,6 +340,8 @@ public class AimAtGoal extends CommandBase {
                         Math.atan2(targetPose.y() - shooter.y(), targetPose.x() - shooter.x())
                                 - robot.heading()));
         headingErrorDeg = normDeg180(desiredBearingDeg - turret.getPosition());
+        toleranceDeg = aimToleranceDeg(lastDistanceIn);
+        rawOnTarget = Math.abs(headingErrorDeg) <= toleranceDeg;
 
         // SESSION 5g: measure the REAL command loop period. The old
         // hard-coded 0.02 s fed both the yaw-rate estimate and (through the
@@ -207,6 +354,7 @@ public class AimAtGoal extends CommandBase {
             }
         }
         lastExecNs = nowNs;
+        updateOnTargetDebounce(nowNs);
 
         // Chassis yaw-rate feedforward (deg/s, +CCW) — EMA-smoothed, then
         // sign-flipped into a ONE-LOOP-OF-LEAD angle (see YAW_FF_SCALE) so
@@ -233,7 +381,10 @@ public class AimAtGoal extends CommandBase {
         // is a true deg/s feedforward rate (used by the turret's kV path
         // when position-mode kV is enabled).
         turret.GotoSafeAngle(turretSetpointDeg, -yawRateDps);
+    }
 
+    /** Dashboard lines for the aim loop. */
+    private void reportTelemetry() {
         RobotMain.DashTelemetry.addData("Aim target", "%s (%.1f, %.1f)%s",
                 targetName, targetPose.x(), targetPose.y(),
                 usingFallback ? " [fallback: no alliance match]" : "");
@@ -241,22 +392,254 @@ public class AimAtGoal extends CommandBase {
         RobotMain.DashTelemetry.addData("Aim turret set", "%.1f deg", turretSetpointDeg);
         RobotMain.DashTelemetry.addData("Aim chassis yaw", "%+.1f dps", yawRateDps);
         RobotMain.DashTelemetry.addData("Aim dt (ms)", "%.1f", loopDtSec * 1000.0);
-        RobotMain.DashTelemetry.addData("Aim dist (in)", "%.1f", getDistanceInches());
-        RobotMain.DashTelemetry.addData("Aim on target", isOnTarget());
+        RobotMain.DashTelemetry.addData("Aim dist (in)", "%.1f", lastDistanceIn);
+        RobotMain.DashTelemetry.addData("Aim tolerance (deg)", "%.2f", toleranceDeg);
+        RobotMain.DashTelemetry.addData("Aim on target", onTargetDebounced);
     }
 
-    @Override
-    public boolean isFinished() {
-        return false; // hold-to-aim: cancel on trigger release or compose with .until(...)
+    /**
+     * Falling-edge debounce on {@link #rawOnTarget}: a value that goes false
+     * stays "on target" for {@link #ON_TARGET_DEBOUNCE_S} before it counts.
+     * Rising edges are immediate (the first-time entry into tolerance must
+     * never be delayed).
+     */
+    private void updateOnTargetDebounce(long nowNs) {
+        if (onTargetDebounceNs < 0L) {
+            onTargetDebounceNs = Math.max(0L, (long) (ON_TARGET_DEBOUNCE_S * 1.0e9));
+        }
+        if (rawOnTarget) {
+            onTargetDebounced = true;
+            onTargetFalseSinceNs = 0L;
+            return;
+        }
+        if (!onTargetDebounced) {
+            onTargetFalseSinceNs = 0L;
+            return;
+        }
+        if (onTargetFalseSinceNs == 0L) {
+            onTargetFalseSinceNs = nowNs;
+        }
+        if (nowNs - onTargetFalseSinceNs >= onTargetDebounceNs) {
+            onTargetDebounced = false;
+        }
     }
 
-    @Override
-    public void end(boolean interrupted) {
-        // Turret HOLDS its last commanded angle (GotoSafeAngle's setpoint stays
-        // latched in the subsystem) — no park; the driver's right stick takes
-        // over manually the moment the trigger drops. Chassis is untouched
-        // (never required) so driving continues without a blip.
+    // ---- SESSION 6: always-live aiming math (works with or without the command) ----
+
+    /**
+     * Every aim point on the field belonging to the CURRENT alliance, in the
+     * order they appear in {@code AimPoints.pp} ({@code "Red*"} / {@code "Blue*"}
+     * name prefix, case-insensitive). Falls back to all points except index 0
+     * (the "Robot" start point) when the file has none with the prefix.
+     * Cached per alliance — a mid-match alliance change re-scans.
+     */
+    public Pose[] alliancePoints() {
+        ALLIANCE_COLOR want = alliance.get();
+        if (want != cachedAlliance) {
+            String prefix = prefixFor(want);
+            int[] found = new int[aimPoints.pointCount()];
+            int n = 0;
+            for (int i = 0; i < aimPoints.pointCount(); i++) {
+                String name = aimPoints.pointName(i);
+                if (name != null && name.regionMatches(true, 0, prefix, 0, prefix.length())) {
+                    found[n++] = i;
+                }
+            }
+            boolean fallback = n == 0;
+            if (fallback) {
+                n = 0;
+                for (int i = 1; i < aimPoints.pointCount(); i++) {
+                    found[n++] = i;
+                }
+            }
+            int[] trimmed = new int[n];
+            System.arraycopy(found, 0, trimmed, 0, n);
+            cachedIndices = trimmed;
+            cachedFallback = fallback;
+            cachedAlliance = want;
+        }
+        Pose[] out = new Pose[cachedIndices.length];
+        for (int k = 0; k < cachedIndices.length; k++) {
+            out[k] = aimPoints.point(cachedIndices[k]);
+        }
+        return out;
     }
+
+    /** True when {@link #alliancePoints()} had to fall back to the non-alliance point set. */
+    public boolean isAllianceFallback() {
+        alliancePoints(); // ensures the cache is warm
+        return cachedFallback;
+    }
+
+    /**
+     * The point the turret should be shooting at RIGHT NOW: the closest point
+     * of the current alliance to the shooter. When THIS instance is running
+     * as a command its hysteresis-locked {@link #getTargetPose() target} is
+     * returned (so the fire group, the RPM LUT and the readiness checks all
+     * agree on one point); otherwise the choice is made fresh from the
+     * follower pose — which is what lets a readiness check or an auto-firing
+     * compound track the shooter with no {@code AimAtGoal} command scheduled.
+     *
+     * @return the target pose, or null when there is no pose or no points
+     */
+    public Pose liveTarget() {
+        if (aiming && targetPose != null) {
+            return targetPose;
+        }
+        Pose robot = follower != null ? follower.pose() : null;
+        if (robot == null) {
+            return null;
+        }
+        Pose shooter = getShooterPose(robot);
+        Pose best = null;
+        double bestD2 = Double.POSITIVE_INFINITY;
+        for (Pose p : alliancePoints()) {
+            if (p == null) {
+                continue;
+            }
+            double d2 = dist2(shooter, p);
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                best = p;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Name of the point {@link #liveTarget()} would pick right now ("" if none).
+     *
+     * <p>Resolved by INDEX, not by pose equality: Pedro's {@link Pose} does not
+     * override {@code equals()}, so matching the returned pose back to a name
+     * would mean comparing raw doubles — fragile and unnecessary, since
+     * {@link #alliancePoints()} and {@link #liveTarget()} both iterate the same
+     * cached index list.
+     */
+    public String liveTargetName() {
+        if (aiming && targetPose != null) {
+            return targetName;
+        }
+        Pose robot = follower != null ? follower.pose() : null;
+        if (robot == null) {
+            return "";
+        }
+        alliancePoints(); // ensures the index cache is warm
+        Pose shooter = getShooterPose(robot);
+        int bestIndex = -1;
+        double bestD2 = Double.POSITIVE_INFINITY;
+        for (int k = 0; k < cachedIndices.length; k++) {
+            Pose p = aimPoints.point(cachedIndices[k]);
+            if (p == null) {
+                continue;
+            }
+            double d2 = dist2(shooter, p);
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                bestIndex = cachedIndices[k];
+            }
+        }
+        return bestIndex < 0 ? "" : aimPoints.pointName(bestIndex);
+    }
+
+    /**
+     * Distance (inches) from the shooter (robot pose + pivot offset) to
+     * {@code point} — the flywheel RPM LUT input. NaN when there is no pose.
+     */
+    public double distanceTo(Pose point) {
+        Pose robot = follower != null ? follower.pose() : null;
+        if (robot == null || point == null) {
+            return Double.NaN;
+        }
+        Pose shooter = getShooterPose(robot);
+        return Math.hypot(point.x() - shooter.x(), point.y() - shooter.y());
+    }
+
+    /** Distance (in) to the {@link #liveTarget()} right now — NaN when there is no target. */
+    public double liveDistanceInches() {
+        return distanceTo(liveTarget());
+    }
+
+    /**
+     * "The shot, as it would happen right now": turret within the live aim
+     * tolerance of the {@link #liveTarget()}. Computed on demand, so it is
+     * valid whether or not a command is driving the turret.
+     *
+     * @return true when the turret is aligned on the live target
+     */
+    public boolean isLiveOnTarget() {
+        Pose target = liveTarget();
+        if (target == null) {
+            return false;
+        }
+        Pose robot = follower != null ? follower.pose() : null;
+        if (robot == null) {
+            return false;
+        }
+        Pose shooter = getShooterPose(robot);
+        double desiredBearingDeg = Math.toDegrees(Angle.normalizeSigned(
+                Math.atan2(target.y() - shooter.y(), target.x() - shooter.x()) - robot.heading()));
+        double err = normDeg180(desiredBearingDeg - turret.getPosition());
+        return Math.abs(err) <= aimToleranceDeg(distanceTo(target));
+    }
+
+    /**
+     * Signed aim error (deg) between the turret and the {@link #liveTarget()}
+     * — NaN when there is nothing to aim at. Command-free sibling of
+     * {@link #getHeadingErrorDeg()}.
+     */
+    public double liveHeadingErrorDeg() {
+        Pose target = liveTarget();
+        Pose robot = follower != null ? follower.pose() : null;
+        if (target == null || robot == null) {
+            return Double.NaN;
+        }
+        Pose shooter = getShooterPose(robot);
+        double desiredBearingDeg = Math.toDegrees(Angle.normalizeSigned(
+                Math.atan2(target.y() - shooter.y(), target.x() - shooter.x()) - robot.heading()));
+        return normDeg180(desiredBearingDeg - turret.getPosition());
+    }
+
+    /**
+     * Distance-scaled aim tolerance (deg) — the FTC port of IndianaJoe's
+     * "distance-scaled tolerances" (FRC overwrote its fixed
+     * {@code currentTurretTolerance} every cycle from {@code TargetSelector}).
+     * Two things loosen the cone:
+     * <ol>
+     *   <li><b>Distance.</b> The same angular error is a much smaller lateral
+     *       miss on a far target, so
+     *       {@code tol = MIN + (d - NEAR) * SLOPE}, clamped to MAX.</li>
+     *   <li><b>Shot speed.</b> A slower wheel shoots a slower ball, whose arc
+     *       is more forgiving of bearing error — but a slow shot is also less
+     *       accurate to aim, so the band is blended: the full distance band at
+     *       {@link #TOL_RPM_REF} or above, ramping linearly down to
+     *       {@link #AIM_TOL_MIN_DEG} at
+     *       {@code TOL_RPM_REF * TOL_RPM_FLOOR_FRAC}. With no RPM source —
+     *       or before the RPM manager has commanded anything — the RPM term is
+     *       skipped and the pure distance band applies (the generous default;
+     *       readiness already requires the flywheel to BE at that RPM).</li>
+     * </ol>
+     *
+     * @param distIn distance from the shooter to the target (in); NaN/0 = MIN
+     * @return the tolerance band half-width in degrees, in [MIN, MAX]
+     */
+    public double aimToleranceDeg(double distIn) {
+        if (Double.isNaN(distIn) || distIn <= 0) {
+            return AIM_TOL_MIN_DEG;
+        }
+        double tol = AIM_TOL_MIN_DEG
+                + Math.max(0.0, distIn - AIM_TOL_NEAR_DEG) * AIM_TOL_SLOPE_DEG_PER_IN;
+        tol = Math.min(tol, AIM_TOL_MAX_DEG);
+        double rpm = targetRpm != null ? targetRpm.getAsDouble() : Double.NaN;
+        if (!Double.isNaN(rpm) && rpm > 0 && TOL_RPM_REF > 0) {
+            double floorRpm = TOL_RPM_REF * clamp01(TOL_RPM_FLOOR_FRAC);
+            double span = TOL_RPM_REF - floorRpm;
+            // 0 at the floor RPM, 1 at/above the reference RPM.
+            double speedFrac = span <= 0 ? 1.0 : clamp01((rpm - floorRpm) / span);
+            tol = AIM_TOL_MIN_DEG + (tol - AIM_TOL_MIN_DEG) * speedFrac;
+        }
+        return Math.max(AIM_TOL_MIN_DEG, Math.min(AIM_TOL_MAX_DEG, tol));
+    }
+
 
     // ---- Target selection ----
 
@@ -373,9 +756,33 @@ public class AimAtGoal extends CommandBase {
         return yawRateDps;
     }
 
-    /** True when |error| is within {@link #TOLERANCE_DEG}. */
+    /**
+     * True when the COMMAND's last measured aim error is within the
+     * distance/speed-scaled tolerance ({@link #getAimToleranceDeg()}).
+     * Legacy semantics kept (FRC {@code TOLERANCE_DEG} is now the tolerance
+     * FLOOR); for a readiness check that must work with no command running use
+     * {@link #isLiveOnTarget()}.
+     */
     public boolean isOnTarget() {
-        return Math.abs(headingErrorDeg) <= TOLERANCE_DEG;
+        return Math.abs(headingErrorDeg) <= toleranceDeg;
+    }
+
+    /** Distance/speed-scaled aim tolerance (deg) that currently applies. */
+    public double getAimToleranceDeg() {
+        return toleranceDeg;
+    }
+
+    /** True when the command is currently driving the turret. */
+    public boolean isAiming() {
+        return aiming;
+    }
+
+    /**
+     * Distance (in) to the locked target as of the last aim step; NaN if unknown
+     * (including when the command is not running — see {@link #liveDistanceInches()}).
+     */
+    public double getLastDistanceInches() {
+        return aiming ? lastDistanceIn : Double.NaN;
     }
 
     /**
@@ -401,5 +808,10 @@ public class AimAtGoal extends CommandBase {
         double r = (deg + 180.0) % 360.0;
         if (r < 0) r += 360.0;
         return r - 180.0;
+    }
+
+    /** Clamp to [0, 1]. */
+    private static double clamp01(double v) {
+        return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
     }
 }

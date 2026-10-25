@@ -4,6 +4,7 @@ Port of the 2026-IndianaJoe FRC turret rotation subsystem to the Biobuzz FTC rob
 Source of truth: `C:\projects\2026-IndianaJoe\src\main\java\frc\robot\subsystems\Turret\TurretPivot.java` + `TurretPivotConstants.java`.
 This file is the running session log — append to it in future sessions.
 Session 1 = sections 1–8 (initial port, hub-quadrature boot). **Session 2 = section 9 (OctoQuad absolute feedback, 1:1 gearing, field-relative heading) — section 9 supersedes the gearing/boot guidance in sections 2–3.**
+**Session 6 = section 13 (shoot-readiness triggers, auto-transfer, left-trigger toggle).** It supersedes the shooter keybinding table in §12.3 (left trigger is no longer hold-to-shoot; left bumper is the unlock/panic).
 
 ---
 
@@ -582,3 +583,302 @@ User ask: "the turret pivot still feels heavy, much of the turret class is about
 - Boot direction guard stayed "pending" (no 15° hand-move this run) — unexercised, not a concern: its B-sum sign bug was fixed in §12.20 in the same build.
 
 Verdict: the refactored turret package (TurretPivot/TurretTracker/TurretCrt/OctoQuadAbsoluteSource) is field-validated. Remaining queue: §12.11 staged MAX_POWER raise (0.50 → 0.65 → 0.8 → 1.0).
+
+### 12.22 Session 5g bench — capture 20261023-041229: MAX_POWER raised 0.50 → 1.00 (intermediate stages skipped at user request), validated
+
+1268 rows including an init. **Zero faults all capture** (`Turret OK` true): no MOTOR_ENC_DIR/CRT_CROSSCHECK, OOR/CRC 0 both channels, CRT solve diff 0.0017 (6 candidates). Wrap/glitch counter 1 benign event (a >0.25-enc-rev PWM step counted during the WATCH confirming motion at ~264 deg/s — telemetry only).
+
+- **Performance:** measured turret velocity up to **639 deg/s** (was 287 at MAX_POWER 0.5; ~680 deg/s is the 312-RPM no-load estimate) and commanded power actually reached 1.000. Motor current max 4.36 A (alert 20) — the mesh moves freely at full power.
+- **Long wraps at speed:** the continuous stream swept through the ±180 seam at ±557–639 deg/s with the crosscheck holding ±0.4–1.8° and zero jumps — the wrap-aware stream + hybrid anchor handled full-power seam crossings without event.
+- **Direction:** heading↔motor-tick sign agreement 71:0.
+- **Arrivals at full power:** two measurable stable-setpoint arrivals — a 96.8° move overshooting ≤6.9° and a 90.1° move at 1.15°, no bounce/limit-cycle. The profile cap shaped the approach (0.65 commanded at ~32° error = 0.02/deg as designed); kD (0.001 × ~600 deg/s ≈ 0.6) did the braking.
+- **One transient worth knowing:** at the WATCH→ACTIVE handoff the crosscheck read +14.32° for ~2–3 loops (2 of 5 fails, no latch, self-cleared ~100 ms): the first powered motion accelerated so fast that encoder A's PWM refreshed before encoder B's, so A briefly compared against B's not-yet-updated position. Same class as the 031455 boot transition; the 5-fail latch + speed cutoff contained it by design. Anchor corr while moving peaked at 22.09° recorded-not-applied (under the 25° reject gate, 0 rejects).
+- Aim-under-fire: 556 at-speed rows, median aim err 0.89°, p95 1.68° (max 149° was a mid-spin transient before re-lock).
+
+Verdict: MAX_POWER = 1.0 validated on this mechanism; keep 1.0 unless a future capture shows current/thermal or control problems.
+
+### 12.23 Session 5h — driver-station failure board (HardwareHealth): hardware faults surface on the DS, detail stays on Panels
+
+**Requirement (user):** "if there is an encoder failure on the turret, either CRT or the motor encoder then it should post to the control hub dashboard as well. in fact we should have any hardware failures show on the drivers hub. such as the octoquad or a motor encoder not showing/coming alive. or the limelight not giving pictures or status etc. the general idea is that the drivers hub also gets a warning of failure, because on gameday im betting the driver will only have this and will not have the panels dashboard. though we will have the laptop in the pits for debugging after a match, so only very critical information needs to be in the drivers hub."
+
+**Design — one aggregator, two channels, a deliberately short critical list.** New `HardwareHealth` (teamcode root package, singleton via `get()`, all calls on the RC loop thread, state reset at every `RobotMain` construction):
+
+1. **Red DS banner** — `RobotLog.setGlobalErrorMsg(...)` / `clearGlobalErrorMsg()` (verified by javap on RobotCore-12.0.0: `com.qualcomm.robotcore.util.RobotLog` — note `getGlobalWarningMessage()` returns a `GlobalWarningMessage` OBJECT; the string API is `getGlobalErrorMsg()`). Edge-triggered: set only on change, cleared once healthy — no per-tick log spam. Every message we write starts with `"IRON HW:"`; before set/clear we read the current global error and NEVER touch a message that isn't ours (the SDK posts its own init-failure/I2C errors there — clobbering them would hide real problems). We also do NOT use `addGlobalWarningMessage`/`registerGlobalWarningSource` (those would fight the SDK's own warning sources). The banner intentionally survives OpMode stop() so the driver walks back still seeing what broke; the next OpMode's `reset()` clears our own.
+2. **DS telemetry line** — `"HW": "OK"` or the first fault + `(+N more)`. Ownership rule learned the hard way: `telemetry.update()` CLEARS the buffer and the DS shows only the last update, and `AutoOpModeBase.UpdateTelemetry()` already updates `opmode.telemetry` per tick (alliance/X/Y/Heading) — so the board itself never calls `update()`. Each OpMode's `UpdateTelemetry()` pulls `HardwareHealth.get().dsLine()` into its own flow (JowByTeleOp + AutoOpModeBase done; FusionTune is Panels-only and gets the banner anyway). JowByTeleOp's DS screen now actually lives during a match (previously it was one static init frame).
+3. **Panels summary** — one `"HW health"` line in `flushTelemetry()` (added before `DashTelemetry.update()`), so the pit laptop sees the same board plus the full per-subsystem detail around it.
+
+**Who reports what (the critical set):**
+- **TURRET** — `TurretPivot.periodic()` reports `faultString()` every loop (`null` = healthy heartbeat): ENCODER_DEAD_AT_BOOT, STUCK, OUT_OF_SCOPE, OVER_CURRENT, ABS_BOOT_UNSTABLE, CRT_CROSSCHECK, B_DIR_MISMATCH, MOTOR_ENC, MOTOR_ENC_DIR, and the new ABS_STREAM_LOST. `tryCreate`'s catch reports `"absent at init (<exception>)"` — a missing turret/OctoQuad on the comp bot is a match-critical condition the driver sees BEFORE play.
+- **LIMELIGHT** — new `Vision.healthPing()`, called from BOTH `RobotRunPeriodic()` and `InitRunPeriodic()` (independent of the VisionFusion gates: `!ENABLED`, no-fusion-localizer, and `skip-fused-diverged` all return BEFORE `vision.poll()`, so a heartbeat inside poll() would starve and false-alarm). Liveness signal = frame staleness: any frame ≤ `Vision.LIMELIGHT_FRESH_MAX_MS` (1000 ms) proves the camera publishes (even one with no tags — "no solve" is gameplay, not hardware failure, and never alarms); a dead/unplugged LL keeps serving its LAST result forever, so staleness growing past 1 s IS the death signal; a null result reports nothing and the heartbeat goes silent instead. Constant chosen above MT-pipeline FPS (staleness normally < 300 ms).
+
+**Heartbeat/staleness semantics:** `expect(name)` at RobotMain construction marks a system REQUIRED (TURRET when created, LIMELIGHT when `vision != null`; a comp-bot-absent LL/turret is a direct fault instead — bench rigs silence both via `IronConstants.CompBot`). A required system with no `ok()` for `HEARTBEAT_STALE_MS` (2000 ms) while RUNNING flags `"no data Xs"`. Silence windows count ONLY after PLAY and restart at the PLAY edge — init-time reporting is sporadic by design (the turret's scheduler only runs post-PLAY), so a long init can never false-alarm. The PLAY signal is `RobotMain.runPeriodicSeen`, set by `RobotRunPeriodic()` (which is ONLY called from OpMode `loop()` — `OpMode` has no public isStarted(); the flag lives package-private on `OpModeInternal`, so a reflection hack was rejected in favor of this call-path fact, which AutoOpModeBase/FusionTune/JowByTeleOp all satisfy). Direct faults (e.g. "absent at init") show immediately, even during init.
+
+**New tracker fault — ABS_STREAM_LOST (fills a real gap):** `updateFromAbsolute()` returns false ONLY when the OctoQuad read is empty (dead device / unplugged ABS wire). In hybrid ACTIVE the motor encoder keeps tracking, so this was NOT `feedbackLost()` (no brake, no latch) — the turret would keep aiming on a dead absolute path with no driver-visible trace. Now `TurretTracker` counts consecutive empty-read loops (`ABS_STREAM_LOST_LOOPS = 50`, ≈ 2.5–3 s at the measured 49–54 ms loop) and latches `faultAbsStreamLost` (getter `isAbsStreamLost()`, in `faultFragment()` + `TurretPivot.faultString()`), auto-clearing after 50 consecutive GOOD reads (a re-seated wire recovers without an OpMode restart; `clearFaults()` also clears it). Glitch-gate rejections do NOT count (the stream is alive; those stay in `absGlitchEvents`). Motor-encoder death was already covered (MOTOR_ENC / MOTOR_ENC_DIR / STUCK latches).
+
+**Compile:** `:TeamCode:compileDebugJavaWithJavac` green. **Not yet field-verified.** Bench checklist for next session: (1) on init with everything healthy the DS shows `HW: OK` and NO red banner; (2) unplug the Limelight → within ~2–3 s of PLAY: `HW: LIMELIGHT no data Xs` + red banner, Panels `HW health` matches; reconnect → both clear automatically; (3) unplug encoder B's ABS wire (or the OctoQuad) → ABS_STREAM_LOST latches in `Turret faults` and reaches the DS banner; re-plug → auto-clears after ~50 good loops; (4) remove `octoquad` from the RC config → at init the DS shows the banner `IRON HW: TURRET absent at init (...)` before PLAY; (5) verify a long init_loop never flags "no data" for TURRET (silence windows gated to PLAY); (6) verify the SDK path: force an init hardware failure and confirm our banner logic does not clobber or wipe the SDK's own global error.
+
+---
+
+## 13. Session 6 — shoot-readiness triggers + auto-transfer + left-trigger latch
+
+The user asked for three things, ported from the 2026-IndianaJoe FRC `SystemControls/SystemController.java`:
+
+1. **The readiness triggers** (`isReadyToShoot` and its members).
+2. **The transfer auto-running when "ready to shoot" is true** (RPM, turret position, alignment, chassis stability, no-fire zones).
+3. **The left trigger becoming a TOGGLE** instead of IndianaJoe's push-to-hold-with-a-separate-unlock-button.
+
+### 13.1 What the FRC code actually did (read before porting)
+
+`SystemController` exposed a set of `Trigger`s and one AND of them:
+
+```java
+isReadyToShoot = isFlywheelAtSpeed()   // RPM near target, 0.25s falling debounce
+                && isHoodAtAngle()     // hood position
+                && isTurretOnTarget()  // turret within a distance-scaled tolerance
+                && isDrivetrainStable()// hypot(vx,vy) under StableTranslationSpeedMaxMps
+                && isRotationStable()  // |omega| under StablerotationSpeedMaxDegreespersecond
+                && isShooterClear();   // !NoFireZones.isInNoFireZone(pose)
+```
+
+and `RobotContainer` bound it as `leftTriggerToggle.and(isReadyToShoot()).whileTrue(FeedAndKick())` while the left trigger ran `TestTargetAcquire()` — i.e. **the aim was latch-driven and the feed was readiness-driven, with the two as separate commands**. `leftTrigger.onTrue(state = true)` plus a separate park button was the "push to activate, another button to unlock" the user described.
+
+### 13.2 The FTC port — `CommandFactory` (new readiness section)
+
+| FRC (`SystemController`) | Biobuzz (`CommandFactory`) | Notes |
+|---|---|---|
+| `isFlywheelAtSpeedRAW()` | `isFlywheelAtSpeed()` | `Flywheel.isHoldingTarget() && isAtTargetRpm()` — the `isHoldingTarget` half matters: a COAST/STOP otherwise reads "at 0 RPM" and looks ready |
+| `isFlywheelAtSpeed()` (debounced) | folded into `isReadyToShoot()` | one debounce on the whole AND instead of one on the wheel |
+| `isHoodAtAngle()` | `isTurretAtSetpoint()` | this bot has no hood — the LUT RPM is its variable; the slot is "the pointing mechanism obeyed its setpoint" (`TurretPivot.atSetpoint()`, false while BRAKED/IDLE so it can't pass before an aim exists) |
+| `isTurretOnTarget()` | `isTurretOnTarget()` | `AimAtGoal.isLiveOnTarget()` — **works with no command scheduled** |
+| distance-scaled `currentTurretTolerance` | `AimAtGoal.aimToleranceDeg()` | MIN 2.0° near, +0.05°/in past 24 in, MAX 8.0°, and a speed term: full band at `TOL_RPM_REF` 2000 RPM ramping linearly to MIN at 25 % of it |
+| `isDrivetrainStable()` | `isDrivetrainStable()` | Pedro has no `ChassisSpeeds`, so speed comes from the pose delta in `CommandFactory.readinessPeriodic()` |
+| `isRotationStable()` | `isRotationStable()` | same pose-delta source |
+| `isShooterClear()` | `isShooterClear()` | `!NoFireZones.isInNoFireZone(pose)` |
+| `isReadyToShoot()` | `isReadyToShoot()` | the AND, falling-edge debounced by `READY_DEBOUNCE_S` (0.15 s) |
+
+Three deliberate **improvements** over the FRC original:
+
+- **The gate servo is an explicit member** (`isGateSettled()`): FRC's gate was opened from the "at speed" edge, so the servo's own travel was unmodeled. Now the shot can't count itself ready while the gate is still slewing.
+- **A motion warm-up window** (`MOTION_WARMUP_S`, 0.5 s): the first pose sample has no predecessor, so its "speed" is undefined; without the grace a noisy first tick could pin the feed off. `REQUIRE_STABLE_TRANSLATION`/`REQUIRE_STABLE_ROTATION` are Panels switches (FRC always enabled both; FRC also skipped them while passing/auton).
+- **The debounce is edge-asymmetric on purpose:** rising (ready) is instant, falling (not ready) waits the window. That is FRC's `kFalling` policy generalized from the wheel to the whole AND, so the transfer re-engages the moment the shot is good and only drops after a real (not sample-noise) loss.
+
+### 13.3 The shot is now two halves (this is what makes the transfer auto-fire)
+
+`ShootAtGoal()` used to be one hold-the-trigger compound (aim + RPM + gate). It is now split:
+
+- **`TrackTarget()`** — the latched AIM half: the shared `AimAtGoal` instance + the distance→LUT→slew RPM manager. Runs whenever the latch is on, ready or not. No gate, no transfer.
+- **`FireAtGoal()`** — the FIRE half: requires **gate servo + transfer only**, and every loop opens the gate and runs the transfer iff `isReadyToShoot()`, else closes the gate and stops the transfer. **This is the "auto run the transfer when ready" behavior.**
+- **`AutoShootAtGoal()`** — both in parallel; **this single instance is what the left trigger toggles**. `ShootAtGoal()` keeps its name and returns it.
+
+**Why the split (and not `leftTriggerToggle.and(isReadyToShoot()).whileTrue(FeedAndKick())` verbatim):** `ParallelCommandGroup` throws `"Multiple commands in a parallel group cannot require the same subsystems"` if two children share a requirement (`ParallelCommandGroup.addCommands`, verified in the SolversLib 0.3.6 sources). Binding `isReadyToShoot().whileTrue(...)` alongside the aim would have to own the wheel/turret again, which is exactly the fight the split avoids: the fire half requires only the two ball-path mechanisms, so it can gate on aim state it merely READS.
+
+**Why readiness protects the BALL, not the wheel:** the ball only leaves through the transfer roller. Feeding while the wheel is off its commanded RPM jams the ball in the barrel or dribbles it; feeding while the turret is off target fires wherever it happens to point (and inside a no-fire zone, at something we must not hit). So `isReadyToShoot` is the policy for the gate+transfer pair, and the gate remains the hardware interlock.
+
+**Latched state lives on the COMMAND:** `toggleWhenActive` schedules/cancels one command instance, so "is the shot on" is `cmd.isScheduled()`. `CommandFactory` therefore builds that instance ONCE in its constructor (`autoShootCmd`); handing out a fresh instance per call would desync the button's edge bookkeeping from the robot.
+
+### 13.4 Controls — left trigger is the toggle, left bumper is the unlock
+
+| Control | New behavior |
+|---|---|
+| **Left trigger** | **Toggle.** `toggleWhenActive(autoShoot)` — press once to start aiming + auto-firing, press again to stop. No hold, no second unlock press. |
+| **Left bumper** | **Unlock / panic.** `CommandFactory.getStopShootCommand()`: cancels that same latched instance (runs both halves' `end()` → gate closed, transfer stopped, flywheel coasts to idle, turret BRAKED), then re-asserts gate closed / transfer stopped / wheel idle / turret NEUTRAL. Takes **no subsystem requirements** and finishes immediately, so it can never fight the compound it just cancelled. Idempotent. |
+| Turret jog (dpad L/R) | unchanged, still gated on `!isAutoAimOn()` (renamed from `!isShooting()`) |
+| Intake (right trigger) | unchanged binding; the fire half now parks it softly while feeding and hands it back (see 13.5) |
+| Transfer manual test | LB moved to the panic, so both manual directions are on the right cluster: **RB = forward hold**, **R3 (right stick click) = reverse hold**; either release PID-brakes. A manual transfer press also overrides the auto-fire for `FIRE_OVERRIDE_HOLD_S` (0.75 s) so a jam can be cleared without being instantly overridden. |
+
+### 13.5 Intake hand-off (no requirement fight)
+
+The intake is deliberately **not** a requirement of `FireAtGoal`. Instead: while feeding, if the intake is actually spinning (`> INTAKE_RUNNING_RPM`) it gets one `stop()`, once per firing episode; after firing, `restoreManualIntakeWhenFree()` re-asserts `runIntake()` **only if the driver still holds the right trigger** — which is why `KeyBindings.update()` reports `setManualIntakeHeld(...)` every loop (same `INTAKE_TRIGGER_THRESHOLD` the binding uses). Runtime state alone could not answer it: once the fire half stops the roller, "it is stopped" reads exactly like "the driver let go".
+
+### 13.6 Aiming math made always-live (`AimAtGoal`)
+
+The readiness checks need a target and a distance BEFORE any aim command has ever run. `AimAtGoal` now exposes, with the turret control law (`commandTurretTo`) unchanged — verified line-by-line against the pre-session file:
+
+- `alliancePoints()` — the current alliance's points, cached per alliance (falls back to all non-"Robot" points).
+- `liveTarget()` / `liveTargetName()` — the closest point to the SHOOTER pose, computed on demand; prefers the hysteresis-locked target when this instance IS the running command, so the LUT and the "on target" check can never disagree.
+- `distanceTo(Pose)` / `liveDistanceInches()`, `isLiveOnTarget()`, `liveHeadingErrorDeg()` — the same bearing/distance math as `execute()`, with no state writes.
+- New constructor overload with a `DoubleSupplier targetRpm` (the LUT's live command) for the speed-scaled tolerance; the old constructors still delegate with `null`.
+
+`getLastDistanceInches()` now returns NaN when the command is NOT aiming, and `end()` clears the per-run shot state — otherwise the RPM manager would read a stale distance from a previous target.
+
+### 13.7 Wiring / call-order requirements
+
+`CommandFactory.readinessPeriodic()` advances the debounce + warm-up timers and samples chassis motion; it **must be called once per loop before the scheduler polls triggers**. It is wired in both places:
+
+- `KeyBindings.update()` (TeleOp) — also sets `manualIntakeHeld`.
+- `AutoOpModeBase.loop()` (autos) — this was a real gap: autos had no call at all, so the debouncers would never tick and the motion checks would read a permanent "stable".
+
+### 13.8 New Panels tuning (CommandFactory / AimAtGoal)
+
+`MAX_TRANSLATION_SPEED_IN_S` (2.0), `MAX_ROTATION_SPEED_DPS` (60), `READY_DEBOUNCE_S` (0.15), `REQUIRE_STABLE_TRANSLATION`, `REQUIRE_STABLE_ROTATION`, `MOTION_WARMUP_S` (0.5), `FIRE_OVERRIDE_HOLD_S` (0.75), `restoreIntakeRpmOnRelease` (true), `INTAKE_RUNNING_RPM` (50); `AIM_TOL_MIN_DEG` (2.0), `AIM_TOL_NEAR_DEG` (24), `AIM_TOL_SLOPE_DEG_PER_IN` (0.05), `AIM_TOL_MAX_DEG` (8.0), `TOL_RPM_REF` (2000), `TOL_RPM_FLOOR_FRAC` (0.25), `ON_TARGET_DEBOUNCE_S` (0.15).
+
+### 13.9 Validation done / still to do
+
+**Done:** `:TeamCode:compileDebugJavaWithJavac` and `:TeamCode:assembleDebug` both green; the falling-edge debounce unit-tested standalone (rising instant, short-false held, sustained-false drops, re-arm, never-true, zero window, pause-does-not-catch-up — all pass); the distance/RPM tolerance curve unit-tested for clamping and monotonicity; `KeyBindings` bytecode checked for `toggleWhenActive(Command,boolean)` on the left trigger, `getFireCommand`→panic, and `readinessPeriodic()` in `update()`.
+
+**NOT yet field-verified — bench checklist:**
+1. Left trigger press → `Shoot latch (LT toggle): ON`, turret tracks, wheel spins to the LUT RPM; press again → latch OFF, gate closes, transfer stops, wheel coasts to idle, turret released.
+2. Left bumper while latched → same OFF state even if the latch was somehow still on; pressing it twice must not throw.
+3. Panels `Fire policy` line reads `WAIT (not ready)` until the wheel is at RPM + turret on target + chassis still, then `FIRE (ready)` with the transfer visibly running; grab the turret by hand → `WAIT` within ~0.15 s.
+4. Drive the robot into a no-fire zone while latched → gate closes, transfer stops; drive out → resumes (no button press).
+5. Hold right trigger (intake) while the shot fires → intake is parked by the fire half, then resumes on its own because the trigger is still held; release the trigger mid-fire → intake stays stopped.
+6. Dpad jog while the latch is ON does nothing; with the latch OFF it jogs ~4°.
+
+---
+
+## 14. Session 6b — transfer on/off chatter (capture 20261025-005022) + controller revert
+
+Two user reports, both confirmed in the log. Source capture:
+`panels-capture-20261025-005022.json` (304 samples @ 50 ms, 15.3 s).
+
+### 14.1 UNPROMPTED CHANGE (corrected): the drive controller is a Logitech, not an Xbox
+
+Session 6 switched `KeyBindings` to `new CommandXboxController(gamepad1)` and added a `refreshPad()` branch that merged the Panels browser pad. That was not asked for. The team runs a **Logitech F310** for now. Reverted:
+
+- `DriveController = new CommandGamepad(opMode.gamepad1)` (plain SDK axes, no remap).
+- **Deleted** `refreshPad()` and every `CommandXboxController` / `PanelsGamepad` reference from `KeyBindings`, plus the `keys.refreshPad()` call in `JowByTeleOp.loop()`.
+- `CommandXboxController` itself is untouched in `WattageLib/lib` — it is still available for a future pad swap; it is simply not used by the TeleOp path.
+
+**Rule going forward:** do not change the input layer to obtain a feature. Bind through `CommandGamepad`, which already exposes everything this codebase needs (`leftTrigger(th)`, `dpad*`, `leftBumper`, `rightStick`, `rightTrigger(th)`, `toggleWhenActive`, …).
+
+### 14.2 The transfer chatter — THREE independent causes, all measured
+
+The symptom was ~16 transfer on/off transitions in 5 s. The capture separates into three distinct faults:
+
+**(a) The at-speed test was a single threshold sitting on the encoder's noise floor — the main cause.**
+
+`Flywheel` reads its built-in encoder at `TICKS_PER_REV = 28` (goBILDA 5203, `gobilda5203TicksPerRev(1.0)`). At the measured ~50 ms loop, **one encoder tick ≈ 43 RPM**, and the capture shows exactly that quantisation:
+
+```
+1671.4 / 1714.3 / 1757.1 / 1800.0     (43 RPM apart)
+```
+
+`Flywheel.AT_SPEED_TOLERANCE_RPM` is **75 RPM** — under two ticks. Error distribution over the 114 firing-window samples:
+
+| |error| | samples |
+|---|---|---|
+| ~0–50 RPM | 61 |
+| ~50–100 RPM | 41 |
+| ~100–150 RPM | 7 |
+| >150 RPM | 5 |
+
+So 99 of 114 samples sat at 50–100 RPM of error, straddling a 75 RPM line. The wheel was hunting inside its own PID deadband; readiness was reading encoder quantisation, not speed. **Replaying the capture through the new logic: 14 transitions → 1.**
+
+Fix — split the band into a Schmitt trigger (`CommandFactory`):
+- `FLYWHEEL_READY_ON_RPM = 120` (≈2.8 ticks): enter "at speed" only when solidly there.
+- `FLYWHEEL_READY_OFF_RPM = 220` (≈5 ticks): leave only when genuinely lost.
+- Compared against `commandedRpm` (the LUT output), not against `Flywheel.TARGET_RPM` re-read, so the readiness check and the RPM manager agree by construction.
+
+**(b) The LUT setpoint itself was wandering while the robot stood still.**
+
+`Shoot LUT cmd RPM` crawled **1827 → 1805** during the fire window; `Aim dist (in)` moved only **45.8 → 47.6 in**. That is sub-inch pose/LUT noise re-feeding the setpoint every loop, which then re-opened the at-speed question in (a). Fix:
+- `LUT_DISTANCE_DEADBAND_IN = 1.0` — inside the band the previous distance is reused.
+- `LUT_RPM_FILTER_ALPHA = 0.25` — first-order low-pass on the LUT output, so a real distance change still arrives smoothly instead of in interpolation steps.
+
+**(c) The transfer was being stopped and re-commanded every loop.**
+
+Old code called `transfer.stop()` in the `else` branch **every loop** readiness was false, then `transfer.runForward()` when it returned — a hard stop/start pair per sample. Fix: the fire half now tracks an intended `FeedState` and writes `stop()` **once on the falling edge**. `runForward()` is still re-asserted every loop while feeding, because it re-reads `TRANSFER_RPM` (live Panels retunes must keep working) — but re-asserting a non-zero setpoint is not the same as chattering the motor.
+
+Also added aim-alignment hysteresis (`AIM_HYST_EXIT_MARGIN_DEG = 1.5`): once aligned, the turret may drift 1.5 deg past the live tolerance before the shot is pulled, instead of a single-degree threshold flipping per sample.
+
+### 14.3 "I have no way to know WHY it is not firing" — fixed
+
+Two problems, and the second was actively misleading:
+
+1. **The readiness lines only appeared while `firing` was true**, so the moments that explain a stall were often missing.
+2. **`Ready to shoot` was computed in `readinessPeriodic()` (one tick AFTER the scheduler) while `Fire policy` was computed inside `FireAtGoal.execute()`.** In the capture they visibly contradict each other — `FIRE (ready)` is logged next to `Ready to shoot: false` on all 16 firing samples, and `Ready to shoot` reads true on only 3 samples in the whole 15 s. The line was stale, not meaningful.
+
+Fix:
+- New `Readiness` snapshot: **every member is evaluated exactly once per loop**, and that one snapshot drives both the transfer decision and the telemetry. This also fixes a subtle correctness bug — the hysteresis members are stateful, and the old code called them separately for policy and display, consuming extra Schmitt steps.
+- `readinessPeriodic()` no longer emits a competing `Ready to shoot`.
+- New per-loop dashboard lines while latched:
+
+| Line | Shows |
+|---|---|
+| `Fire policy` | `FIRE (ready)` / `WAIT (not ready)` |
+| `Ready to shoot` | the same snapshot's AND (can no longer disagree) |
+| `Fire block` | **the single blocking member**, with its number — e.g. `FLYWHEEL 1714/1805 RPM (err 91, on<=120 off>220)`, `AIM err 3.2 / tol 2.6 deg`, `ROTATE (84 dps)`, `NO-FIRE ZONE`, `TURRET POS (MOVINGTOPOSITION 12.4/31.0)` |
+| `  ok: flywheel / turret pos / aim / gate / translation / rotation / clear` | one `OK`/`NO` flag each with the live value vs the limit |
+| `Fire transfer` | `OFF` / `FEEDING` |
+
+`Fire block` is the one to glance at: it names the reason in one word.
+
+### 14.4 Controller revert verification
+
+`:TeamCode:assembleDebug` green. `KeyBindings` diff vs HEAD contains **no** `CommandXboxController`, `PanelsGamepad`, or `refreshPad` references; `JowByTeleOp.loop()` is back to `RobotRunPeriodic() → keys.update() → UpdateTelemetry() → flushTelemetry()`.
+
+### 14.5 Bench checklist for the chatter fix
+
+1. Latch on, let the wheel spool: `Fire policy` flips to `FIRE` once and **stays** there; `Fire transfer` shows `FEEDING` continuously (no strobing).
+2. Watch `Fire block` during the spool: should read `FLYWHEEL …` until it converges, then `none`.
+3. Force a real ready-loss (grab the turret, or spin the chassis): `Fire block` names `AIM` / `ROTATE`, and the transfer stops once, resuming when clear.
+4. Confirm `Shoot LUT cmd RPM` is steady (±2 RPM) while standing still — it used to crawl ~22 RPM.
+5. Re-check the transfer didn't lose its manual controls: RB forward, R3 reverse.
+
+---
+
+## 15. Session 6c — "GATE (moving)" blocked every shot (capture 20261025-010811)
+
+Symptom: sitting still, the auto-fire never ran; `Fire block` read `GATE (moving)` ~37% of the time. The gate mechanism is **not built yet**.
+
+### 15.1 Root cause — the gate check was CIRCULAR, not a hardware problem
+
+`Pos shootgate` in the capture shows what was really happening:
+
+```
+tgt 0.150 cmd 0.150 AT       <- gate "settled" (closed), readiness passes
+tgt 0.150 cmd 0.182 moving   <- fire half OPENS the gate -> gate now "moving" -> readiness FAILS
+tgt 0.750 cmd 0.252 moving   <- gate closing again (because not ready)
+tgt 0.150 cmd 0.150 AT       <- arrived -> readiness passes -> repeats
+```
+
+The readiness member was `PosServ.isAtPosition()`, which compares `target` against `current` — and `current` is the **slew-limited value the code generates itself** (`ShootGateServo.periodic()`, `current += sign(err)*SLEW*dt`). There is no position feedback from a servo. So "is the gate settled?" really means "has MY software ramp finished?".
+
+Because the shot's first action is to OPEN the gate, a settled gate can never coexist with a shot in progress:
+
+> ready → open the gate → ramp runs → gate not settled → not ready → close the gate → ramp runs → settled → ready → …
+
+Measured: **60 of 160 samples** blocked by the gate; a 50 Hz simulated replay oscillates **200 transitions in 4 s**.
+
+Nothing in this was a hardware fault. The mechanism being absent only made it visible, because the useless servo sweeps kept the ramp busy forever.
+
+### 15.2 Fixes
+
+**(a) `ShootGateServo.IMPLEMENTED = false`** (new static flag, Panels-tunable, next to the other per-mechanism constants). While false:
+- the gate is dropped from the readiness AND (`gateOk()` returns true),
+- `openGate()` / `closeGate()` are no-ops, so the fire half never writes the servo and never leaves it mid-slew,
+- the panic/unlock and the RPM manager's `end()` also stop writing it.
+
+`ShootGateServo` itself is untouched and fully wired — flipping the flag to true restores the readiness member, the fire-half open/close, and the servo in one edit, once the mechanism is mounted and `POS_A`/`POS_B` are calibrated.
+
+**(b) The circularity itself, so it cannot come back when the gate EXISTS.** New `ShootGateServo.isClosed()` (target is at the closed preset) replaces `isAtPosition()` in the readiness set. "Closed" is stable through the entire firing sequence, because the fire half only opens the gate AFTER readiness has already passed:
+
+| test | simulated 4 s | verdict |
+|---|---|---|
+| old `isAtPosition()` | 200 transitions | oscillator |
+| new `isClosed()` | 1 transition | settles |
+
+`isAtPosition()` is kept (it is the correct "the slew finished" query for the command classes) but its javadoc now states plainly that it is a statement about the software ramp, not the hardware, and why gating a shot on it while opening the gate is a guaranteed oscillator.
+
+**(c) The dashboard no longer hides it.** `ok: gate` now prints `(NOT IMPLEMENTED - ignored)` when the flag is false, so the line reads as a deliberate bypass instead of a passing check. When the gate is live it prints `closed` / `OPEN`.
+
+### 15.3 Replay of the capture after the fix
+
+| `Fire block` | count |
+|---|---|
+| `none` (was `GATE (moving)`) | **60** |
+| `none` | 16 |
+| `FLYWHEEL 257/1818 RPM` (spool-up) | 3 |
+| `FLYWHEEL 1629/1818 RPM` | 2 |
+| `FLYWHEEL (no RPM commanded)` | 2 |
+| `FLYWHEEL 1371/1818 RPM` | 1 |
+
+Every gate block disappears; the only remaining blocks are legitimate flywheel spin-up, which is what the readiness set is *supposed* to wait for.
+
+### 15.4 What is still worth checking on the bench
+
+- The flywheel spool-up blocks above are normal, but confirm the wheel reaches `FIRE` and stays there (session 14.5 item 1).
+- Manual gate controls (X toggle, dpad nudge) are deliberately NOT behind `IMPLEMENTED` — they still write the servo, so the servo can be bench-tested before the mechanism exists. Stop using them once the gate is mounted but uncalibrated.
+- The autos still call `robot.PosServ.toPos(0.5 / 1.0 / 0.0)` directly (L_ShootLFlowerShootL, RightAuto, R_ShootPark). Those were pre-existing and are unrelated to the fire policy, but they will sweep an unattached servo when run — worth cleaning up when the gate lands.
+
+**Compile:** `:TeamCode:assembleDebug` green.

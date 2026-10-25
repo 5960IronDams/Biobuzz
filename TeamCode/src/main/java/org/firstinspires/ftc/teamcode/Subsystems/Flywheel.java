@@ -42,15 +42,14 @@ public class Flywheel extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     /** Active PID setpoint. Written by {@link #setTargetRpm} / coast-arrive, tunable live. */
-    public static double TARGET_RPM = 2000;
+    public static double TARGET_RPM = 2000; //max observed is 4000;
     /** Coast destination + PID hold point after the coast arrives. */
     public static double IDLE_RPM = 0;
-    //Ungeared / Encoder Shaft (1:1 ratio): 28 ticks per revolution (28 PPR) at the encoder/motor shaft
-    public static double TICKS_PER_REV = 28.0;//537.7; // goBILDA 5203 312rpm = 537.7; adjust to your motor
+    public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(1.0);
     public static double kP = 20;
     public static double kI = 0;
     public static double kD = 0;
-    public static double kF = 14;
+    public static double kF = 19;
     public static boolean MOTOR_REVERSED = false;
     /** Within this of TARGET counts as "at speed" for sequencing / telemetry. */
     public static double AT_SPEED_TOLERANCE_RPM = 75;
@@ -77,6 +76,15 @@ public class Flywheel extends SubsystemBase {
     private double lastAppliedTicks = Double.NaN;
     /** Last mode applied to hardware, so a mode change forces one re-write. */
     private Mode lastAppliedMode = null;
+    /** TARGET_RPM at the last setpoint write — detects a live Panels retune. */
+    private double lastAppliedRpm = Double.NaN;
+    /**
+     * The idle RPM latched at the moment coast-to-idle started. The coast
+     * arrives at THIS, not at a live {@link #IDLE_RPM} that may have been
+     * retuned (possibly to 0) mid-coast — which used to make the coast
+     * stall, never arrive, and skip the PID idle hold.
+     */
+    private double idleLocked = Double.NaN;
 
     public Flywheel(OpMode opMode) {
         motor = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.FlywheelMotorName);
@@ -120,13 +128,16 @@ public class Flywheel extends SubsystemBase {
         return mode == Mode.HOLDING;
     }
 
-    /** Within {@link #AT_SPEED_TOLERANCE_RPM} of the active target (PID modes only). */
+    /**
+     * Within {@link #AT_SPEED_TOLERANCE_RPM} of the active target (PID modes
+     * only). COASTING_TO_IDLE is never "at speed" - it is deliberately falling
+     * to {@link #IDLE_RPM} and must not let the shoot gate open.
+     */
     public boolean isAtTargetRpm() {
         if (mode == Mode.COASTING_TO_IDLE) return false;
         double goal = mode == Mode.STOPPED ? 0 : TARGET_RPM;
         return Math.abs(getActualRpm() - goal) <= AT_SPEED_TOLERANCE_RPM;
     }
-
     /**
      * True once the coast has arrived AND the normal PID is holding idle.
      * Use as the {@code done} condition for the coast command.
@@ -170,8 +181,9 @@ public class Flywheel extends SubsystemBase {
     }
 
     /**
-     * Hold the flywheel at TARGET_RPM, re-asserting every loop so live Panels
-     * retunes of TARGET_RPM apply immediately (PID hold also runs in periodic()).
+     * (Re)engage the velocity hold at the current TARGET_RPM. Re-asserting is
+     * instant: once HOLDING, periodic() notices any live Panels retune of
+     * TARGET_RPM and re-writes the setpoint, so no per-loop command is needed.
      */
     public Command holdTunable() {
         return runOnce(() -> setTargetRpm(TARGET_RPM));
@@ -200,13 +212,17 @@ public class Flywheel extends SubsystemBase {
      * Cut drive (FLOAT, no PID) and free-spin toward {@link #IDLE_RPM}. When actual
      * RPM falls to idle, re-engages the normal velocity PID to hold it there.
      * If already at/below idle, holds idle via PID immediately (a coast from
-     * rest could never arrive).
+     * rest could never arrive). This is also where a live Panels retune of
+     * IDLE_RPM lands: it latches whatever {@code IDLE_RPM} reads at trigger
+     * release as the hold point.
      */
     public void coastToIdle() {
         if (getActualRpm() <= IDLE_RPM + COAST_ARRIVE_TOLERANCE_RPM) {
             setTargetRpm(IDLE_RPM);
             return;
         }
+        // Own the whole coast-arrive latch: the drive now falls to IDLE_RPM.
+        idleLocked = IDLE_RPM;
         mode = Mode.COASTING_TO_IDLE;
         motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
@@ -214,32 +230,44 @@ public class Flywheel extends SubsystemBase {
     }
 
     /**
-     * Write the velocity setpoint for the current mode, but only when it differs
-     * from the last write. The motor controller holds its own velocity setpoint,
-     * so re-asserting every loop is unnecessary; a live Panels edit of TARGET_RPM
-     * (or a mode change) shows up as a change and gets written immediately.
+     * Write the velocity setpoint for the current mode. The hub-side velocity
+     * PI keeps its own target, so this is written EVERY loop rather than only
+     * on change: a single write after a loop-mode change is not enough (a
+     * velocity write while the motor sits in RUN_WITHOUT_ENCODER is ignored,
+     * which is how the hold at the shoot RPM survived the coast).
      */
     private void applyVelocity() {
         final double ticks;
-        if (mode == Mode.HOLDING || mode == Mode.COASTING_TO_IDLE) {
+        if (mode == Mode.HOLDING) {
             ticks = rpmToTicksPerSec(TARGET_RPM);
         } else {
-            // STOPPED and FLOATING both drive to zero; FLOATING lets it spin
-            // down after the PID brake has done its job.
+            // COASTING_TO_IDLE, STOPPED and FLOATING all command zero: the coast
+            // is free-spinning (RUN_WITHOUT_ENCODER + FLOAT + 0 power, set by
+            // coastToIdle), so the wheel falls toward IDLE_RPM instead of being
+            // held at TARGET_RPM. FLOATING/STOPPED just spin down from there.
+            // (COASTING_TO_IDLE used to be lumped in with HOLDING — the PID
+            // kept the shoot RPM up, actual RPM never fell to IDLE_RPM, and
+            // the coast-to-idle never arrived. Seen in capture 20261024-232657.)
             ticks = 0.0;
         }
-        if (mode == lastAppliedMode && ticks == lastAppliedTicks) return;
-        if (!Double.isNaN(ticks)) motor.setVelocity(ticks);
+        motor.setVelocity(ticks);
         lastAppliedTicks = ticks;
+        lastAppliedRpm = TARGET_RPM;
         lastAppliedMode = mode;
     }
 
-    /** Back to RUN_USING_ENCODER + BRAKE for any PID-driven state. */
+    /**
+     * PID-hold mode (RUN_USING_ENCODER, FLOAT on 0 power). A no-op when the
+     * motor is already there — setMode is a device write and this runs in the
+     * hot path.
+     */
     private void engagePidMode() {
         if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
             motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         }
-        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        if (motor.getZeroPowerBehavior() != DcMotor.ZeroPowerBehavior.FLOAT) {
+            motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        }
     }
 
     private void applyPids(boolean force) {
@@ -257,6 +285,10 @@ public class Flywheel extends SubsystemBase {
                     : DcMotor.Direction.FORWARD);
             lastReversed = MOTOR_REVERSED;
         }
+        // Live Panels retune of TARGET_RPM: re-write the held setpoint.
+        if (mode == Mode.HOLDING && TARGET_RPM != lastAppliedRpm) {
+            applyVelocity();
+        }
     }
 
     @Override
@@ -264,15 +296,19 @@ public class Flywheel extends SubsystemBase {
         applyPids(false);
 
         switch (mode) {
-            case COASTING_TO_IDLE:
-                if (getActualRpm() <= IDLE_RPM + COAST_ARRIVE_TOLERANCE_RPM) {
-                    // Arrived: latch idle as the target and hold it with the normal PID.
-                    TARGET_RPM = IDLE_RPM;
+            case COASTING_TO_IDLE: {
+                double idle = Double.isNaN(idleLocked) ? IDLE_RPM : idleLocked;
+                if (getActualRpm() <= idle + COAST_ARRIVE_TOLERANCE_RPM) {
+                    // Arrived: latch idle as the target and hold it with the
+                    // normal velocity PID until someone commands otherwise.
+                    TARGET_RPM = idle;
+                    idleLocked = Double.NaN;
                     engagePidMode();
                     mode = Mode.HOLDING;
                 }
                 // else: stay FLOAT + zero power, keep falling.
                 break;
+            }
             case STOPPED:
                 // Re-engage in case the mode was flipped under us.
                 if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
@@ -280,10 +316,11 @@ public class Flywheel extends SubsystemBase {
                     lastAppliedMode = null; // force a fresh setpoint write
                 }
                 break;
+            default:
+                break;
         }
 
-        // Write the setpoint only when it changed (mode change, live Panels
-        // retune of TARGET_RPM, or recovery from an external motor-mode stomp).
+        // Write the setpoint (the hub velocity PI is stateful — see applyVelocity).
         applyVelocity();
 
         // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
@@ -291,8 +328,23 @@ public class Flywheel extends SubsystemBase {
         // partial frames (flicker) and drops lines. RobotMain.flushTelemetry()
         // does the single end-of-loop flush.
         telemetry.addData("Flywheel mode", mode);
-        telemetry.addData("Flywheel target RPM", mode == Mode.STOPPED ? 0 : TARGET_RPM);
+        telemetry.addData("Flywheel target RPM", targetRpmText());
         telemetry.addData("Flywheel actual RPM", "%.1f", getActualRpm());
         telemetry.addData("Flywheel at speed", isCoasting() ? "COAST" : isAtTargetRpm());
+    }
+
+    /** What the motor is actually being driven to, for the dashboard. */
+    private String targetRpmText() {
+        switch (mode) {
+            case HOLDING:
+                return String.format(java.util.Locale.US, "%.0f", TARGET_RPM);
+            case COASTING_TO_IDLE:
+                return String.format(java.util.Locale.US, "COAST -> %.0f",
+                        Double.isNaN(idleLocked) ? IDLE_RPM : idleLocked);
+            case STOPPED:
+            case FLOATING:
+            default:
+                return "0";
+        }
     }
 }

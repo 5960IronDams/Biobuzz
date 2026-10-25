@@ -130,6 +130,18 @@ public class TurretTracker {
     /** Consecutive failed feedback reads tolerated before "feedback lost" (I2C hiccups happen). */
     public static int FEEDBACK_FAIL_LIMIT = 10;
 
+    /**
+     * Consecutive loops with NO absolute (OctoQuad/encoder-B) read before the
+     * ABS_STREAM_LOST fault latches onto the driver-station failure board.
+     * This is deliberately NOT {@link #feedbackLost()}: in hybrid ACTIVE the
+     * motor encoder keeps tracking (no brake), but the absolute path — the
+     * boot-correct position, the at-rest anchors, the A cross-check — is gone
+     * and the driver must know. ~50 loops ≈ 2.5-3 s at the measured 49-54 ms
+     * loop. Auto-clears after the same count of consecutive GOOD reads (a
+     * re-seated wire recovers without an OpMode restart).
+     */
+    public static int ABS_STREAM_LOST_LOOPS = 50;
+
     // =========================================================================
     // Live state
     // =========================================================================
@@ -237,6 +249,12 @@ public class TurretTracker {
     private boolean faultMotorEnc = false;
     /** Latched: motor encoder direction contradicts the absolute path (polarity/flip suspect). */
     private boolean faultMotorEncDir = false;
+    /** Latched: the absolute (OctoQuad/encoder-B) stream stopped being read — DS failure-board alarm. */
+    private boolean faultAbsStreamLost = false;
+    /** Consecutive loops without an absolute read (drives faultAbsStreamLost). */
+    private int absLostStreak = 0;
+    /** Consecutive good absolute reads (auto-clears faultAbsStreamLost). */
+    private int absGoodStreak = 0;
     // Boot direction guard, third vote (motor encoder — independent of both flip flags).
     private boolean bootDirMotPrimed = false;
     private int bootDirMotLastRaw = 0;
@@ -527,6 +545,30 @@ public class TurretTracker {
                 Log.e("IronLog", "TurretTracker feedback read failed (1)", e);
             }
             absOk = false;
+        }
+
+        // ---- Absolute-stream liveness (driver-station failure board) ----
+        // updateFromAbsolute() returns false ONLY when the OctoQuad read came
+        // back empty (dead device / unplugged ABS wire). In hybrid ACTIVE the
+        // motor encoder keeps tracking, so this is NOT feedbackLost() — but
+        // the at-rest anchor, the A cross-check and the boot-correct position
+        // are all gone, and the driver needs the red banner. Glitch-gate
+        // rejections do NOT count (the stream is alive; see absGlitchEvents).
+        if (absOk) {
+            absLostStreak = 0;
+            if (faultAbsStreamLost && ++absGoodStreak >= ABS_STREAM_LOST_LOOPS) {
+                faultAbsStreamLost = false;
+                Log.i("IronLog", "TurretTracker absolute stream recovered ("
+                        + ABS_STREAM_LOST_LOOPS + " good reads)");
+            }
+        } else {
+            absGoodStreak = 0;
+            if (!faultAbsStreamLost && ++absLostStreak >= ABS_STREAM_LOST_LOOPS) {
+                faultAbsStreamLost = true;
+                Log.e("IronLog", "TurretTracker ABS STREAM LOST for "
+                        + ABS_STREAM_LOST_LOOPS + " loops — OctoQuad/encoder-B reads empty"
+                        + " (hybrid still integrating on the motor encoder)");
+            }
         }
 
         // ---- WATCH-mode direction confirmation ----
@@ -1107,6 +1149,11 @@ public class TurretTracker {
         return faultEncoderDirection;
     }
 
+    /** Latched when the OctoQuad/encoder-B stream stopped being read (auto-clears on recovery). */
+    public boolean isAbsStreamLost() {
+        return faultAbsStreamLost;
+    }
+
     // ---- One-line telemetry texts (keep TurretPivot.periodic readable) ----
 
     /** One-line hybrid status for telemetry ("Turret mot-enc"). */
@@ -1148,6 +1195,7 @@ public class TurretTracker {
         if (faultEncoderDirection) sb.append("B_DIR_MISMATCH ");
         if (faultMotorEnc) sb.append("MOTOR_ENC ");
         if (faultMotorEncDir) sb.append("MOTOR_ENC_DIR ");
+        if (faultAbsStreamLost) sb.append("ABS_STREAM_LOST ");
         return sb.toString();
     }
 
@@ -1159,6 +1207,9 @@ public class TurretTracker {
         crtCrosscheckFails = 0;
         faultMotorEnc = false;
         faultMotorEncDir = false;
+        faultAbsStreamLost = false;
+        absLostStreak = 0;
+        absGoodStreak = 0;
         deadStreak = 0;
         dirStreak = 0;
         watchDeadStreak = 0;

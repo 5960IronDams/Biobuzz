@@ -33,19 +33,19 @@ public class Transfer extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- Panels tuning ----
-    public static double TRANSFER_RPM = 100;
+    public static double TRANSFER_RPM = 500.0; //max measured empty RL = 1050rpm;
     /**
      * goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6
      * (computed by {@link IronConstants#gobilda5203TicksPerRev(double)} - the
      * same motor + ratio as the intake).
      */
     public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(5.2);
-    public static double kP = 20;
-    public static double kI = 0;
-    public static double kD = 0;
-    public static double kF = 12;
+    public static double kP = 20.0;
+    public static double kI = 0.0;
+    public static double kD = 0.0;
+    public static double kF = 12.5;
     /** True = motor wiring is flipped from the code's forward; swap if forward/reverse run the wrong way. */
-    public static boolean MOTOR_REVERSED = true;
+    public static boolean MOTOR_REVERSED = false;//forward = sends items to turret.
 
     private final DcMotorEx motor;
 
