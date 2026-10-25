@@ -1,17 +1,36 @@
 repositories {
+    // MACHINE-SPECIFIC: local dev Maven for testing unpublished panels builds.
+    // Must stay FIRST so it shadows the hosted repos. Remove before pushing to the team repo.
+    maven { url = "file:///C:/projects/ftcontrol-maven/releases" }
     mavenCentral()
     google() // Needed for androidx
+    maven { url = 'https://maven.brott.dev/' }
+    maven { url 'https://repo.dairy.foundation/releases/'}
+    maven { url = "https://mymaven.bylazar.com/releases" }
 }
 
 dependencies {
-    implementation 'org.firstinspires.ftc:Inspection:11.2.1'
-    implementation 'org.firstinspires.ftc:Blocks:11.2.1'
-    implementation 'org.firstinspires.ftc:RobotCore:11.2.1'
-    implementation 'org.firstinspires.ftc:RobotServer:11.2.1'
-    implementation 'org.firstinspires.ftc:OnBotJava:11.2.1'
-    implementation 'org.firstinspires.ftc:Hardware:11.2.1'
-    implementation 'org.firstinspires.ftc:FtcCommon:11.2.1'
-    implementation 'org.firstinspires.ftc:Vision:11.2.1'
+    implementation 'org.firstinspires.ftc:Inspection:12.0.0'
+    implementation 'org.firstinspires.ftc:Blocks:12.0.0'
+    implementation 'org.firstinspires.ftc:RobotCore:12.0.0'
+    implementation 'org.firstinspires.ftc:RobotServer:12.0.0'
+    implementation 'org.firstinspires.ftc:OnBotJava:12.0.0'
+    implementation 'org.firstinspires.ftc:Hardware:12.0.0'
+    implementation 'org.firstinspires.ftc:FtcCommon:12.0.0'
+    implementation 'org.firstinspires.ftc:Vision:12.0.0'
     implementation 'androidx.appcompat:appcompat:1.2.0'
+    implementation "com.pedropathing:revhub:${rootProject.findProperty('pedroVersion')}"
+    // Pedro AutoTune (tuning procedures + Sloth). we are using sloth for sloth panels this must stay active.
+    // LOCAL PATCH: 1.0.1-patched lives in ftcontrol-maven and carries a durable
+    // fix for the single-client WebSocket wedge (watchdog + claim-steal +
+    // reflective stream close). Revert to 1.0.1 when upstream ships the fix.
+    implementation 'com.pedropathing:tuning:1.0.1-patched'
+    implementation "com.bylazar:fullpanels:1.0.18"
+    // LOCAL DEV: unpublished panels builds — win over fullpanels' pinned versions
+    // (panels 1.0.7, battery 1.0.5, capture 1.0.5, telemetry 1.0.7). Revert these
+    // lines to test released versions.
+    implementation "com.bylazar:panels:1.0.8"
+    implementation "com.bylazar:battery:1.0.6"
+    implementation "com.bylazar:capture:1.0.7"
+    implementation "com.bylazar:telemetry:1.0.9"
 }
-

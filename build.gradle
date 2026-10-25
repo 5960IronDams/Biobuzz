@@ -13,14 +13,19 @@ buildscript {
 
 plugins {
     // Note for FTC Teams: Do not modify this yourself.
-    id 'com.android.application' version '8.13.2' apply false
-    id 'com.android.library' version '8.13.2' apply false
+    id 'com.android.application' version '9.3.1' apply false
+    id 'com.android.library' version '9.3.1' apply false
 }
 
 // This is now required because aapt2 has to be downloaded from the
 // google() repository beginning with version 3.2 of the Android Gradle Plugin
 allprojects {
     repositories {
+        // Local fixed Pedro Pathing (see useLocalPedro in gradle.properties).
+        // Must be first so our mavenLocal 3.0.1 shadows Maven Central's.
+        if ((rootProject.findProperty('useLocalPedro') ?: 'false').toString().toBoolean()) {
+            mavenLocal()
+        }
         mavenCentral()
         google()
     }
