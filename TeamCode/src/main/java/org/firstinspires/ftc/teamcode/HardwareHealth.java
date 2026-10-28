@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode;
 
 import android.util.Log;
 
+import com.qualcomm.robotcore.util.GlobalWarningSource;
 import com.qualcomm.robotcore.util.RobotLog;
 
 import java.util.ArrayList;
@@ -20,22 +21,32 @@ import java.util.Map;
  * debugging. So the bar for getting on this board is deliberately high:
  * only failures that make aiming or feedback quietly wrong.
  *
- * <p><b>Two channels, once per tick:</b>
+ * <p><b>NEVER fatal — this is the rule that matters most.</b> Nothing here
+ * may ever stop the robot from playing: being unable to run an autonomous or
+ * a TeleOp in a match is worse than any hardware fault. So this board
+ * deliberately does NOT use {@code RobotLog.setGlobalErrorMsg(...)} — a
+ * global ERROR makes the Driver Station demand "To attempt recovery, please
+ * restart the robot" and refuses to init/start OpModes until the robot is
+ * restarted (that is exactly what an absent Limelight did once). It reports
+ * through channels that are purely informational:
  * <ol>
+ *   <li><b>The DS warning line</b> — a registered
+ *       {@link RobotLog.GlobalWarningSource}. {@code RobotLog} merges every
+ *       registered source's text with the SDK's own warnings each cycle
+ *       ({@code getGlobalWarningMessage()} re-queries all sources), so this is
+ *       additive — it never clobbers the SDK's I2C/battery/robocol warnings,
+ *       and warnings never lock the robot. The text carries the
+ *       {@link #WARNING_PREFIX} tag so it is recognizable in the merged blob.
+ *       (The SDK stores sources in a <em>WeakHashMap</em>, hence the static
+ *       strong reference to our source below.)</li>
  *   <li><b>The DS telemetry line</b> ("HW") — each OpMode's
  *       {@code UpdateTelemetry()} pulls {@link #dsLine()} into its OWN DS
  *       update flow. The DS screen shows only what the last
  *       {@code telemetry.update()} contained, so the board never calls
  *       update() itself — two updaters on one DS telemetry would clobber
  *       each other's lines (AutoOpModeBase already updates per tick).</li>
- *   <li><b>The red DS error banner</b> — {@code RobotLog.setGlobalErrorMsg}
- *       while any system is failed, {@code clearGlobalErrorMsg} once healthy.
- *       Managed by {@link #evaluate(boolean)} from
- *       {@code RobotMain.flushTelemetry()}, edge-triggered (set/clear only on
- *       CHANGE — no per-tick log spam). Every banner we write starts with
- *       {@link #BANNER_PREFIX}; an SDK-authored global error (init hardware
- *       failures etc.) is NEVER clobbered or wiped — we manage only our own
- *       prefixed messages.</li>
+ *   <li><b>The match log</b> — an edge-triggered {@code Log.w} per change, so
+ *       the pit laptop can reconstruct the timeline after the match.</li>
  * </ol>
  *
  * <p><b>What counts as critical (the short list):</b>
@@ -50,7 +61,7 @@ import java.util.Map;
  *       ({@code Vision.healthPing()}, called every tick from RobotMain,
  *       independent of the VisionFusion gates so a disabled filter or a
  *       diverged pose can't starve the liveness check). "No tag solve" is
- *       gameplay, NOT a hardware failure — it does not alarm.</li>
+ *       gameplay, NOT a hardware failure — it does not report.</li>
  * </ul>
  *
  * <p><b>Heartbeats:</b> a system registers via {@link #expect} (making it
@@ -62,19 +73,19 @@ import java.util.Map;
  * immediately, even during init.
  *
  * <p>All calls happen on the RC loop thread — no locking. State is wiped by
- * {@link RobotMain}'s constructor at every OpMode init; the banner survives
- * across a match on purpose (the driver walks off the field still seeing
- * what failed) and is cleared by the NEXT OpMode's reset.
+ * {@link RobotMain}'s constructor at every OpMode init; the last warning text
+ * survives across a match on purpose (the driver walks off the field still
+ * seeing what failed) and is cleared by the NEXT OpMode's reset.
  */
 public final class HardwareHealth {
     public static final String TAG = "HardwareHealth";
 
     /**
-     * Every banner we write starts with this. It is how we tell our own
-     * global-error messages apart from the SDK's (init failures, I2C
-     * warnings) so we never clobber or clear a message we didn't write.
+     * Tag on every warning we publish, so our text is recognizable inside the
+     * DS's merged warning blob (which also carries SDK warnings). Nothing
+     * parses it, so changing the wording is safe.
      */
-    public static final String BANNER_PREFIX = "IRON HW:";
+    public static final String WARNING_PREFIX = "Iron HW: ";
 
     /**
      * Silence window: a REQUIRED system that has not reported OK for this
@@ -84,12 +95,28 @@ public final class HardwareHealth {
      */
     public static double HEARTBEAT_STALE_MS = 2000.0;
 
-    /** Longest DS line before truncation (the DS phone fits ~50 characters). */
+    /** Longest DS telemetry line before truncation (the DS phone fits ~50 characters). */
     private static final int DS_LINE_MAX = 55;
-    /** Longest banner before truncation (it overlays the DS telemetry). */
-    private static final int BANNER_MAX_CHARS = 200;
+    /** Longest warning text before truncation (it shares the DS warning area). */
+    private static final int WARNING_MAX_CHARS = 160;
 
     private static final HardwareHealth INSTANCE = new HardwareHealth();
+
+    /**
+     * Our registered {@link GlobalWarningSource}. Held in a static final field
+     * because {@code RobotLog} stores sources in a WeakHashMap — without this
+     * strong reference the source would be collected and the DS warning would
+     * silently disappear.
+     */
+    private static final HealthWarningSource WARNING_SOURCE = new HealthWarningSource();
+
+    static {
+        try {
+            RobotLog.registerGlobalWarningSource(WARNING_SOURCE);
+        } catch (Exception e) {
+            Log.w(TAG, "could not register the DS warning source", e);
+        }
+    }
 
     /**
      * Singleton: every subsystem reports to the same board without threading
@@ -100,11 +127,53 @@ public final class HardwareHealth {
         return INSTANCE;
     }
 
+    /**
+     * The DS-facing warning text provider. {@code RobotLog} calls
+     * {@link #getGlobalWarning()} while aggregating the warning line, so the
+     * text stays live without us pushing anything, and coexists with the
+     * SDK's own warnings (additive, never clobbering). Advisory only — the
+     * warning channel never blocks OpMode init/start.
+     */
+    private static final class HealthWarningSource implements GlobalWarningSource {
+        /** Text we publish; empty string = nothing to say (the SDK skips empties). */
+        private volatile String warning = "";
+        /** Set by the SDK when the user suppresses warnings on the DS. */
+        private volatile boolean suppressed = false;
+
+        @Override
+        public String getGlobalWarning() {
+            return suppressed ? "" : warning;
+        }
+
+        @Override
+        public boolean shouldTriggerWarningSound() {
+            // Deliberately quiet: the SDK asks on every aggregation and a
+            // repeating beep would be worse than useless mid-match. The text
+            // on the DS (plus the telemetry line) is the signal.
+            return false;
+        }
+
+        @Override
+        public void suppressGlobalWarning(boolean suppress) {
+            suppressed = suppress;
+        }
+
+        @Override
+        public void setGlobalWarning(String text) {
+            warning = text == null ? "" : text;
+        }
+
+        @Override
+        public void clearGlobalWarning() {
+            warning = "";
+        }
+    }
+
     private static final class Entry {
         final String name;
         boolean required;
         long lastOkMs;
-        /** null = healthy; anything else is the current CRITICAL fault detail. */
+        /** null = healthy; anything else is the current fault detail. */
         String fault;
 
         Entry(String name, boolean required, long now) {
@@ -117,8 +186,8 @@ public final class HardwareHealth {
     private final Map<String, Entry> systems = new LinkedHashMap<>();
     /** Reusable fault-line buffer, rebuilt by each evaluate() call. */
     private final List<String> faults = new ArrayList<>();
-    /** The banner text we currently own in the global-error slot (null = none of ours showing). */
-    private String banner = null;
+    /** Last warning text we published (edge-triggered logging). */
+    private String lastWarning = "";
     /** Tracks the OpMode PLAY edge so silence windows restart when the match begins. */
     private boolean started = false;
 
@@ -127,15 +196,15 @@ public final class HardwareHealth {
 
     /**
      * Wipe all state at OpMode construction — a fresh OpMode starts with a
-     * clean board and clears any banner WE own in the global-error slot
-     * (an SDK-authored error, if present, is left alone).
+     * clean board and no leftover warning text. Never touches the SDK's own
+     * global error/warning state.
      */
     public void reset() {
         systems.clear();
         faults.clear();
         started = false;
-        clearOurBannerIfSafe("reset");
-        banner = null;
+        lastWarning = "";
+        WARNING_SOURCE.clearGlobalWarning();
     }
 
     /**
@@ -159,10 +228,10 @@ public final class HardwareHealth {
 
     /**
      * One report per system per tick: {@code faultDetail == null} means
-     * healthy (heartbeat); anything else is a CRITICAL fault shown on the DS
-     * until the system reports healthy again. Keep details short and
-     * driver-readable ("CRT_CROSSCHECK MOTOR_ENC"), not per-loop dumps —
-     * full detail stays on the Panels dashboard.
+     * healthy (heartbeat); anything else is a fault shown on the DS until the
+     * system reports healthy again. Keep details short and driver-readable
+     * ("CRT_CROSSCHECK MOTOR_ENC"), not per-loop dumps — full detail stays on
+     * the Panels dashboard.
      */
     public void report(String name, String faultDetail) {
         long now = nowMs();
@@ -182,11 +251,9 @@ public final class HardwareHealth {
     /**
      * One call per OpMode tick, from {@code RobotMain.flushTelemetry()} —
      * BEFORE the dashboard-off early-return, so the board keeps running in
-     * the lean match loop. Rebuilds the fault list and manages the red
-     * banner. This does NOT write the DS telemetry screen: each OpMode's
-     * {@code UpdateTelemetry()} owns its own DS screen and pulls the line
-     * from {@link #dsLine()} (two update() calls on one DS telemetry would
-     * clobber the earlier one's lines — last update wins).
+     * the lean match loop. Rebuilds the fault list and publishes (or clears)
+     * the DS warning text. Never touches the fatal global-error channel; see
+     * the class javadoc.
      *
      * @param startedNow true once the OpMode has passed PLAY (silence windows
      *                   only run while started; direct faults show either way)
@@ -214,74 +281,44 @@ public final class HardwareHealth {
             }
         }
 
-        if (faults.isEmpty()) {
-            clearOurBannerIfSafe("healthy");
-        } else {
-            StringBuilder sb = new StringBuilder(BANNER_PREFIX);
+        String warning = "";
+        if (!faults.isEmpty()) {
+            StringBuilder sb = new StringBuilder(WARNING_PREFIX);
             for (String f : faults) {
-                if (sb.length() > BANNER_PREFIX.length()) {
+                if (sb.length() > WARNING_PREFIX.length()) {
                     sb.append(" | ");
                 }
                 sb.append(f);
             }
-            String msg = sb.toString();
-            if (msg.length() > BANNER_MAX_CHARS) {
-                msg = msg.substring(0, BANNER_MAX_CHARS - 3) + "...";
-            }
-            showBanner(msg);
-        }
-    }
-
-    /**
-     * Set the red DS banner (edge-triggered — only on CHANGE). If the SDK has
-     * posted its own global error over ours, leave the slot alone and mark
-     * ours as not-showing so we re-assert the moment the slot frees up.
-     */
-    private void showBanner(String msg) {
-        String current = currentGlobalError();
-        if (current != null && !current.isEmpty() && !current.startsWith(BANNER_PREFIX)) {
-            banner = null;
-            return;
-        }
-        if (msg.equals(banner)) {
-            return; // unchanged — no per-tick log spam / re-set
-        }
-        Log.e(TAG, msg);
-        RobotLog.setGlobalErrorMsg(msg);
-        banner = msg;
-    }
-
-    /**
-     * Clear the global-error slot ONLY when the current message is empty or
-     * one of ours ({@link #BANNER_PREFIX}) — never wipe an SDK-authored
-     * error (that would hide a real init failure from the driver).
-     */
-    private void clearOurBannerIfSafe(String why) {
-        String current = currentGlobalError();
-        boolean foreign = current != null && !current.isEmpty() && !current.startsWith(BANNER_PREFIX);
-        if (!foreign) {
-            if (banner != null || (current != null && !current.isEmpty())) {
-                RobotLog.clearGlobalErrorMsg();
-                Log.i(TAG, "DS banner cleared (" + why + ")");
+            warning = sb.toString();
+            if (warning.length() > WARNING_MAX_CHARS) {
+                warning = warning.substring(0, WARNING_MAX_CHARS - 3) + "...";
             }
         }
-        banner = null;
-    }
 
-    private static String currentGlobalError() {
-        try {
-            return RobotLog.getGlobalErrorMsg();
-        } catch (Exception e) {
-            return null;
+        // Edge-triggered: log and publish only when the text changes, so a
+        // persisting fault costs nothing per loop.
+        if (!warning.equals(lastWarning)) {
+            if (warning.isEmpty()) {
+                Log.i(TAG, "hardware healthy — DS warning cleared");
+            } else {
+                Log.w(TAG, warning);
+            }
+            lastWarning = warning;
+            if (warning.isEmpty()) {
+                WARNING_SOURCE.clearGlobalWarning();
+            } else {
+                WARNING_SOURCE.setGlobalWarning(warning);
+            }
         }
     }
 
     /**
-     * The one driver-facing line for the DS screen ("OK", or the first fault
-     * plus a count of the rest) — pulled by each OpMode's UpdateTelemetry()
-     * into its OWN DS update flow (see the evaluate() javadoc for why this
-     * class never calls telemetry.update() itself). Truncated to fit the DS
-     * phone.
+     * The one driver-facing line for the DS telemetry screen ("OK", or the
+     * first fault plus a count of the rest) — pulled by each OpMode's
+     * UpdateTelemetry() into its OWN DS update flow (see the evaluate()
+     * javadoc for why this class never calls telemetry.update() itself).
+     * Truncated to fit the DS phone.
      */
     public String dsLine() {
         if (faults.isEmpty()) {

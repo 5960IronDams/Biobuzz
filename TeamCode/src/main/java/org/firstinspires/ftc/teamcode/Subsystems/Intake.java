@@ -34,7 +34,7 @@ public class Intake extends SubsystemBase {
     // ---- Panels tuning ----
     public static double INTAKE_RPM = 400; // max measured speed 850
     /** goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6 (IronConstants helper - same motor + ratio as the transfer). */
-    public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(5.2);
+    public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(19.2);
     public static double kP = 20;
     public static double kI = 0;
     public static double kD = 0;

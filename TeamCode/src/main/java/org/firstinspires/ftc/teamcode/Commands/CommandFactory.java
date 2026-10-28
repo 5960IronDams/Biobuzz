@@ -89,7 +89,7 @@ public class CommandFactory {
      */
     public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
     /** RPM at each distance in {@link #LUT_DISTANCES_IN} (same order). */
-    public static double[] LUT_RPMS = {500, 1950, 1800, 1700, 1600, 1500};//max observed RPM is 4100;
+    public static double[] LUT_RPMS = {2500, 3000, 3500, 3800, 4000, 4000};//max observed RPM is 4100;
 
     /**
      * Max slew of the COMMANDED flywheel setpoint, RPM/sec. The raw LUT output

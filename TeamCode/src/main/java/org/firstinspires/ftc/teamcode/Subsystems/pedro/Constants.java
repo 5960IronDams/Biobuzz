@@ -56,7 +56,7 @@ public class Constants {
                 c.backLeftDirection.set(DcMotorSimple.Direction.REVERSE);
                 c.backRightDirection.set(DcMotorSimple.Direction.FORWARD);
             })
-        :
+        : //else -> decode test vehicle
             new MecanumConfig(c -> { // tune this to tune the Decode Test Bot
             c.frontLeftName.set(IronConstants.FLMotor);
             c.frontRightName.set(IronConstants.FRMotor);
@@ -73,17 +73,17 @@ public class Constants {
     // generated block here (pod type, offsets, directions).
     public static PinpointConfig localizerConfig =
         IronConstants.CompBot ?
-                new PinpointConfig(c -> { //COMP BOT CONFIGURATION
-                    c.name.set(IronConstants.PinpointOdometryName);
-                    c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
-                    c.xPodOffset.set(0.5851424209714875);
-                    c.yPodOffset.set(-1.3573616508423814);
-                    c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
-                    c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
-                    c.globalDistanceUnit.set(DistanceUnit.INCH);
-                    c.offsetUnits.set(DistanceUnit.INCH);
-                })
-        :
+             new PinpointConfig(c -> {
+                c.name.set("odo");
+                c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
+                c.xPodOffset.set(-.15748);
+                c.yPodOffset.set(-3.970);
+                c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                c.globalDistanceUnit.set(DistanceUnit.INCH);
+                c.offsetUnits.set(DistanceUnit.INCH);
+            })
+        : //else -> decode test vehicle
                 new PinpointConfig(c -> { //Decode Test Bot Config.
                 c.name.set(IronConstants.PinpointOdometryName);
                 c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
@@ -97,31 +97,58 @@ public class Constants {
 
     // ================= Foresight algorithm (from Foresight Tuner) =================
     // Paste the tuner's generated block here once drivetrain+localizer are set.
-    public static ForesightConfig foresightConfig = new ForesightConfig(
+    public static ForesightConfig foresightConfig =
+            IronConstants.CompBot ?
+
+            new ForesightConfig(
             c -> {
-                Controller primaryTranslationalForward = Controller.proportional(0.42338623497967826);
-                Controller secondaryTranslationalForward = Controller.proportional(0.15642990073643634);
-                Controller primaryTranslationalLateral = Controller.proportional(1.362189143787176);
-                Controller secondaryTranslationalLateral = Controller.proportional(0.5032924902650813);
+                Controller primaryTranslationalForward = Controller.proportional(0.3680993590996792);
+                Controller secondaryTranslationalForward = Controller.proportional(0.1360028773913079);
+                Controller primaryTranslationalLateral = Controller.proportional(1.0111167105109307);
+                Controller secondaryTranslationalLateral = Controller.proportional(0.37358060699769496);
 
                 c.forwardTranslational.set(Controller.piecewise(secondaryTranslationalForward).put(2.5, primaryTranslationalForward));
                 c.strafeTranslational.set(Controller.piecewise(secondaryTranslationalLateral).put(2.5, primaryTranslationalLateral));
 
-                c.coast.set(Controller.proportionalFeedforward(0.01455700584939155));
-                c.brake.set(Controller.proportionalFeedforward(0.012373454971982816));
+                c.coast.set(Controller.proportionalFeedforward(0.020815130951162417));
+                c.brake.set(Controller.proportionalFeedforward(0.017692861308488055));
 
-                c.headingFeedback.set(Controller.proportional(8.108301785412653));
-                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.07007308482493234, 0.0018574119466537302));
+                c.headingFeedback.set(Controller.proportional(5.833429041146632));
+                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.08387076285487965, 8.980950461228712E-4));
 
-                c.linearBrakeCoefficients.set(Matrix.diag(0.06294062814991255, 0.025328593152028418));
-                c.quadraticBrakeCoefficients.set(Matrix.diag(0.0022078089850833572, 0.0024082076238926674));
+                c.linearBrakeCoefficients.set(Matrix.diag(0.06324445922266038, -0.024683033218025646));
+                c.quadraticBrakeCoefficients.set(Matrix.diag(0.002029909359073901, 0.00509100061294111));
 
-                c.maxAchievableForwardVelocity.set(47.4621240249149);
-                c.maxAchievableStrafeVelocity.set(33.1429919978864);
-                c.naturalForwardDeceleration.set(39.55342023066977);
-                c.naturalStrafeDeceleration.set(91.86882129587802);
-            }
-    );
+                c.maxAchievableForwardVelocity.set(55.61526864127053);
+                c.maxAchievableStrafeVelocity.set(37.745577193556436);
+                c.naturalForwardDeceleration.set(47.54025495649283);
+                c.naturalStrafeDeceleration.set(99.72710534088235);
+            })
+            : //else -> decode test vehicle
+            new ForesightConfig(
+                    c -> {
+                        Controller primaryTranslationalForward = Controller.proportional(0.42338623497967826);
+                        Controller secondaryTranslationalForward = Controller.proportional(0.15642990073643634);
+                        Controller primaryTranslationalLateral = Controller.proportional(1.362189143787176);
+                        Controller secondaryTranslationalLateral = Controller.proportional(0.5032924902650813);
+
+                        c.forwardTranslational.set(Controller.piecewise(secondaryTranslationalForward).put(2.5, primaryTranslationalForward));
+                        c.strafeTranslational.set(Controller.piecewise(secondaryTranslationalLateral).put(2.5, primaryTranslationalLateral));
+
+                        c.coast.set(Controller.proportionalFeedforward(0.01455700584939155));
+                        c.brake.set(Controller.proportionalFeedforward(0.012373454971982816));
+
+                        c.headingFeedback.set(Controller.proportional(8.108301785412653));
+                        c.headingBrakeCoefficients.set(Vector2D.cartesian(0.07007308482493234, 0.0018574119466537302));
+
+                        c.linearBrakeCoefficients.set(Matrix.diag(0.06294062814991255, 0.025328593152028418));
+                        c.quadraticBrakeCoefficients.set(Matrix.diag(0.0022078089850833572, 0.0024082076238926674));
+
+                        c.maxAchievableForwardVelocity.set(47.4621240249149);
+                        c.maxAchievableStrafeVelocity.set(33.1429919978864);
+                        c.naturalForwardDeceleration.set(39.55342023066977);
+                        c.naturalStrafeDeceleration.set(91.86882129587802);
+            });
 
     /** Hub orientation for the TwoWheel/ThreeWheel+IMU localizers (if ever used). */
     public static RevHubOrientationOnRobot imuOrientation() {

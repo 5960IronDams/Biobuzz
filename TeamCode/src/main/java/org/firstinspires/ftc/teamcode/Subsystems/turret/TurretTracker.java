@@ -142,6 +142,17 @@ public class TurretTracker {
      */
     public static int ABS_STREAM_LOST_LOOPS = 50;
 
+    /**
+     * Physical-continuity ceiling (§12.28): the fastest turret speed the
+     * mechanism can actually reach. Measured terminal speed at MAX_POWER 1.0
+     * is ~600 deg/s (captures 041229 / 011309 / 012540); this is set at ~2x
+     * that so a legitimate burst can never trip it, while a lost whole wrap
+     * (which implies 1000+ deg/s) always does.
+     */
+    public static double CONTINUITY_MAX_DPS = 1200.0;
+    /** Consecutive over-ceiling loops before the position is declared untrustworthy. */
+    public static int CONTINUITY_LIMIT = 2;
+
     // =========================================================================
     // Live state
     // =========================================================================
@@ -251,6 +262,9 @@ public class TurretTracker {
     private boolean faultMotorEncDir = false;
     /** Latched: the absolute (OctoQuad/encoder-B) stream stopped being read — DS failure-board alarm. */
     private boolean faultAbsStreamLost = false;
+    /** §12.28: the tracked stream is no longer physically plausible — position untrustworthy, brake. */
+    private boolean positionDiverged = false;
+    private int continuityStreak = 0;
     /** Consecutive loops without an absolute read (drives faultAbsStreamLost). */
     private int absLostStreak = 0;
     /** Consecutive good absolute reads (auto-clears faultAbsStreamLost). */
@@ -748,6 +762,18 @@ public class TurretTracker {
                     deltaRevs, deltaRevs * 360.0 * revsPerTurretB));
         }
         double deltaDeg = deltaRevs * 360.0 / revsPerTurretB;
+        // §12.28: physical-continuity check on the step actually integrated.
+        // The gate above already rejects absurd single steps, but a wrap that
+        // resolved to the WRONG SIDE is a normal-sized number with the wrong
+        // sign — geometry, not magnitude. Taken against the time since the
+        // reading really changed (the step covers that span, not one loop),
+        // any implied speed above the mechanism's ceiling means whole wraps
+        // were lost.
+        {
+            double spanDt = Double.isNaN(absLastChangeTime)
+                    ? dtSec : clamp(timer.seconds() - absLastChangeTime, Math.max(dtSec, 1e-3), 0.5);
+            checkPhysicalContinuity(deltaDeg, spanDt);
+        }
         unwrappedDeg += deltaDeg;
         lastAbsRevs = revs;
         // The OctoQuad's PWM width only REFRESHES at ~10 Hz — at a ~20 Hz loop
@@ -822,6 +848,55 @@ public class TurretTracker {
             }
         } else {
             crtCrosscheckErrDeg = Double.NaN;
+        }
+    }
+
+    /**
+     * PHYSICAL CONTINUITY guard (§12.28) — the runaway detector.
+     *
+     * <p>Replaces an earlier idea that compared the tracked position against
+     * encoder A with a fixed threshold. That was rejected on evidence:
+     * {@code crosscheckDiffDeg} is computed modulo one encoder-A revolution
+     * (63.4 deg of turret travel), so a divergence of exactly one A-rev reads
+     * as ~0 error. Replaying capture 20261028-013546 through such a guard
+     * showed it would NOT have fired (peak reading 30.12 deg against a 31.7
+     * threshold) even though the real error was ~149 deg. A modulo witness
+     * cannot bound an error; it can only detect sub-wrap slips.
+     *
+     * <p>What actually identified the failure was the STEP SIZE: at 10.05 s a
+     * single ~52 ms loop moved the tracked position 73.04 deg = 1.12
+     * encoder-B wraps, i.e. the shortest-path unwrap resolved a >half-wrap
+     * motion to the wrong side. The turret physically cannot do that — full
+     * power is ~600 deg/s, so a 52 ms loop tops out near 31 deg, and even the
+     * (deliberately loose) plausibility gate permits 100 deg at 2000 deg/s.
+     *
+     * <p>This watches the per-loop step against a speed the mechanism cannot
+     * reach ({@link #CONTINUITY_MAX_DPS}, ~2x the measured terminal speed). A
+     * step beyond it means whole wraps were lost, whatever the cause, and the
+     * position stream must be distrusted.
+     */
+    private void checkPhysicalContinuity(double deltaDeg, double dtSec) {
+        if (Double.isNaN(deltaDeg) || dtSec <= 0) {
+            return;
+        }
+        double impliedDps = Math.abs(deltaDeg) / dtSec;
+        if (impliedDps > CONTINUITY_MAX_DPS) {
+            continuityStreak++;
+            if (continuityStreak >= CONTINUITY_LIMIT) {
+                if (!positionDiverged) {
+                    Log.e("IronLog", "TurretTracker POSITION DISCONTINUITY: step "
+                            + String.format(Locale.US, "%+.1f deg", deltaDeg)
+                            + " in " + String.format(Locale.US, "%.0f ms", dtSec * 1000.0)
+                            + " implies " + String.format(Locale.US, "%.0f", impliedDps)
+                            + " deg/s, beyond the mechanism's "
+                            + String.format(Locale.US, "%.0f", CONTINUITY_MAX_DPS)
+                            + " deg/s ceiling — whole wraps were lost (braking)");
+                }
+                positionDiverged = true;
+            }
+        } else {
+            continuityStreak = 0;
+            positionDiverged = false;
         }
     }
 
@@ -939,7 +1014,19 @@ public class TurretTracker {
         if (!Double.isNaN(lastAnchoredRevs)) {
             double pwmIntervalDeg = (anchoredRevs - lastAnchoredRevs) * 360.0
                     / revsPerTurretB;
-            if (Math.abs(pwmIntervalDeg) >= MOTOR_ENC_DEAD_PWM_DEG) {
+            // §12.28: this monitor's verdict is only as trustworthy as the
+            // INTERVAL it is based on. Encoder B repeats every 65.45 deg of
+            // turret travel, so a wrap-resolved interval is only unambiguous
+            // while the real step stays under HALF a wrap. Past that the
+            // interval can come back with the wrong sign — which reads exactly
+            // like "motor encoder moves opposite the absolute path" and latched
+            // a FALSE MOTOR_ENC_DIR in capture 20261028-013546 (a real -73 deg
+            // step was decoded as +18.5 deg, ~10.05 s), demoting the hybrid to
+            // PWM-only at full speed and causing the runaway. Near-antipodal
+            // steps are therefore treated as NO EVIDENCE, not as evidence.
+            double halfWrapDeg = 180.0 / revsPerTurretB;
+            boolean intervalUnambiguous = Math.abs(pwmIntervalDeg) < halfWrapDeg * 0.8;
+            if (Math.abs(pwmIntervalDeg) >= MOTOR_ENC_DEAD_PWM_DEG && intervalUnambiguous) {
                 if (Math.abs(motNetSinceFresh) < MOTOR_ENC_DEAD_MOT_DEG) {
                     deadStreak++;
                     if (deadStreak >= MOTOR_ENC_STREAK_LIMIT) {
@@ -1152,6 +1239,17 @@ public class TurretTracker {
     /** Latched when the OctoQuad/encoder-B stream stopped being read (auto-clears on recovery). */
     public boolean isAbsStreamLost() {
         return faultAbsStreamLost;
+    }
+
+    /**
+     * §12.28: true when the tracked position has disagreed with encoder A's
+     * independent prediction by more than half an encoder-A revolution for
+     * several consecutive loops — the stream is no longer trustworthy and the
+     * subsystem must BRAKE. Auto-clears when the two agree again, so a wire
+     * nudge or a re-zero recovers without an OpMode restart.
+     */
+    public boolean isPositionDiverged() {
+        return positionDiverged;
     }
 
     // ---- One-line telemetry texts (keep TurretPivot.periodic readable) ----

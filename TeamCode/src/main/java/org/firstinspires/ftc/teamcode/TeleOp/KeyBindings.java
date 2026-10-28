@@ -47,6 +47,10 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsGamepadDebug;
  *       PID-brakes to zero.</li>
  *   <li>Servo: X toggles presets via {@code PosServ.toggleCmd},
  *       dpad up/down nudges while held.</li>
+ *   <li>Ramp (OPERATOR pad, gamepad2): dpad DOWN lowers the ramp to
+ *       {@code Ramp.POS_DOWN}, dpad UP parks it at {@code POS_UP} (0). Taps,
+ *       not holds — see {@code bindRamp()} for why the co-driver pad owns the
+ *       dpad and how the gamepad1-Y calibration jog works.</li>
  *   <li>Localize: BACK resets the Pedro pose to the alliance start and
  *       re-anchors the Pinpoint to it.</li>
  * </ol>
@@ -67,6 +71,11 @@ public class KeyBindings {
     private final RobotMain robot;
     /** Fluent bindings facade over gamepad1 — see bindCommands(). */
     private final CommandGamepad DriveController;
+    /**
+     * Fluent bindings facade over gamepad2 (the OPERATOR pad). Every rig has
+     * two, so it is always constructed; the ramp owns its dpad (see bindRamp()).
+     */
+    private final CommandGamepad OperatorController;
     /** Example-style Panels gamepad dump (Panels > Configurables > PanelsGamepadDebug). */
     private final PanelsGamepadDebug gamepadDebug;
 
@@ -97,6 +106,7 @@ public class KeyBindings {
         }
         this.robot = robot;
         this.DriveController = new CommandGamepad(opMode.gamepad1);
+        this.OperatorController = new CommandGamepad(opMode.gamepad2);
         this.gamepadDebug = new PanelsGamepadDebug(opMode.gamepad1, "GP1");
         // One instance, reused by the toggle below: its scheduled state IS the latch.
         this.autoShoot = robot.CommandF.getAutoShootCommand();
@@ -177,15 +187,59 @@ public class KeyBindings {
                 .whenInactive(robot.transfer.stopCmd());
 
         // ---- Servo toggle: X, edge-triggered (persistent instance; reusable) ----
-        DriveController.x().whenActive(robot.PosServ.toggleCmd());
+        DriveController.y().whenActive(robot.PosServ.toggleCmd());
 
         // ---- Servo nudge: dpad_up/dpad_down, run-while-held ----
         // Each command computes its own dt so nudging rate is loop-time
         // independent; the slew + hardware write still happen in
         // ShootGateServo.periodic(). Requires PosServ so dpad nudges cancel
         // any servo preset command still running.
-        DriveController.dpadUp().whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
-        DriveController.dpadDown().whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
+        DriveController.dpadLeft().and(DriveController.x()).whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
+        DriveController.dpadRight().and(DriveController.x()).whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
+
+        // ---- Ramp: OPERATOR (gamepad2) dpad = park / lower, gamepad2 bumper = fine jog ----
+        bindRamp();
+    }
+
+    /**
+     * Ramp bindings. Two rules drove every choice here:
+     *
+     * <p><b>Why gamepad2:</b> gamepad1's dpad_up/dpad_down are already the
+     * shoot-gate servo nudge on the lines above. Binding the ramp's own dpad
+     * bindings to the same pair would move the gate and the ramp together, so
+     * the ramp's park/lower taps live on the CO-DRIVER pad, where the operator
+     * (who watches the ramp) has them. Single-subsystem commands only — the
+     * compositions stay in CommandFactory.
+     *
+     * <p><b>Why taps, not holds:</b> these are {@code whenActive} (edge,
+     * fire-once) on toggle commands. Nothing is driving the servo after the
+     * press, so the horn simply holds — a released button can never drop the
+     * ramp, and no command holds High Power on the servo while idle.
+     *
+     * <p><b>Calibration jog (before POS_DOWN is known):</b> hold LB to jog
+     * toward DOWN and RB toward UP while watching the Panels "Ramp jog" line.
+     * {@code Ramp.JOG_SELECT} (gamepad2 BACK) chooses LEFT servo, RIGHT servo
+     * or BOTH, so one arm can be trimmed to square the crossbar. gamepad2 Y
+     * snaps both servos back to POS_UP (0) to install the horns against.
+     */
+    private void bindRamp() {
+        if (robot.ramp == null) {
+            return; // ramp servos not in the RC config — every binding skipped
+        }
+        // Taps: dpad DOWN -> lowered, dpad UP -> parked at 0.
+        DriveController.dpadDown().whenActive(robot.ramp.toggleDownCmd());
+        //DriveController.dpadUp().whenActive(robot.ramp.toggleUpCmd());
+
+        // Taps: dpad DOWN -> lowered, dpad UP -> parked at 0.
+        OperatorController.dpadDown().whenActive(robot.ramp.toggleDownCmd());
+        //OperatorController.dpadUp().whenActive(robot.ramp.toggleUpCmd());
+        // Held fine jog for calibrating POS_DOWN (and un-sticking a ramp).
+        OperatorController.leftBumper().whileActiveOnce(robot.ramp.jogCmd(true), true);
+        OperatorController.rightBumper().whileActiveOnce(robot.ramp.jogCmd(false), true);
+        // Bring-up zero: install-the-horns position / rescue.
+        OperatorController.y().whenActive(robot.ramp.zeroCmd());
+        // Cycle which servo the jog moves: LEFT -> RIGHT -> BOTH.
+        OperatorController.back().whenActive(robot.ramp.cycleJogSelectCmd());
     }
 
     /** Poll every binding once. Call once per loop, after {@code robot.RobotRunPeriodic()}. */
@@ -299,7 +353,7 @@ public class KeyBindings {
 
     // ------------------------------------------------------------------ unused
 
-    /** Operator (gamepad2) bindings - nothing assigned yet; add flywheel/etc. here. */
+    /** Operator (gamepad2) bindings beyond the ramp: nothing assigned yet; add flywheel/etc. here. */
     private void handleOperator() {
         // TODO: move operator controls here as mechanism commands land, e.g.
         // new Trigger(() -> gamepad2.y).whenActive(robot.flywheel.toRpm(2000));

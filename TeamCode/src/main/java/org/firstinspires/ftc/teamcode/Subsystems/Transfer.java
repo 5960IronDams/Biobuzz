@@ -39,7 +39,7 @@ public class Transfer extends SubsystemBase {
      * (computed by {@link IronConstants#gobilda5203TicksPerRev(double)} - the
      * same motor + ratio as the intake).
      */
-    public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(5.2);
+    public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(19.2);
     public static double kP = 20.0;
     public static double kI = 0.0;
     public static double kD = 0.0;

@@ -90,6 +90,22 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
     private volatile int crossRawUs = Integer.MIN_VALUE;
     private volatile boolean crossReadValid = false;
 
+    /**
+     * Freshness diagnostics (§12.27): the local-loop time (seconds, this
+     * source's own clock) at which each channel's raw pulse width last
+     * CHANGED. The OctoQuad's PWM measurement only refreshes at roughly
+     * 10 Hz, so a loop reading that repeats the previous value is carrying no
+     * new information. The crosscheck latches on the difference between the
+     * per-loop motor-encoded stream and this (slower) channel, so when it
+     * disagrees the FIRST question is "was A actually fresh?" — if A had not
+     * changed for 100 ms, the disagreement is staleness, not slip.
+     */
+    private volatile double lastChangeTimeB = Double.NaN;
+    private volatile double lastChangeTimeA = Double.NaN;
+    private volatile double lastAgeB = Double.NaN;
+    private volatile double lastAgeA = Double.NaN;
+    private final long startNs = System.nanoTime();
+
     public OctoQuadAbsoluteSource(OctoQuad octoquad) {
         this(octoquad, CRT_ENCODER_A_OCTOQUAD_CHANNEL);
     }
@@ -158,7 +174,14 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
             // positions[] holds pulse width in microseconds for PWM channels
             // (verified against the SDK SensorOctoQuadAdv sample).
             int us = block.positions[channel];
+            double nowS = (System.nanoTime() - startNs) / 1.0e9;
+            // Freshness: stamp the moment B's raw width last CHANGED. Stored
+            // raw for telemetry/calibration either way.
+            if (us != lastRawUs) {
+                lastChangeTimeB = nowS;
+            }
             lastRawUs = us;
+            lastAgeB = Double.isNaN(lastChangeTimeB) ? Double.NaN : nowS - lastChangeTimeB;
             // RANGE VALIDATION — the mod1() that used to sit here masked
             // garbage into plausible angles. A real Through Bore PWM read
             // lives in [min, max]; anything else is a wiring/config fault.
@@ -174,7 +197,12 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
             // Cross channel (encoder A): decode from the SAME transaction.
             if (crossChannel >= 0 && crossChannel != channel) {
                 int usA = block.positions[crossChannel];
+                // Freshness: stamp the moment A's raw width last CHANGED.
+                if (usA != crossRawUs) {
+                    lastChangeTimeA = nowS;
+                }
                 crossRawUs = usA;
+                lastAgeA = Double.isNaN(lastChangeTimeA) ? Double.NaN : nowS - lastChangeTimeA;
                 if (usA >= ABS_PWM_MIN_US - ABS_PWM_OOR_SLACK_US
                         && usA <= ABS_PWM_MAX_US + ABS_PWM_OOR_SLACK_US) {
                     // (Encoder A stays RAW here — readCrossRevs() serves the
@@ -229,6 +257,22 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
     /** Encoder A's last raw pulse width (same transaction). */
     public int getCrossRawUs() {
         return crossRawUs;
+    }
+
+    /**
+     * Seconds since encoder A's raw pulse width last CHANGED (§12.27
+     * diagnostic). The crosscheck compares the per-loop motor-encoded stream
+     * against this channel, and A's PWM only refreshes at ~10 Hz — so when the
+     * two disagree, a large age here means the disagreement is STALENESS, not
+     * a slipped magnet. NaN before A has ever changed.
+     */
+    public double getCrossFreshnessAgeSec() {
+        return lastAgeA;
+    }
+
+    /** Same as {@link #getCrossFreshnessAgeSec()} for the primary (tracking) channel B. */
+    public double getFreshnessAgeSec() {
+        return lastAgeB;
     }
 
     /** True when the most recent read was CRC-valid AND in the pulse window. */

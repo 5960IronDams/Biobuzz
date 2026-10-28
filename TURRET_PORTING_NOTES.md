@@ -603,19 +603,284 @@ Verdict: MAX_POWER = 1.0 validated on this mechanism; keep 1.0 unless a future c
 
 **Design — one aggregator, two channels, a deliberately short critical list.** New `HardwareHealth` (teamcode root package, singleton via `get()`, all calls on the RC loop thread, state reset at every `RobotMain` construction):
 
-1. **Red DS banner** — `RobotLog.setGlobalErrorMsg(...)` / `clearGlobalErrorMsg()` (verified by javap on RobotCore-12.0.0: `com.qualcomm.robotcore.util.RobotLog` — note `getGlobalWarningMessage()` returns a `GlobalWarningMessage` OBJECT; the string API is `getGlobalErrorMsg()`). Edge-triggered: set only on change, cleared once healthy — no per-tick log spam. Every message we write starts with `"IRON HW:"`; before set/clear we read the current global error and NEVER touch a message that isn't ours (the SDK posts its own init-failure/I2C errors there — clobbering them would hide real problems). We also do NOT use `addGlobalWarningMessage`/`registerGlobalWarningSource` (those would fight the SDK's own warning sources). The banner intentionally survives OpMode stop() so the driver walks back still seeing what broke; the next OpMode's `reset()` clears our own.
-2. **DS telemetry line** — `"HW": "OK"` or the first fault + `(+N more)`. Ownership rule learned the hard way: `telemetry.update()` CLEARS the buffer and the DS shows only the last update, and `AutoOpModeBase.UpdateTelemetry()` already updates `opmode.telemetry` per tick (alliance/X/Y/Heading) — so the board itself never calls `update()`. Each OpMode's `UpdateTelemetry()` pulls `HardwareHealth.get().dsLine()` into its own flow (JowByTeleOp + AutoOpModeBase done; FusionTune is Panels-only and gets the banner anyway). JowByTeleOp's DS screen now actually lives during a match (previously it was one static init frame).
+1. **DS warning line** — a registered `RobotLog.GlobalWarningSource` (see §12.24: the first cut used `setGlobalErrorMsg` and it LOCKED THE ROBOT OUT — corrected). `RobotLog.getGlobalWarningMessage()` re-queries every registered source each cycle and merges the text with the SDK's own warnings, so ours is additive (never clobbers the SDK's I2C/battery/robocol warnings) and a warning never blocks OpMode init/start. Text starts with `"Iron HW: "`. Edge-triggered: text is set only on change (a persisting fault costs nothing per loop) plus a `Log.w` at each transition so the match log has the timeline. The text survives OpMode stop() so the driver walks back still seeing what broke; the next OpMode's `reset()` clears it. `shouldTriggerWarningSound()` returns false deliberately — the SDK asks on every aggregation and a repeating beep would be useless mid-match. The source is held in a `static final` field because the SDK keeps sources in a **WeakHashMap** (an unreferenced source would be collected and the warning would silently vanish).
+2. **DS telemetry line** — `"HW": "OK"` or the first fault + `(+N more)`. Ownership rule learned the hard way: `telemetry.update()` CLEARS the buffer and the DS shows only the last update, and `AutoOpModeBase.UpdateTelemetry()` already updates `opmode.telemetry` per tick (alliance/X/Y/Heading) — so the board itself never calls `update()`. Each OpMode's `UpdateTelemetry()` pulls `HardwareHealth.get().dsLine()` into its own flow (JowByTeleOp + AutoOpModeBase done; FusionTune is Panels-only and gets the warning anyway). JowByTeleOp's DS screen now actually lives during a match (previously it was one static init frame).
 3. **Panels summary** — one `"HW health"` line in `flushTelemetry()` (added before `DashTelemetry.update()`), so the pit laptop sees the same board plus the full per-subsystem detail around it.
 
 **Who reports what (the critical set):**
-- **TURRET** — `TurretPivot.periodic()` reports `faultString()` every loop (`null` = healthy heartbeat): ENCODER_DEAD_AT_BOOT, STUCK, OUT_OF_SCOPE, OVER_CURRENT, ABS_BOOT_UNSTABLE, CRT_CROSSCHECK, B_DIR_MISMATCH, MOTOR_ENC, MOTOR_ENC_DIR, and the new ABS_STREAM_LOST. `tryCreate`'s catch reports `"absent at init (<exception>)"` — a missing turret/OctoQuad on the comp bot is a match-critical condition the driver sees BEFORE play.
+- **TURRET** — `TurretPivot.periodic()` reports `faultString()` every loop (`null` = healthy heartbeat): ENCODER_DEAD_AT_BOOT, STUCK, OUT_OF_SCOPE, OVER_CURRENT, ABS_BOOT_UNSTABLE, CRT_CROSSCHECK, B_DIR_MISMATCH, MOTOR_ENC, MOTOR_ENC_DIR, and the new ABS_STREAM_LOST. `tryCreate`'s catch reports `"absent at init (<exception>)"` — a missing turret/OctoQuad on the comp bot is worth the driver knowing about BEFORE play (before §12.24 this same report is what locked the DS out, so it now travels on the warning channel).
 - **LIMELIGHT** — new `Vision.healthPing()`, called from BOTH `RobotRunPeriodic()` and `InitRunPeriodic()` (independent of the VisionFusion gates: `!ENABLED`, no-fusion-localizer, and `skip-fused-diverged` all return BEFORE `vision.poll()`, so a heartbeat inside poll() would starve and false-alarm). Liveness signal = frame staleness: any frame ≤ `Vision.LIMELIGHT_FRESH_MAX_MS` (1000 ms) proves the camera publishes (even one with no tags — "no solve" is gameplay, not hardware failure, and never alarms); a dead/unplugged LL keeps serving its LAST result forever, so staleness growing past 1 s IS the death signal; a null result reports nothing and the heartbeat goes silent instead. Constant chosen above MT-pipeline FPS (staleness normally < 300 ms).
 
 **Heartbeat/staleness semantics:** `expect(name)` at RobotMain construction marks a system REQUIRED (TURRET when created, LIMELIGHT when `vision != null`; a comp-bot-absent LL/turret is a direct fault instead — bench rigs silence both via `IronConstants.CompBot`). A required system with no `ok()` for `HEARTBEAT_STALE_MS` (2000 ms) while RUNNING flags `"no data Xs"`. Silence windows count ONLY after PLAY and restart at the PLAY edge — init-time reporting is sporadic by design (the turret's scheduler only runs post-PLAY), so a long init can never false-alarm. The PLAY signal is `RobotMain.runPeriodicSeen`, set by `RobotRunPeriodic()` (which is ONLY called from OpMode `loop()` — `OpMode` has no public isStarted(); the flag lives package-private on `OpModeInternal`, so a reflection hack was rejected in favor of this call-path fact, which AutoOpModeBase/FusionTune/JowByTeleOp all satisfy). Direct faults (e.g. "absent at init") show immediately, even during init.
 
 **New tracker fault — ABS_STREAM_LOST (fills a real gap):** `updateFromAbsolute()` returns false ONLY when the OctoQuad read is empty (dead device / unplugged ABS wire). In hybrid ACTIVE the motor encoder keeps tracking, so this was NOT `feedbackLost()` (no brake, no latch) — the turret would keep aiming on a dead absolute path with no driver-visible trace. Now `TurretTracker` counts consecutive empty-read loops (`ABS_STREAM_LOST_LOOPS = 50`, ≈ 2.5–3 s at the measured 49–54 ms loop) and latches `faultAbsStreamLost` (getter `isAbsStreamLost()`, in `faultFragment()` + `TurretPivot.faultString()`), auto-clearing after 50 consecutive GOOD reads (a re-seated wire recovers without an OpMode restart; `clearFaults()` also clears it). Glitch-gate rejections do NOT count (the stream is alive; those stay in `absGlitchEvents`). Motor-encoder death was already covered (MOTOR_ENC / MOTOR_ENC_DIR / STUCK latches).
 
-**Compile:** `:TeamCode:compileDebugJavaWithJavac` green. **Not yet field-verified.** Bench checklist for next session: (1) on init with everything healthy the DS shows `HW: OK` and NO red banner; (2) unplug the Limelight → within ~2–3 s of PLAY: `HW: LIMELIGHT no data Xs` + red banner, Panels `HW health` matches; reconnect → both clear automatically; (3) unplug encoder B's ABS wire (or the OctoQuad) → ABS_STREAM_LOST latches in `Turret faults` and reaches the DS banner; re-plug → auto-clears after ~50 good loops; (4) remove `octoquad` from the RC config → at init the DS shows the banner `IRON HW: TURRET absent at init (...)` before PLAY; (5) verify a long init_loop never flags "no data" for TURRET (silence windows gated to PLAY); (6) verify the SDK path: force an init hardware failure and confirm our banner logic does not clobber or wipe the SDK's own global error.
+**Compile:** `:TeamCode:compileDebugJavaWithJavac` green. **Not yet field-verified.** Bench checklist for next session — see §12.24 for the corrected (warning-channel) expectations, since the first cut of this feature locked the robot out and its banner wording is obsolete: (1) on init with everything healthy the DS shows `HW: OK` and no warning text; (2) unplug the Limelight → within ~2–3 s of PLAY: `HW: LIMELIGHT no data Xs` + the `Iron HW:` warning, Panels `HW health` matches; reconnect → both clear automatically; (3) unplug encoder B's ABS wire (or the OctoQuad) → ABS_STREAM_LOST latches in `Turret faults` and reaches the DS warning; re-plug → auto-clears after ~50 good loops; (4) remove `octoquad` from the RC config → at init the DS shows `Iron HW: TURRET absent at init (...)` and **OpModes still start**; (5) verify a long init_loop never flags "no data" for TURRET (silence windows gated to PLAY); (6) confirm the SDK's own warnings still appear alongside ours.
+
+### 12.24 Session 5i — BUGFIX: the DS failure board LOCKED THE ROBOT OUT of every OpMode (global-error channel removed)
+
+**Symptom (user, first power-on with §12.23 flashed):** the Driver Station showed `To attempt recovery, please restart the robot` + `Error: Iron HW: LIMELIGHT absent at init (not in RC config)`, and **no OpMode could be started** — autonomous and TeleOp both locked out. User's constraint, verbatim: *"this is making us unable to proceed. it locks us out of auton and teleop. being unable to play in a match is worse than having hardware errors. can we keep the printed error but NOT disable the robot and the driverstation?!?"*
+
+**Root cause:** channel choice, not logic. `RobotLog.setGlobalErrorMsg()` is the SDK's **fatal** channel: a global error is by design what the DS renders as the "restart the robot" recovery prompt, and the RC refuses to init/start OpModes while it is set (it is what `RobotLog.setGlobalErrorMsgAndThrow` and the hardware-map init failures use). Using it for an *advisory* condition — a missing optional Limelight — turned a note into a match-ending lockout. §12.23's own guardrails ("only set when it changes, never clobber an SDK message") were irrelevant: we were writing the correct text into the wrong, fatal slot.
+
+**Fix — the fatal channel is gone entirely; the board now reports through advisory channels only:**
+1. **`RobotLog.setGlobalErrorMsg`/`clearGlobalErrorMsg` are no longer called anywhere in `TeamCode`** (verified by grep — the only remaining occurrence is the javadoc that explains why). Nothing we do can lock the robot out again.
+2. **New DS warning channel:** `HardwareHealth` implements `GlobalWarningSource` and registers it once (`RobotLog.registerGlobalWarningSource`, held in a `static final` field — the SDK's `globalWarningSources` is a `WeakHashMap`). Verified by javap on RobotCore-12.0.0 that `getGlobalWarningMessage()` builds `globalWarningMessage` + **every** registered source's `getGlobalWarning()` and `combineGlobalWarnings()`s them, so our text is merged with the SDK's warnings on the DS rather than replacing them. Warnings are advisory: they never gate OpMode init/start.
+3. **The DS telemetry `HW` line stays** (unchanged from §12.23) — the always-visible, unambiguous channel, and the one to trust if the warning area is scrolled or suppressed.
+4. **Edge-triggered `Log.w`** on every transition keeps the match log timeline.
+
+**Also re-verified for non-fatality:** `HardwareHealth.evaluate()` itself is pure string/collection work (no hardware calls, cannot throw), and both report sites pass already-computed strings — `TurretPivot.periodic()` reads latched fault flags and `Vision.healthPing()` wraps every `getLatestResult()`/`getStaleness()` call in try/catch. So the health path cannot throw inside `loop()` either (an uncaught exception would trip the SDK's own error/stop path — the same lockout by another road).
+
+**Design rule going forward:** *an optional or degraded subsystem never gets the error channel.* Only conditions the SDK itself would treat as unrecoverable earn `setGlobalErrorMsg`, and we do not use it at all today. Board text = "Iron HW: …" warning + `HW` telemetry line + `HW health` on Panels.
+
+**Bench verification for this fix:** (1) remove the Limelight from the RC config → DS shows the `Iron HW:` warning text, `HW: LIMELIGHT absent at init ...`, and **both TeleOp and Auto still init and start normally** (the actual regression test); (2) confirm the SDK's own warnings still appear in the same area (ours must not replace them); (3) confirm the warning clears on the next OpMode init after the hardware is restored; (4) confirm `HW: OK` and no warning text when everything is healthy.
+
+### 12.25 Session 5j — PID retune attempt from capture 20261028-011309 (⚠️ SUPERSEDED — see §12.26: most of this was wrong and has been reverted)
+
+**Capture:** 32.4 s / 746 Panels samples @50 ms (only 115 carry a distinct position — the motor-encoded position refreshes slower than the sampler, so per-move event counts are small). Six back-and-forth moves generated by hand-rotating the chassis and re-aiming: A +165.4°, B −201.2°, C +190.7°, D −172.6°, E +169.4°, F −172.5°. `Turret faults: none` for the entire capture, hybrid `ACTIVE` throughout, loop time 38.9–80.3 ms (avg 53.0). Speeds reached 576–601 deg/s (consistent with §12.22's 639). Arrival times 0.55–0.71 s. **MAX_POWER 1.0 confirmed again** — no over-current, no demotion.
+
+**Finding 1 — the overshoot came from the approach cap, not from kP/kD.** `PROFILE_GAIN_PER_DEG = 0.020` was fitted at MAX_POWER 0.50, where terminal speed was ~290 deg/s and `0.020·err` happened to be adequate braking power. At 1.0 the turret enters the braking zone at ~600 deg/s, and the cap at low error is far below what braking requires. Measured decel on this robot at ~0.10–0.30 power is ~1900 deg/s² (from 601→309 deg/s in 0.15 s), so stopping from 600 deg/s needs ~92° at 0.3 power and ~24° even at full braking. The trace shows the cap permitting **0.100 at 3.1° of error while still doing 301 deg/s** — an impossible ask. **Move E overshot +15.0°** (8.9 % of travel) exactly this way; the others were saved by luck, and A/C/D show a further pathology: at 4.41 s the turret sat at 100.26° doing 78 deg/s and *gained* to 113.17° while the PID commanded +0.287 — the mesh was being driven through the gate, not stopped by it.
+
+**Finding 2 — `POSITION_TOLERANCE_DEG` was functioning as an output deadband.** Inside the band `IN_BAND_HOLD` forces output to 0, so "within tolerance" meant "cut power and stay". Across 668 settled samples the resting error averaged **1.68°** (max 5.98°); moves B, C, E and F all parked 1.2–1.8° short and never corrected. That is a real aiming offset on a 176T ring.
+
+**Changes (all in `TurretPivot`, all `@Configurable`):**
+- `PROFILE_GAIN_PER_DEG` 0.020 → **0.050** (0.35 at 7°, 0.70 at 14°; full power beyond 20°) and `PROFILE_MIN_POWER` 0.100 → **0.220**. Braking authority now scales with entry speed; the floor is above breakaway so the last degrees have real authority.
+- `POSITION_TOLERANCE_DEG` 2.0 → **0.8** (closes the deadband; also tightens the out-of-scope margin and the `INPOSITION` gate, so "on target" now means on target).
+- `SETTLE_VEL_DPS` 15.0 → **4.0** — otherwise the hold would discharge the creep the moment it began (<15 deg/s) and re-create the deadband by another route.
+- `kP` 0.020 → **0.120**. Safe *because* the profile cap binds everywhere beyond ~1.8°, so in every manoeuvre in this capture (err 3–201°) the output is cap-limited and `kP` does not participate; it only acts in the last ~2° where the loop previously commanded ~0.048 — under the 0.10 breakaway measured in §12.12 — and stalled.
+- `KS_RAMP_DEG` 4.0 → **1.5** and `KS_ENGAGE_DEG` 0.25 → **0.15**: at a 4.0 ramp an 0.8° error got only kS·0.2 = 0.012, and at 0.25 the term was simply off for the final creep.
+- `kD` left at 0.001 and `kS` at 0.060 — the replay shows `kD` already brakes correctly on a fast arrival (2.43° at 112 deg/s → out 0.016), and raising it would damp the creep.
+- `MAX_POWER` javadoc updated: 1.0 is now the **baked** default, not a staged experiment.
+
+**Residual known gap (accepted, narrow):** an arrival *just inside* the band but still fast (e.g. 1.0° at 112 deg/s → out 0.048) neither brakes hard nor creeps; the settle-hold catches it only once velocity falls below 4 deg/s. Not observed in this capture.
+
+**Future work — velocity-aware braking (considered, deliberately deferred).** Option C from the tuning discussion: clamp acceleration to `|err| > v²/(2·a_available)` using the measured velocity, as FRC MotionMagic does. It is the better long-term architecture because it self-corrects for battery sag (this capture spans 1.26–4.36 A), mesh load and `kS` friction changes, all of which break a fixed `0.050·err` curve. Deferred because the velocity signal is thinner than the profile assumes: it is a per-loop delta on a 0.7 EMA (`VELOCITY_EMA_ALPHA`), quantized against 1024-step absolute reads, and the `v²` term amplifies a 15 % velocity error into ~30 % braking-distance error — precisely in the 3–10° band where it must be trustworthy. Recommended path: implement behind a Panels boolean defaulting **off**, then A/B the same left-right-aim cycle in one capture and compare overshoot/arrival; keep A's tuned profile as the fallback.
+
+**⚠️ Panels persistence — verify after flashing.** All changed constants are `@Configurable` on `TurretPivot`, and you had just hand-tuned them live in Panels. If Panels still holds those values they **override the new compiled defaults** and the turret will behave exactly as before. After flashing, open Panels → Config → `TurretPivot` and confirm: `kP 0.120`, `POSITION_TOLERANCE_DEG 0.8`, `SETTLE_VEL_DPS 4.0`, `PROFILE_GAIN_PER_DEG 0.050`, `PROFILE_MIN_POWER 0.220`, `KS_RAMP_DEG 1.5`, `KS_ENGAGE_DEG 0.15`, `MAX_POWER 1.0`. Any that still show the old numbers must be reset in Panels (or the config cleared) or the retune is silently inert.
+
+**Bench verification:** (1) confirm the Config page reads the new values (above) — otherwise stop; (2) repeat the same left-right-aim cycle and check for overshoot > 2° on the long sweeps (E's +15° class must be gone); (3) check resting error on several arrivals — should now be well inside 1° and the state should reach `INPOSITION` (0.8° band) rather than sitting in `MOVINGTOPOSITION`; (4) watch for a new limit cycle near the target (kP 0.120 + kS taper): the tell is power oscillating sign at a few deg/s around the setpoint — if seen, halve `kP` to 0.060 before touching anything else; (5) confirm no new `STUCK`/`OUT_OF_SCOPE`/`CRT_CROSSCHECK` faults.
+
+### 12.26 Session 5j — MOST OF §12.25 WAS WRONG: kP 0.120 + floor 0.220 produced a hard 4 Hz limit cycle (capture 20261028-012540). Reverted except the profile gain.
+
+**Prediction check:** §12.25's bench checklist item (4) said "watch for a new limit cycle near the target (kP 0.120 + kS taper) — the tell is power oscillating sign at a few deg/s around the setpoint; if seen, halve kP to 0.060". The very next capture shows it. The user's reaction ("kp overshoot looked reckless") was correct.
+
+**What the capture shows (564 samples, 27.5 s, zero faults, loop 54.0 ms avg):**
+- **Move 1** (−31.5° → +91.8°): overshoot **+11.74°**.
+- **Move 2** (+87.3° → −94.4°): overshoot **−22.86°** — *worse* than the +15.0° that §12.25 was meant to fix.
+- **Then a sustained limit cycle**: **±5.5° (10.96° p-p), 4.0 Hz, 36 power-sign flips in 4.5 s, power pinned at ±0.220**, velocity 20–74 °/s, running from 17.3 s to the end of the capture (3.4 s).
+- **`INPOSITION` reached only 3 times in 564 samples** — the turret cycled outside the 0.8° band essentially always; the 302 `BRAKED` samples are the rest positions between manoeuvres.
+
+**Root cause — my reasoning in §12.25 was backwards.** I argued "the profile cap binds beyond ~1.8°, therefore kP cannot affect the fast moves, therefore kP = 0.120 is safe." The first clause is true and it is precisely the problem: when `kP·|err|` exceeds the cap, the output **saturates at the cap regardless of error**, so kP stops being a gain and becomes a relay. A saturated position controller ignores how far it is from target — it applies full power both ways and the loop oscillates. The trace at 17.35 s: `err = −2.29°`, `vel = +38 °/s`, `kP·err = −0.275` vs `cap = 0.220` → clamped to −0.220; at 4.07° error the PID wanted 0.548, i.e. **2.4× the cap**. Measured worst-case saturation ratio below 3° was **1.64×**.
+
+**The floor made it worse and was the most damaging change.** `PROFILE_MIN_POWER` is applied unconditionally below the error where `0.050·err` crosses it (4.4°), so inside that region the controller had *zero* proportional resolution — it commanded 0.220 whether it needed 0.22 or 0.02. That is what kept the cycle alive at a constant ±0.22 and what prevented `IN_BAND_HOLD` from ever tripping (velocity never fell under the 4.0 °/s threshold I had lowered it to).
+
+**The general rule this establishes (the important lesson):** *braking authority belongs in a term that scales with error, never in a floor.* A floor cannot be "more authoritative at low error" — below its crossover it removes the very resolution the approach needs. And **the stability requirement is `kP·|err| < cap(|err|)` across the whole approach**; any set where the ratio reaches 1.0 is relay control by construction. Worst-case ratio for the shipped set is **0.70×** (flat, from 2.5° out to 10°), so it is linear everywhere.
+
+**Reverted (all back to the pre-§12.25 values):** `kP` 0.120 → **0.020**; `PROFILE_MIN_POWER` 0.220 → **0.100**; `POSITION_TOLERANCE_DEG` 0.8 → **2.0** (shrinking the band only demanded accuracy the loop could not deliver — it never reached `INPOSITION` at all); `SETTLE_VEL_DPS` 4.0 → **15.0** (the hold must trip ABOVE the chatter speed, not below it); `KS_RAMP_DEG` 1.5 → **4.0** and `KS_ENGAGE_DEG` 0.15 → **0.25** (±0.060 of uncontrolled drive right at the target was a third of the floor, on top of an already-saturated P term).
+
+**Kept:** `PROFILE_GAIN_PER_DEG` 0.020 → **0.050**, and `MAX_POWER` baked at 1.0. The gain is the one part of §12.25 that is structurally sound: it raises braking authority exactly where the original overshoot was starved (at 3.1° error the cap goes 0.100 → 0.155) while *lowering* the saturation ratio that a large kP would create (a bigger cap can only make `kP·err/cap` smaller). Note the honest caveat: 0.155 at 3.1° of error is still well short of the ~0.3+ a 300 °/s arrival wants, so **this capture does not show whether 0.050 fixes the E-overshoot class at all** — that is untested, because the kP/floor changes destroyed the experiment.
+
+**Final shipped set:** MAX_POWER 1.0, kP 0.020, kI 0.000, kD 0.001, kS 0.060, KS_RAMP_DEG 4.0, KS_ENGAGE_DEG 0.25, SETTLE_VEL_DPS 15.0, POSITION_TOLERANCE_DEG 2.0, PROFILE_GAIN_PER_DEG 0.050, PROFILE_MIN_POWER 0.100. Compiles clean.
+
+**Next capture must isolate ONE variable.** Do not change the gain again until the baseline (gain 0.050, everything else reverted) is measured on the same left-right-aim cycle: report overshoot per move, resting error, and whether any power-sign chatter appears near the target. If the E-class overshoot persists at 0.050, the answer is the velocity-aware braking profile from §12.25 (behind a Panels boolean, default off) — **not** a bigger floor and **not** a bigger kP.
+
+**⚠️ Panels persistence — same warning as §12.25, now doubly important.** These are `@Configurable` and the robot may still hold the §12.25 values. After flashing, confirm on Panels → Config → `TurretPivot`: `kP 0.020`, `PROFILE_MIN_POWER 0.100`, `POSITION_TOLERANCE_DEG 2.0`, `SETTLE_VEL_DPS 15.0`, `KS_RAMP_DEG 4.0`, `KS_ENGAGE_DEG 0.25`, `PROFILE_GAIN_PER_DEG 0.050`, `MAX_POWER 1.0`. **If Panels still shows kP 0.120 and a floor of 0.220, the limit cycle will come straight back** — clear the config before testing.
+
+### 12.27 Intermittent `CRT_CROSSCHECK` errors: the check was right both times — one cause was the §12.26 limit cycle, the other is A's ~10 Hz staleness. Added a freshness proof (`CRC A/B age`).
+
+**Question:** "why am I getting CRT crosscheck errors every once in a while? that has happened a few times tonight."
+
+**Answer — the check never faulted tonight, and it never lied.** Across the two night captures the fail counter peaked at **3** (011309: **0**), against a latch threshold of 5, so nothing latched. Where it did rise, it was reporting real disagreement:
+
+**Cause 1 — the §12.26 limit cycle (tonight's main contributor).** In 012540 at t≈2.4–3.4 s, while `BRAKED`/`MOVINGTOPOSITION`, the raw pair reads:
+
+| t | crtA | absB | absB − crtA |
+|---|---|---|---|
+| 2.82 | 887 | 998 | 111 |
+| 2.98 | 422 | 555 | 133 |
+| 3.08 | 928 | 13 | 109 |
+| 3.18 | 67 | 182 | 115 |
+| 3.28 | 134 | 243 | 109 |
+
+`absB − crtA` is constant (~110, within quantization), so **both encoders agree with each other** and the turret really moved. Wrapping-corrected through the 176/31 A-ratio, encoder A shows **35.85° of physical travel in ~1 s** with the motor commanded to oscillate. The tracker's motor-encoded position therefore disagreed with A because the mechanism really was swinging — the crosscheck did its job. The §12.26 revert should eliminate this class.
+
+**Cause 2 — encoder A PWM staleness during fast motion (pre-existing, benign).** Encoder A's PWM measurement refreshes at only ~10 Hz while the motor encoder integrates every loop, so mid-slew A is up to ~100 ms behind. At 582 °/s that is a legitimate ~58° of apparent disagreement; the speed-aware tolerance (`3.0 + 0.10·|vel|`) only partially covers it. 011309 shows this benignly: max 2.15° at 395 °/s and 2.40° at 7 °/s, **0 fails**. Same class as the WATCH→ACTIVE transient documented in §12.21/§12.22. Note this is *why* the check is speed-gated (`CRT_CHECK_MAX_SPEED_DPS = 120` cuts the check entirely above 120 °/s) — but between 40 and 120 °/s the tolerable-window math is thin, which is where borderline excursions come from.
+
+**Historical pattern (all captures, max fails per capture):** 0 for 023818/025502/022708/030728/035831/005022/010452/010811/**011309**; 1–6 for most others; 204 (003251) and 116 (034539) in the two bug-era captures; exactly 5 once (025055 @ ~12 s) which is the only genuine latch on record. Fails arrive in short bursts, not continuously — consistent with the two causes above rather than a persistent slip.
+
+**Added (§12.27) — `Turret CRC A age (ms)` / `Turret CRC B age (ms)`.** `OctoQuadAbsoluteSource` now timestamps the local-loop second at which each channel's raw pulse width last CHANGED, and reports the age every loop. This makes the next capture self-diagnosing — the decision table:
+
+- Crosscheck excursion **with A age ≳ 100 ms** → PWM staleness. Benign; the tolerance model needs work, not the hardware.
+- Crosscheck excursion **with A age near one loop (~50 ms)** → A is fresh and genuinely disagrees with B/motor ⇒ **real** divergence (slipped magnet, drifting chain). That is the case that should latch, and it is a mechanical fix.
+- Ages on **both** channels climbing together while the turret is commanded to move → the OctoQuad itself has stalled (different thread of investigation).
+
+No behaviour change — telemetry only. Compiles clean (`:TeamCode:compileDebugJavaWithJavac`).
+
+**Also noted (benign, not a bug):** in 012540 at 3.39 s the crosscheck jumps +4.36° → +0.36° in one sample with both raw encoders frozen at 134/243. That is the tracked stream being re-anchored (at-rest hard anchor) while A is static, and it self-resolves. It is worth knowing because it looks alarming on a graph and is not a fault.
+
+### 12.28 Session 5k — runaway post-mortem (capture 20261028-013546) + first clean validation run (capture 20261028-015806)
+
+**The runaway.** Turret spun CCW past the ±180 soft limits and pulled wires. Three of my earlier hypotheses were tested against the data and REJECTED — recorded here so they are not retried:
+
+1. *"A whole wrap aliased in one loop."* **Rejected.** Replaying every fresh-reading interval gives implied rates of 8–325 °/s, all physically plausible; nothing exceeds the mechanism's ceiling. Encoder A and B always flip sign together (A/B raw deltas −394/−488, +494/+469, …), so the encoders never disagreed and nothing slipped. The 73° jump at 10.05 s was **real travel at ~487 °/s** integrated across 2–3 PWM refreshes, not a decode error.
+2. *"A fixed tracked-vs-A divergence threshold."* **Rejected as structurally impossible.** `TurretCrt.crosscheckDiffDeg` is computed `mod 1` on encoder A, i.e. **modulo one A-revolution = 63.4° of turret travel**, so a divergence at a wrap multiple reads as ~0. Replaying this capture through a 31.7° threshold: peak reading **30.12°** — it would NOT have fired, though the true error was ~149°. A modulo witness cannot bound an error.
+3. *"A physical-continuity guard would catch it."* **Built, kept, and verified insufficient.** It fires only above 1200 °/s; the capture's maximum is 325 °/s, so it would NOT have fired either. Kept anyway because it costs nothing and does catch genuine decoder faults — but it is not the answer to this event.
+
+**What IS established:** (a) the reported position never left **[−91.08, +4.47]** for 36 s while the turret physically travelled 150°+, so the soft-limit guard, `OUT_OF_SCOPE` and `TurretPivot_OK` — all gated on `currentPosition` — were blind, and `Turret OK` read **true for all 713 samples**; (b) power sat at **+0.400** (the old PWM-only cap) while the estimate oscillated ±30° per reading; (c) `MOTOR_ENC_DIR` latched at 10.35 s when a real −73° step was decoded as **+18.5°** by the moving monitor, demoting the hybrid to PWM-only at full speed. **(c) is a confirmed false latch** and was fixed.
+
+**Changes shipped:**
+- `PWM_ONLY_MAX_POWER` 0.40 → **0.15** (~90 °/s). Encoder B's PWM was measured at **7.9 Hz**, its wrap interval is **65.45° of turret travel**, so the shortest-path unwrap is only valid below half a wrap per fresh reading ≈ **259 °/s**. 0.40 put the fallback at ~240 °/s — right on the edge. 0.15 gives a 3× margin. The encoder-B fallback is a degraded mode and must be slow to be safe; full speed stays available in hybrid ACTIVE.
+- `anchorWhileMoving` now treats a near-antipodal PWM interval (≥0.8 × half-wrap) as **no evidence** rather than as evidence, so a wrong-signed wrap can no longer latch a false `MOTOR_ENC_DIR`.
+- New `POSITION_DIVERGED` fault: physical-continuity brake (`CONTINUITY_MAX_DPS` 1200, 2 consecutive loops), auto-clearing when the stream becomes plausible again, and folded into `TurretPivot_OK` so readiness/aim gating sees it.
+
+**Still unexplained (stated plainly):** *why* the PWM-only estimate diverged. The speed cap keeps the fallback inside the regime where encoder B can be trusted, which is the best available mitigation, but the divergence mechanism itself was not proven. The open question to settle with the `CRC A age (ms)` / `CRC B age (ms)` telemetry now flashed: during a divergence, was encoder A's reading fresh or stale? Note also that at 16.31 s the motor drew **1.00 A at zero velocity** before motion — worth checking for a mechanical bind/cable at power-on, which may have contributed.
+
+**Validation run — capture 20261028-015806 (820 samples, 41.4 s): CLEAN.** Zero faults for all 820 samples, `Turret OK` true throughout, hybrid reached ACTIVE at 6.31 s and never demoted, max current 2.48 A, loop 64.3 ms avg (43.3–97.6). Five ~90° turns:
+
+| move | travel | max vel | overshoot | final err | arrive |
+|---|---|---|---|---|---|
+| M1 | −79.3° | 456 °/s | 1.87° | −0.88° | 0.76 s |
+| M2 | +170.9° | 576 °/s | **9.71°** | −0.08° | 1.41 s |
+| M3 | −161.2° | 560 °/s | 1.96° | +0.32° | 0.46 s |
+| M4 | +174.2° | 580 °/s | 1.83° | −1.33° | 0.42 s |
+| M5 | −155.3° | 536 °/s | 4.44° | −1.90° | 0.57 s |
+
+**The §12.26 profile gain (0.050) works: mean overshoot 3.96°, and the §12.25 E-class failure (>15°) is GONE.** Compare the old gain (0.020) which produced +15.13° on an equivalent 169° move, and the broken §12.25 tunes which produced +11.74° then a 4 Hz limit cycle. Arrival times 0.42–1.41 s at 456–580 °/s.
+
+**Residual issue — M2's lightly-damped ring.** M2 shows 6 error sign-flips decaying −9.72 → +3.74 → −7.77 → +6.34 → −4.85 → +2.46° over ~1.1 s (~1.2 Hz). It is NOT a travel effect: M3 and M4 are the same ~170° travel with 1.96° and 1.83° overshoot. M2 is the move that starts from a long BRAKED period (stiction) and is the only one entering the braking zone at 576 °/s with the target still 32° away. Candidate fix if it recurs: lower `PROFILE_GAIN_PER_DEG` slightly (0.050 → 0.042) so the cap binds earlier at high entry speed, or add a small velocity-aware term — but do NOT reintroduce a floor or raise kP (both proven harmful in §12.26). One sample is not enough to tune on.
+
+**The "slow first second" is the new safety cap, working as intended.** The first move began at t=6.00 in hybrid **WATCH** mode, capped at `PWM_ONLY_MAX_POWER` = 0.15. It took 0.31 s to confirm direction (6° PWM + 3° motor encoder, same sign) before promoting to ACTIVE and applying full power. That is the exact trade bought by §12.28: ~0.3 s of slow creep at the first powered motion of every OpMode, in exchange for a fallback that cannot outrun its own feedback. If that 0.31 s is judged too costly, reduce `MOTOR_ENC_CONFIRM_PWM_DEG` (6.0 → 4.0) rather than raising the cap.
+
+**"Spin while activated" was not exercised.** From t=28 the setpoint moved only **2.5°** (−79.1 → −76.6) across 13.4 s, so the turret correctly sat in the settle-hold with power 0. A real spin would move the setpoint hundreds of degrees per second. Either the aim goal was not held during the rotation or the chassis was not actually rotating — worth confirming next session, because continuous-tracking performance (the `yawRateDps` feedforward path) remains unmeasured.
+
+### 12.29 Session 5k — continuous tracking measured (capture 20261028-020743) and `kV` enabled from data
+
+**The capture finally exercised continuous tracking**: robot spun the whole time with the turret aimed. 473 samples, 23.9 s, **zero faults**, `Turret OK` true throughout, max current 6.59 A, loop 59.9 ms, aim loop **66.4 ms**. Yaw rate: mean |yaw| 123 °/s, **p90 300 °/s, max 318 °/s**. Aim error: median 17.4°, p90 62.7° (inflated by spin reversals and the axial wrap around ±180).
+
+**Finding 1 — `YAW_FF_SCALE = 1.0` is working correctly.** At 120 °/s with a 62 ms loop the setpoint sits **7.2–8.5° ahead** of the raw bearing, exactly `yawRate × dt × 1.0`. It is supplying its full designed lead. It is simply **not the dominant error term**: measured over 23 steady-tracking samples (mean 127 °/s, 66.4 ms), the residual aim error is **−16.3°** while ff supplies 8.4°. So removed, it would be noticeably worse (~25°); it is not the thing to change.
+
+**Finding 2 — the turret DOES keep up; the error is a constant offset.** Median `|vel|/|yaw| = 1.03` across the high-rate window: the turret counter-rotates at the chassis rate correctly. (The apparent 191/262 "sign disagreement" between `Aim chassis yaw` and `Turret velocity` is NOT a fault — the chassis spins +117 °/s CCW and the turret must counter-rotate at −117 °/s to hold a field bearing. An early filter of mine wrongly required matching signs and returned zero rows; worth remembering.)
+
+**Finding 3 — the root cause is `kV = 0.000`.** The turret had **no velocity feedforward of its own**: `desiredVelocityDps` was computed and passed into `GotoSafeAngle(...)` every aim loop, but `ff = kV * desiredVelocityDps` multiplied it by zero. A pure position loop must hold a standing error to generate the power to move at all, so tracking a spinning chassis leaves a fixed offset that no setpoint lead can remove. This is the textbook symptom of a missing kV.
+
+**`kV` derived from data, not guessed.** 155 samples of genuine steady tracking (|yaw| 106–318 °/s, turret velocity magnitude matching the spin within 30 %, power outside saturation) give power/rate directly:
+
+- median `|pw|/|vel|` = **0.00197**, mean 0.00193, range 0.00028–0.00317 (low tail = deceleration transients, rejected via the band).
+- Cross-check vs the trace: `0.0020 × 140 °/s = 0.28` power, matching the observed 0.24–0.34 in those rows.
+- Sign check: chassis +117 °/s → `desiredVelocityDps` = −117 → ff = −0.234; observed power there was **−0.225**. Magnitude AND sign agree.
+
+**Shipped: `kV = 0.0020`** (was 0.000). Interaction audit before committing:
+- at rest and when seeking a **static** target, `desiredVelocityDps = 0` so ff = 0 — the entire §12.26-tuned approach is untouched;
+- at 300 °/s tracking, ff = 0.60 against a profile cap of ~0.80 (error ~16°), so it fits;
+- worst case (max spin at ~2° error) the cap clamps ff away — safe, and correctly defers to the approach shape;
+- ff does not bypass the soft-limit guard (which runs on the post-clamp `out`) and does not fight `IN_BAND_HOLD` (which only engages when slow).
+
+**Bench verification:** hold aim while spinning at ~120–180 °/s and watch `Aim err (deg)`. Pre-change baseline is ~16° at 127 °/s; a correct kV should cut that substantially (the standing-error component, not the fusion-latency component). Watch for the turret running *ahead* of target (error changing sign and growing as spin increases) — that means kV is too high and should be reduced toward 0.0015. Note that `Aim err` is computed on the **fused** pose, so some of the residual is pipeline latency and will not respond to kV at all; do not chase that remainder with `YAW_FF_SCALE` beyond ~1.5.
+
+### 12.30 Session 5k — `kV` VALIDATED (aim error 17.4° → 3.8°), stop-overshoot traced to the profile cap withholding brakes, ±186 out-of-scope made non-sticky
+
+**Capture 20261028-021810** (375 samples, 18.9 s, kV = 0.0020 live). Zero diverged/encoder faults; `OUT_OF_SCOPE` latched from start to end; max current 6.59 A; mean |yaw| 93 °/s, p90 286, max 323; aim dt 66 ms.
+
+**kV works — big win.** Aim error **median 17.4° → 3.8°** (p90 62.7° → 44.5°) versus the pre-kV capture 020743 at comparable spin rates. The user's read ("worked pretty good") matches the data. Keep 0.0020.
+
+**Finding — the stop-overshoot is NOT a gain problem; the profile cap was withholding brakes.** Decomposing every high-speed sample: **17 of 58** had the brake request exceeding the cap. The cap is `|error| × 0.050` floored at 0.100 — sized off |error| alone, which silently assumes low speed. When the robot stops spinning, |error| is small *and* the turret is still carrying 250–400 °/s, so the cap collapses to 0.10–0.15 precisely when maximum braking is needed:
+
+- t=4.75: err 0.7°, vel 271 °/s → `kD` asked **−0.27**, cap allowed **−0.10**
+- t=4.24: err −3.1°, vel 292 °/s → asked **−0.29**, allowed **−0.15**
+- t=13.44: err −3.1°, vel −357 °/s → asked **0.36**, allowed **0.15**
+
+**Fix (structural, no gain changed): the profile cap is skipped when it would oppose current motion.** A cap that fights the velocity is not shaping an approach, it is withholding brakes. `kD` already supplies a correctly-sized opposing request, and `effectiveMaxPower()` still bounds the result, so nothing is unbounded. Replay of the capture: braking outputs go −0.10 → **−0.26**, −0.15 → **−0.35**, 0.15 → **0.30**, while **every non-braking row is byte-identical** — the §12.26-validated approach behaviour is untouched. Also helps the settling ring: while oscillating away from target the corrective kick is no longer throttled.
+
+**`kD` deliberately NOT changed (0.001 stays).** Considered raising it to 0.002 for the same symptom, then rejected on evidence: `kD`'s request was already right-sized (−0.27 power for a 271 °/s arrival that needs ~0.3). Doubling it would command ~0.54 — double the measured requirement, guaranteeing a reversal past the target in the other direction. That is the identical mistake to kP = 0.120 in §12.25. The fix belonged in the cap, not the gain.
+
+**`OUT_OF_SCOPE` (the ±186 excursions) — real, minor, previously sticky.** Only **6 of 375 samples (1.6 %)** were out of range: +186.2 at t=10.61 and −186.2 at t=13.85, each returning within ~0.15 s, ending at +101.8. Crosscheck stayed ≤2° with 0 fails and both encoders tracked, so it was genuine motion, not a reporting artifact — the turret physically kissed 6.2° past the limit. Two structural fixes:
+1. **`EDGE_SLOW_ZONE_DEG` 20 → 40.** At ~300 °/s with a ~50 ms loop the turret covers ~15° per loop, so a 20° zone left ~1 loop to react and it physically could not stop (at t=10.51 it was at +143.1° doing 293 °/s with 36.9° to go). 40° gives 2–3 capped loops to scrub speed.
+2. **`OUT_OF_SCOPE` no longer sticky.** It cleared only via `clearFaults()`, so a 0.3 s overshoot left the fault showing for the remaining 18 s — a fault that cannot clear is indistinguishable from a live one and trains the driver to ignore it. Now latches while out, logs and clears on return, exactly like `POSITION_DIVERGED`.
+3. **`TurretPivot_OK` now includes `OUT_OF_SCOPE`.** It reported **true for all 375 samples** while 6° past the limit — anything gating readiness/aim on OK was blind. Same class as the §12.28 "safety logic gated on position" lesson.
+
+**Bench verification:** (1) spin, then stop abruptly — the stop-overshoot should be markedly smaller; watch `Turret velocity` at the moment of stopping and confirm the power spike is larger (0.26/0.35 rather than 0.10/0.15); (2) approach ±180 at speed and confirm no `OUT_OF_SCOPE` latch, or if it trips, that it clears on return; (3) confirm normal 90° turns overshoot no worse than the current ~2–4° (the cap skip must not have loosened approaches); (4) confirm `Aim err` stays near the 3.8° median while spinning; (5) if a static-target arrival now shows a short brake-then-creep step, that is the cap skip working on the outbound side too — reduce `PROFILE_MIN_POWER` before touching `kD`.
+
+### 12.31 Session 5k — "wobbly" root-caused: seam-driven velocity slams. Continuous setpoint shipped BEHIND A DEFAULT-OFF FLAG; `INPOSITION` now requires low velocity
+
+**Capture 20261028-024655** (568 samples, 28.7 s, zero faults, no OUT_OF_SCOPE, current max 3.46 A, loop 62.7 ms). Aim error median 3.8°, "on target" 269/511. The user reported it still felt wobbly in real life.
+
+**First: several of my own intermediate readings were wrong and are recorded so they are not repeated.** (a) The 3.11° "settle wobble" I flagged early was not real — the final settle (t=22–28.7) holds err 0.48–0.55° at zero power, which is excellent; the 3.11° span was the approach, not the settle. (b) My first "turret reversals" count was partly an artifact of a sign detector tripping on 300° setpoint jumps. (c) A replay that fed the RECORDED setpoint back through the new selector was circular and proved nothing — it can only be tested on synthetic raw requests, which is what settled the design.
+
+**The real defect: 17 velocity slams.** While the chassis spun steadily, turret velocity changed by **415–809 °/s in ~0.1 s** (4,000–12,000 °/s²). Nothing mechanical can do that; it is the motor slamming to arrest and reverse. Mechanism at t=17.04–17.90: turret at +140.5 tracking setpoint +153.6 at 0.35 power; crosses the seam; `pos=174.1, sp=−170.3`; power slams to **−1.00**; the turret dives to **−569 °/s**, overshoots to −12.4, then reverses to +64 and hunts back. **`chooseTurretSetpointDeg` is stateless**, so it re-derives `current + shortestPathError` every call; as the aim point sweeps across ±180 the "shortest path" from the current position keeps changing and setpoint and turret chase each other around the seam. Also: 7 setpoint jumps of 300+° in a single sample.
+
+**Fix shipped DARK — `CONTINUOUS_SETPOINT = false` (Panels-togglable).** New `continuousSetpointDeg`: keep the setpoint on a continuous chain and advance it by the shortest signed delta to each new request, so a request wrapping +170 → −175 advances the chain to +185 instead of jumping 345°. Verified by simulation on a bearing sweeping through the seam at 300 °/s with a lagging turret:
+- stateless (current behaviour): setpoint jump **345°** at the crossing, turret never converges;
+- continuous: setpoint step is a smooth **15°/sample**, zero slams, tracking error **0.0°**.
+
+Two designs were tried and rejected before this one: clamping the chain to ±180 (re-introduced the 345° jump via the twin fallback — identical output to stateless), and an unbounded chain (makes `error` grow without limit, pinning `atSetpoint()` at MOVINGTOPOSITION forever). The shipped version bounds the chain at one revolution past each limit, which never engages in real tracking.
+
+**Division of labour, deliberately:** the setpoint now describes where the TARGET is (possibly just outside the window); the existing soft-limit output guard (`if pos >= MAX && out > 0 → out = 0`) is what stops the MECHANISM. The turret parks at ±180 and waits for the bearing to come back, instead of slamming through. Audited all six `setPointPosition` consumers — `atSetpoint` (L840), the drive path's plain error (L1278), `NudgeDeg` base, the two boot resets and telemetry — all correct with an unwrapped value, and `GotoPositionDeg` does not re-clamp, so the chain reaches the PID intact. `resetSetpointContinuity()` runs in `BRAKE()` so a released-then-re-aimed turret never inherits a stale chain. With the flag off, the code path is byte-identical to the validated stateless chooser.
+
+**Also fixed: `INPOSITION` at speed.** `atSetpoint()` checked position error only, so capture 024655 reported INPOSITION at **−272 and +303 °/s** (8 samples) — the turret was flying THROUGH the setpoint, and anything gating on "in position" (readiness / fire-enable) would fire mid-sweep. It now also requires `|velocity| <= SETTLE_VEL_DPS`, the same criterion the settled-hold already used, so state and hold agree on what "arrived" means. **This change is live immediately** (not behind a flag) because it only makes a gate stricter.
+
+**Bench verification:** (1) with the flag OFF, confirm nothing regressed (approaches, settle, aim error unchanged); (2) flip `CONTINUOUS_SETPOINT` ON and sweep the aim across ±180 at speed — the wobbly slam must disappear and `Turret setpoint deg` must move smoothly instead of jumping 300°; (3) verify the turret parks at ±180 rather than crossing it when the target sits outside the window, and resumes when the bearing returns; (4) confirm `INPOSITION` now only appears at low speed (watch `Turret state` vs `Turret velocity deg/s`); (5) if the flag-on path hunts or parks unexpectedly, flip it back — the off path is the previously validated behaviour.
+
+### 12.32 Session 5k — continuous setpoint CONFIRMED A FAILURE (capture 20261028-030142); flag parked permanently off
+
+**Capture 20261028-030142** (348 samples, 17.6 s): the flag was turned on. **The turret stopped tracking entirely** — the user: "i have to 'unwind' the entire robots positions to get the turret to track again."
+
+**Mechanism, exactly as predicted when shipping it dark:** the chain ran to **+270.5°** (range −267.9..+270.5) while the turret can only reach +180. The soft-limit output guard then zeroed power every loop, so the turret sat **PARKED at 188.76° with a 77° error and zero power**, unrecoverable without physically rotating the robot. `OUT_OF_SCOPE` latched for 94 samples.
+
+**Fold-back attempt (also shipped, `CONTINUOUS_SETPOINT_SLACK_DEG` now unused):** folding the chain by 360 when it leaves the window DOES remove the dead state (+265 → −95 is an 85° reachable move), but it re-introduces the 345° setpoint jump that the continuous mode existed to remove. Simulated: a continuously sweeping bearing inevitably reaches any bound, so the fold always costs one large reversal. Continuous+fold therefore behaves like stateless while adding machinery.
+
+**The deeper lesson from simulation:** the stateless "jumps" were never the root cause. A turret covering 360° in ~0.6 s can follow a seam crossing every 1.2 s. The slams in 024655 came from arriving at the seam at 500–600 °/s — an approach-speed problem, not a setpoint-selection problem.
+
+**Outcome: `CONTINUOUS_SETPOINT` stays `false` permanently.** Do not re-enable without a fundamentally different design (e.g. rate-limiting the *bearing* slew instead of chaining the setpoint). The fold-back guard is retained purely so the dead state cannot recur if someone experiments.
+
+### 12.33 Session 5k — settle time: `kD` 0.001→0.004 killed the limit cycle but stopped 0.29° short; stiction breakaway floor added
+
+**Capture 20261028-030715** (1068 samples, 54 s, zero faults) with `kD = 0.004`.
+
+**What `kD` 0.004 fixed:** at a constant setpoint (67.27° for 7.04 s) the turret now settles to **−0.10° at zero power and holds for 6.8 s**. Before, it rang ±5.6° at 1.79 Hz indefinitely. Across steady-setpoint windows: best-error mean **21.4° → 3.2°**, excursion mean **50.2° → 17.3°**, velocity reversals at small error **14 → 9**.
+
+**Why it is not the answer:** the turret finishes **0.2–1.0° short and goes BRAKED**, sitting there — **206 of 1068 samples (19 %)** are BRAKED-and-off-target. At t=6.32 it reached −0.29°, braked, and did not report `INPOSITION` for 6.2 s. That is the "does not arrive promptly": physically 0.29° off.
+
+**Root cause of the short stop:** at err 0.29° the loop can only muster `kP·e` (0.006) + `kS·taper` (0.004) ≈ **0.010 power**, far under the mesh's ~0.10 breakaway (030728: 0.060 stalled, 0.10 moved). Nothing moves; the brake holds it.
+
+**Two of my own hypotheses were tested and REJECTED this session before landing this fix** (recorded so they aren't retried): (a) that `PROFILE_MIN_POWER` *forced* drive — it is a **cap**, not a drive, and can only limit, never push; (b) that the loop was accelerating into the target — replaying the cycle shows power **opposing** velocity in **52 of 52** relevant samples, i.e. it was already decelerating correctly.
+
+**Fix shipped — a stiction breakaway floor, distinct from `PROFILE_MIN_POWER`:** a genuine **minimum drive** (`STICTION_BREAKAWAY_POWER = 0.10`) applied only when **all** of: `|error|` is inside `POSITION_TOLERANCE_DEG + 1.5` band, `|error| > 0.15` (never fight the settle band), and `|velocity| <= 6 °/s` (only a stopped turret needs breaking away). Same sign as the error, applied before the final clamp so every safety cap still wins.
+
+**Verified against the data before committing:** it would fire on **54 samples in the 030715 capture** (where 39 are pure stalls) and on only **4 of 23** samples of the old limit cycle — and those 4 are near-zero-velocity turnarounds where the loop already commanded −0.09 and the floor gives −0.10. The velocity gate excludes the 34–71 °/s swings that actually drove the ringing, so **it cannot re-create that limit cycle**.
+
+**Settings now:** `kD = 0.004` (keep), `STICTION_BREAKAWAY_POWER = 0.10`, `STICTION_BREAKAWAY_VEL_DPS = 6.0`, `STICTION_BREAKAWAY_MAX_ERR_DEG = 0.15`, `STICTION_BREAKAWAY_BAND_MARGIN_DEG = 1.5`, `CONTINUOUS_SETPOINT = false`.
+
+**Bench verification:** (1) approach a static target and confirm it CLOSES to <0.2° instead of stopping 0.3–1.0° short, and that `Turret state` reaches `INPOSITION` promptly; (2) confirm no new ringing at the target (the tell would be power alternating sign at a few °/s — if seen, set `STICTION_BREAKAWAY_POWER = 0` first, then reduce); (3) confirm normal 90° moves settle no slower than before; (4) confirm `INPOSITION` is reached within ~0.2 s of physically arriving.
+
+### 12.34 Session 5k — SIMPLIFICATION: both experiments REMOVED. Back to the plain PID; user tunes by feel.
+
+**User decision:** "remove the floor, remove the code for the continuous, i guess lets make it simpler. and i will just pid tune to preference."
+
+**Capture 20261028-031601 settled two open questions and both went against my last two recommendations.**
+
+1. **`kD = 0.004` is worse than `0.001` in practice.** The capture contains a mid-run changeover (visible as `|pw|/|vel|` dropping from ~0.0044 to ~0.0020 around t≈12 s). At `0.004` the turret reaches the band and **parks** (repeated `BRAKED` at 0.3–1.0° off). At `0.001` it settles inside tolerance and reads `INPOSITION`. The user's read across two captures — "`.001` was still much better than `.004`" — is consistent and beats my metric: the "1.79 Hz limit cycle" I measured in 025654 was largely **aim-tracking churn**, not a settle defect, so `kD` was the wrong lever.
+2. **The stiction breakaway floor (§12.33) was wrong and has been REMOVED.** Its trigger was `|err| > 0.15`, but `POSITION_TOLERANCE_DEG = 2.0` means an error of 0.58–1.39° is **already arrived**. In 031601 the floor would fire on **40 samples of already-settled turrets** (e.g. t=18.68, err 0.65, vel 0, pw 0, `INPOSITION`) — kicking a turret that was holding perfectly still at zero power, fighting the settled-hold by design. The 030715 evidence it was built on ("19 % BRAKED while off-target") had counted settled-but-released turrets as stalls.
+
+**Removed from `TurretPivot`:** `STICTION_BREAKAWAY_POWER`, `STICTION_BREAKAWAY_VEL_DPS`, `STICTION_BREAKAWAY_MAX_ERR_DEG`, `STICTION_BREAKAWAY_BAND_MARGIN_DEG`, the floor block in `driveOutput`, `CONTINUOUS_SETPOINT`, `CONTINUOUS_SETPOINT_SLACK_DEG`, `continuousSetpointDeg()`, `resetSetpointContinuity()`, the `continuousSetpoint` field and the branch in `GotoSafeAngle`. `GotoSafeAngle` is back to a single stateless `chooseTurretSetpointDeg` call. Verified no other file referenced them; `:TeamCode:assembleDebug` green.
+
+**⚠️ A `Set-Content -Encoding UTF8` on this file double-encoded the entire source (115 mojibake markers — `Â§`, `â€”`).** It was repaired in place by reversing the double-encode and rewritten as UTF-8 *without* BOM; verified 0 markers remain. **Lesson: never rewrite these Java sources with PowerShell `Set-Content`** — use the edit tool, or `[System.IO.File]::WriteAllText` with `UTF8Encoding($false)`.
+
+**Final state — plain PID, user-tunable:**
+
+| constant | value |
+|---|---|
+| MAX_POWER | 1.0 |
+| PWM_ONLY_MAX_POWER | 0.15 |
+| kP / kI / kD / kS | 0.020 / 0.000 / **0.001** / 0.060 |
+| kV | 0.0020 |
+| KS_RAMP_DEG / KS_ENGAGE_DEG | 4.0 / 0.25 |
+| POSITION_TOLERANCE_DEG / SETTLE_VEL_DPS | 2.0 / 15.0 (`IN_BAND_HOLD` true) |
+| PROFILE_GAIN_PER_DEG / PROFILE_MIN_POWER / PROFILE_LITE_ENABLED | 0.050 / 0.100 / true |
+| EDGE_SLOW_ZONE_DEG / EDGE_MAX_POWER | 40.0 / 0.35 |
+
+**Kept because they were validated on hardware:** `kV = 0.0020` (aim error median 17.4° → 3.8° while spinning), `PROFILE_GAIN_PER_DEG = 0.050`, `MAX_POWER = 1.0`, the §12.30 brake-override on the profile cap, the §12.28 runaway guards (`PWM_ONLY_MAX_POWER` 0.15, continuity check, false-`MOTOR_ENC_DIR` fix), `INPOSITION` requiring low velocity (§12.31), and the non-sticky `OUT_OF_SCOPE`.
+
+**Guidance for hand-tuning:** `kP` and `kD` are now the whole game and they interact through the profile cap — at any |err| beyond ~1.8° the cap binds and both gains are irrelevant, so tune them **only** by watching behaviour inside ~2° of target. Do not reintroduce a drive floor (proven to disturb settled turrets) and do not chase the seam churn with setpoint logic (proven to dead-lock).
 
 ---
 
@@ -882,3 +1147,43 @@ Every gate block disappears; the only remaining blocks are legitimate flywheel s
 - The autos still call `robot.PosServ.toPos(0.5 / 1.0 / 0.0)` directly (L_ShootLFlowerShootL, RightAuto, R_ShootPark). Those were pre-existing and are unrelated to the fire policy, but they will sweep an unattached servo when run — worth cleaning up when the gate lands.
 
 **Compile:** `:TeamCode:assembleDebug` green.
+
+---
+
+## 14. Ramp servo reversal did nothing (capture 20261029-012050) — double-negation, fixed
+
+**Symptom (user):** "our ramps servo reversing is not taking place. we compiled with a servo reversed (we set true to false) and we compiled with a servo not reversed. we also tried changing servo direction for the ramp using the dashboard. so it does not seem to take place. but the dashboard reads that the servos are going to the correct positions."
+
+### 14.1 Root cause: direction was applied TWICE, so it cancelled
+
+Ramp mirrored direction in two independent places:
+
+1. **The value** — `output(target, reversed)` returns `1.0 - target` when reversed, used by `writeNow()` and the constructor.
+2. **The channel** — `applyDirections()` called `Servo.setDirection(REVERSE/FORWARD)`, and it ran from **`periodic()` every single loop**.
+
+Two mirrors in series is a double negative. Flipping `LEFT_REVERSED` / `RIGHT_REVERSED` changed *both* the value and the channel direction, so the physical horn did exactly what it did before. That is precisely "we set true to false and it does not take place".
+
+**The per-loop call was a second, independent bug:** because `periodic()` re-asserted direction every loop, it was the last word on the channel and silently overwrote any direction set on the DS or in the RC config — which is why a dashboard-side change also had no effect. Re-writing `setDirection()` at loop rate is also bad practice on the Lynx (it re-inits the servo output).
+
+**Capture evidence:** presets read `UP 0.000  DOWN 0.500` and the telemetry showed `tgt 0.000 -> out 0.000`, never `1.000`. With reversal active the value mirror should have produced `1.000`; seeing `0.000` confirms the two mirrors were cancelling and the written value was never actually flipped.
+
+### 14.2 Fix — mirror in exactly ONE place
+
+- `applyDirections()` **deleted**; all three of its call sites (constructor, `setPositionImmediate()`, `periodic()`) removed.
+- `output()` is now the **single** place direction is applied, and its javadoc says so explicitly.
+- The RC-config / DS direction is now respected again and simply **stacks** with the flags.
+
+### 14.3 Second trap found while verifying: `POS_DOWN = 0.5` is its own mirror
+
+`output(0.5, reversed) = 1 - 0.5 = 0.5`. So even with the double-negation fixed, flipping the flag produces **no visible change at the DOWN position** — only at UP (`0.0 -> 1.0`). `POS_DOWN` is still the documented **placeholder**, so this is the state the robot was actually in. Calibrating `POS_DOWN` off 0.5 makes the reversal unambiguous.
+
+### 14.4 Bench procedure
+
+1. Flash, then set the RC-config direction **FORWARD** for both ramp servos and use the flags only (simplest, one source of truth).
+2. Toggle `LEFT_REVERSED` / `RIGHT_REVERSED` and watch the `Ramp Left/Right` telemetry: it must read `tgt 0.000 -> out 1.000` when reversed.
+   - **out changes but the horn does not** ⇒ the servo is dead, unpowered, or mechanically uncoupled — not a code problem.
+   - **out does not change** ⇒ the flag is not reaching the code (check Panels persistence / RC config).
+3. Calibrate `POS_DOWN` off 0.5 by jogging, so both directions are distinguishable.
+4. Confirm both arms move together (`RIGHT_REVERSED` set correctly for the crossbar mounting).
+
+**Compile:** `:TeamCode:compileDebugJavaWithJavac` green.

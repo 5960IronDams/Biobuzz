@@ -8,9 +8,9 @@ public class IronConstants {
     public static final Pose FieldCenter = new Pose(FieldXYMaxPoint.x()/2,FieldXYMaxPoint.y()/2,0);
 
     public static final String FLMotor = CompBot? "m1" : "leftFront";
-    public static final String FRMotor = CompBot? "m2" : "rightFront";
+    public static final String FRMotor = CompBot? "m3" : "rightFront";
     public static final String RLMotor = CompBot? "m0" : "leftBack";
-    public static final String RRMotor = CompBot? "m3" : "rightBack";
+    public static final String RRMotor = CompBot? "m2" : "rightBack";
     public static final String PinpointOdometryName = "odo";
 
 
@@ -20,6 +20,8 @@ public class IronConstants {
     public static final String FrontServoName = CompBot? "shootgate" :"shootgate";
     public static final String TurretMotorName = CompBot? "ehm3" :"turret_motor";
     public static final String TurretOctoQuadName = CompBot? "octoquad" :"octoquad"; //octoquad MK1
+    public static final String DriverSideServoName = CompBot? "CHservo5" :"DSServo";
+    public static final String PassengerSideServoName = CompBot? "EHservo0" :"PSServo";
     // ---- Motor encoder constants ----
     /**
      * goBILDA 5203-series Yellow Jacket encoder: 28 ticks (PPR) per MOTOR-shaft

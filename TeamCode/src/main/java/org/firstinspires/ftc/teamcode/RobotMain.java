@@ -17,6 +17,7 @@ import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
 import org.firstinspires.ftc.teamcode.Subsystems.turret.TurretPivot;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.HiveCellMonitor;
 import org.firstinspires.ftc.teamcode.Subsystems.Intake;
+import org.firstinspires.ftc.teamcode.Subsystems.Ramp;
 import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
 import org.firstinspires.ftc.teamcode.Subsystems.Transfer;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
@@ -56,6 +57,13 @@ public class RobotMain {
     public Transfer transfer;
     public Flywheel flywheel;
     public ShootGateServo PosServ;
+    /**
+     * Front ramp (two servos on a 2-armed crossbar). Optional: null when the
+     * ramp servos aren't in the RC config, so every OpMode still runs on a
+     * bench rig (animate callbacks are skipped — KeyBindings/BindRamp() guards).
+     */
+    @Nullable
+    public Ramp ramp;
     /** Turret rotation (null when the turret hardware isn't in the RC config). */
     public TurretPivot turret;
     /** Null when no Limelight3A is in the RC config (Pinpoint-only mode). */
@@ -116,6 +124,12 @@ public class RobotMain {
         transfer = new Transfer(opmode);
         flywheel = new Flywheel(opmode);
         PosServ = new ShootGateServo(opmode);
+        // Optional subsystem: null-safe like the turret so a missing ramp
+        // never crashes the OpModes (tryCreate logs + reports on the comp bot).
+        ramp = Ramp.tryCreate(opmode);
+        if (ramp != null) {
+            HardwareHealth.get().expect(Ramp.HEALTH_NAME);
+        }
         // Optional subsystem: tryCreate logs + returns null instead of crashing
         // every OpMode when the turret isn't in the RC config (Vision pattern).
         turret = TurretPivot.tryCreate(opmode);
