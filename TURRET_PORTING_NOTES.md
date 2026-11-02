@@ -1187,3 +1187,57 @@ Two mirrors in series is a double negative. Flipping `LEFT_REVERSED` / `RIGHT_RE
 4. Confirm both arms move together (`RIGHT_REVERSED` set correctly for the crossbar mounting).
 
 **Compile:** `:TeamCode:compileDebugJavaWithJavac` green.
+
+---
+
+## 16. Session 7 — "not peppy off the start": softened the approach shaping (§12.35)
+
+**User report:** the turret pivot is not peppy enough off the start; the acceleration profile that prevents the head slamming back and forth near a wrap point is over-zealous; soften it for responsiveness — "we are a little more slam tolerant than our current safety allows."
+
+### 16.1 First — a correction to the premise, because it changes what to tune
+
+**The profile-lite cap was NOT running at all.** `PROFILE_LITE_ENABLED` was `false` in the source (§12.34 left it off after the simplification, and the §12.34 table in this document still lists it as `true`, which is wrong). So the "over-zealous acceleration profile" the user was feeling could not have been the profile cap — with it off, every approach ran at the full `MAX_POWER` and the only shaping came from the gains.
+
+What was actually over-zealous, in the order it is felt:
+
+| # | Term | Old | Effect |
+|---|---|---|---|
+| 1 | `MOTOR_ENC_CONFIRM_PWM_DEG` (WATCH mode) | 6.0 | **The start.** Until the turret physically travels 6 deg after boot, power is capped at `PWM_ONLY_MAX_POWER` 0.15 (~90 deg/s). This is the first motion of every OpMode and it is a hard crawl. |
+| 2 | `EDGE_SLOW_ZONE_DEG` / `EDGE_MAX_POWER` | 40 / 0.35 | **The wrap points.** A 0.35 ceiling over the last 40 deg at each end — a third of the travel — so any move *ending* near a limit crawled. |
+| 3 | `PROFILE_GAIN_PER_DEG` / `PROFILE_MIN_POWER` | 0.050 / 0.100 | The approach shape (inert while the flag was off). The floor sat exactly on the ~0.10 mesh breakaway, so small corrections stalled. |
+
+### 16.2 Changes
+
+| Constant | Old | New | Why |
+|---|---|---|---|
+| `PROFILE_LITE_ENABLED` | `false` | **`true`** | Restores the shaped approach the user thought they were tuning. |
+| `PROFILE_GAIN_PER_DEG` | 0.050 | **0.040** | Braking band moved outward: full power beyond 25 deg (was 20), 0.70 at 17.5 deg (was 14). |
+| `PROFILE_MIN_POWER` | 0.100 | **0.120** | Lifts the floor off the breakaway so the last degrees have authority instead of stalling. |
+| `EDGE_SLOW_ZONE_DEG` | 40.0 | **30.0** | Gives back 10 deg of full-authority travel at each end; still ~2 loops of capped power at 300 deg/s. |
+| `EDGE_MAX_POWER` | 0.35 | **0.60** | The zone becomes a brake (60 % of MAX_POWER) instead of a crawl. |
+| `MOTOR_ENC_CONFIRM_PWM_DEG` | 6.0 | **4.0** | Cuts the start-of-run crawl by ~0.07 s. Still ~16 motor ticks / ~73 PWM steps — far above quantization. |
+
+Unchanged on purpose: `MAX_POWER` 1.0, `kP` 0.020, `kD` 0.0009, `kS` 0.060, `kV` 0.0020, `POSITION_TOLERANCE_DEG` 2.0, `PWM_ONLY_MAX_POWER` 0.15, the §12.30 brake override, the soft-limit output guard, and `OUT_OF_SCOPE`.
+
+### 16.3 The stability check that bounded the gains (this is the part to re-run before retuning)
+
+§12.26's rule is `kP*|err| + kS*ramp < cap(|err|)` everywhere, or the output saturates and the loop becomes relay control (the 4 Hz, ±5.5 deg limit cycle in capture 20261028-012540). Sweeping 0–20 deg:
+
+| gain / floor | worst ratio | at |
+|---|---|---|
+| 0.050 / 0.100 (old) | 0.700 | 2.0 deg |
+| **0.040 / 0.120 (shipped)** | **0.875** | 3–4 deg |
+| 0.035 / 0.130 (first attempt) | **1.000** | 2.9–4.5 deg |
+| 0.035 / 0.100 | 1.000 | 2.9–4.5 deg |
+
+**The first attempt (0.035 / 0.130) was rejected by this check** — it saturates across the 3–4.5 deg band, which is exactly the limit-cycle mechanism. The gain bounds the ratio, not the floor: 0.040 is the last value with real margin. Note this also means the shipped set is *slightly less* permissive than 0.050 was (0.875 vs 0.700) — the responsiveness comes from the edge zone, the floor, and the WATCH threshold, not from a looser curve.
+
+### 16.4 Bench verification
+
+1. **Start:** boot, then the first dpad tap — the turret should reach full power after ~4 deg instead of ~6 deg. `Turret mot-enc` should flip WATCH → ACTIVE noticeably sooner.
+2. **Near the wrap points:** jog toward ±180 and confirm the approach no longer crawls over the last 30 deg. Watch for `OUT_OF_SCOPE` — the zone cap is now 0.60, so a fast arrival at a limit has less margin than before. If it kisses past ±180, raise `EDGE_SLOW_ZONE_DEG` back toward 40 before lowering `EDGE_MAX_POWER`.
+3. **Arrivals:** confirm normal 90 deg moves still settle inside tolerance and reach `INPOSITION`. The floor is 0.120 vs a ~0.10 breakaway, so the short-stop class should improve; the tell for over-driving is power alternating sign at a few deg/s near the target.
+4. **No new limit cycle:** the tell is power pinned at the cap (±0.12/±0.16) while the turret rocks ±3–5 deg. If seen, lower `PROFILE_MIN_POWER` to 0.100 first, then `kP`.
+5. **Panels persistence:** all six changed constants are `@Configurable` and Panels may hold the old values, which would silently override the new defaults. After flashing, check Panels → Config → `TurretPivot` / `TurretTracker` and clear any stale overrides — in particular `PROFILE_LITE_ENABLED`, which may be persisted as `false`.
+
+**Compile:** `:TeamCode:compileDebugJavaWithJavac` green. **Not yet field-verified.**

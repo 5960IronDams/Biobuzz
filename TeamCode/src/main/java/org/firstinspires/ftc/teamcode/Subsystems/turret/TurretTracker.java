@@ -114,8 +114,25 @@ public class TurretTracker {
     public static double MOTOR_ENC_ANCHOR_REJECT_DEG = 25.0;
     /** At-rest hard re-anchor runs while the turret is slower than this (deg/s). */
     public static double MOTOR_ENC_REST_ANCHOR_VEL_DPS = 8.0;
-    /** Watch promotion: the PWM-tracked turret must move at least this much (deg) ... */
-    public static double MOTOR_ENC_CONFIRM_PWM_DEG = 6.0;
+    /**
+     * Watch promotion: the PWM-tracked turret must move at least this much (deg)
+     * ...
+     *
+     * <p><b>4.0 since §12.35</b> (was 6.0). §12.28 sized this at 6 deg to keep
+     * a comfortable margin over the motor encoder's 0.244 deg/tick, and noted
+     * the cost explicitly: "~0.3 s of slow creep at the first powered motion of
+     * every OpMode". At the 0.15 WATCH cap that is ~90 deg/s, so the turret has
+     * to physically travel 6 deg before it is allowed full power — the single
+     * largest contributor to "not peppy off the start". 4 deg still spans ~16
+     * motor ticks and ~73 encoder-B PWM steps, so it is far above quantization:
+     * the dead test below only needs the motor to have integrated
+     * {@link #MOTOR_ENC_CONFIRM_MOT_DEG} (3 deg) in the same direction, which
+     * 4 deg of PWM travel proves just as conclusively as 6. Expected saving is
+     * ~0.07 s of the confirmation creep. Do not take this below ~3 deg: the
+     * window has to stay comfortably wider than the motor threshold it is
+     * being compared against.
+     */
+    public static double MOTOR_ENC_CONFIRM_PWM_DEG = 4.0;
     /** ...while the motor encoder integrated at least this much (deg), same sign. */
     public static double MOTOR_ENC_CONFIRM_MOT_DEG = 3.0;
     /** Moving-monitor dead test: a PWM interval this large (deg) counts as evidence ... */

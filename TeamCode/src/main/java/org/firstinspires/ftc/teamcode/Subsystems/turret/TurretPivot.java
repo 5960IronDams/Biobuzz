@@ -190,10 +190,31 @@ public class TurretPivot extends SubsystemBase {
      * about one loop to react and the turret overshot to ±186.2 in capture
      * 20261028-021810. 40 deg gives ~2-3 loops of capped power to scrub
      * speed first.
+     *
+     * <p><b>30 deg since §12.35 — NARROWED at the user's request</b> (was 40).
+     * 40 was set to stop a 6.2 deg kiss past the limit at ~300 deg/s, but it
+     * also throttled every move that merely ENDED near a limit, over a third
+     * of the travel, which is most of the aiming range. 30 still leaves ~2
+     * loops of capped power at 300 deg/s (15 deg/loop at a 50 ms loop) while
+     * giving back 10 deg of full-authority travel at each end. Combined with
+     * the raised {@link #EDGE_MAX_POWER} below, the zone is now a brake, not
+     * a crawl.
      */
-    public static double EDGE_SLOW_ZONE_DEG = 40.0;
-    /** Power cap while inside the slow zone. */
-    public static double EDGE_MAX_POWER = 0.35;
+    public static double EDGE_SLOW_ZONE_DEG = 30.0;
+    /**
+     * Power cap while inside the slow zone.
+     *
+     * <p><b>0.60 since §12.35</b> (was 0.35). 0.35 was sized as "enough to
+     * scrub speed", but at ~680 deg/s per unit power it also means a turret
+     * entering the zone at speed cannot be brought back by the edge cap
+     * alone — kD has to do all the braking. The user accepts a slightly
+     * firmer stop near the wrap points in exchange for responsiveness, so
+     * the zone cap is raised to 0.60: still a real reduction (60 % of
+     * MAX_POWER) and still the thing that catches a runaway toward the
+     * cable, but no longer a hard crawl. The soft-limit output guard and
+     * OUT_OF_SCOPE are unchanged and remain the actual stop.
+     */
+    public static double EDGE_MAX_POWER = 0.60;
 
     // =========================================================================
     // PID (input: degrees + deg/s, output: servo power) — FRC Slot0 analog
@@ -280,8 +301,30 @@ public class TurretPivot extends SubsystemBase {
      * ~24 deg and it had 3), which produced the +15.0 deg overshoot on move E.
      * 0.050 gives 0.35 at 7 deg and 0.70 at 14 deg — braking authority that
      * scales with entry speed. Full power still applies beyond 20 deg.
+     *
+     * <p><b>0.040 since §12.35 — SOFTENED at the user's request</b> (was
+     * 0.050). 0.050 was tuned to kill a 15 deg overshoot, and it did (§12.28:
+     * mean overshoot 3.96 deg), but it also made the last stretch of every
+     * move feel over-damped: the cap starts throttling at 0.050*err, so a
+     * 20 deg approach was already down to 0.70 and a 7 deg one to 0.35. The
+     * user is willing to trade a little slam for responsiveness. 0.040 keeps
+     * the same shape (linear in error, saturating at MAX_POWER) with the
+     * braking band moved outward: full power beyond 25 deg (was 20), 0.70 at
+     * 17.5 deg (was 14), 0.35 at 8.75 deg (was 7). The §12.30 brake override
+     * still skips the cap whenever it would oppose the current motion, so
+     * this does NOT withhold brakes on a fast arrival — it only lets the
+     * approach run hotter than before.
+     *
+     * <p><b>Why 0.040 and not lower:</b> the gain is bounded from BELOW by the
+     * §12.26 stability rule, not chosen by feel. Sweeping {@code kP*|err| +
+     * kS*ramp} against {@code max(gain*|err|, floor)} over 0–20 deg, the worst
+     * saturation ratio is 0.700 at 0.050, <b>0.875 at 0.040</b>, and 1.000
+     * (relay control) at 0.035. 0.040 is the last value that keeps a
+     * meaningful margin under 1.0 — go lower and the loop saturates in the
+     * 2.5–4.5 deg band, which is precisely the capture 20261028-012540
+     * limit-cycle mechanism.
      */
-    public static double PROFILE_GAIN_PER_DEG = 0.050;
+    public static double PROFILE_GAIN_PER_DEG = 0.040;
     /**
      * Floor on the profile cap (power) — must exceed the mesh's breakaway
      * friction so small corrections still move: 0.060 (= kS) stalled the
@@ -296,10 +339,45 @@ public class TurretPivot extends SubsystemBase {
      * cap in BOTH directions — the 4 Hz, +-5.5 deg limit cycle in capture
      * 20261028-012540. Braking authority belongs in the GAIN (which scales with
      * error and so cannot saturate near target), not in the floor.
+     *
+     * <p><b>0.120 since §12.35</b> (was 0.100). This is the power the last few
+     * degrees are allowed, and it is the term that decides whether the turret
+     * finishes a move or stalls short of it: the mesh's breakaway is ~0.10
+     * and 0.10 sat exactly on it, so small corrections crawled or stuck. The
+     * user asked for a more responsive start and is willing to tolerate a
+     * firmer final approach, so the floor is lifted 20 % — still 0.55x of the
+     * §12.26 lesson (0.220 caused a hard limit cycle) and still well under
+     * the 0.60 edge cap.
+     *
+     * <p><b>Verified against the §12.26 stability rule before raising:</b>
+     * with {@code kP*|err| + kS*ramp} swept 0–20 deg against
+     * {@code max(0.040*|err|, floor)}, the worst saturation ratio is
+     * <b>0.875</b> at both 0.100 and 0.120, so the lift costs nothing in
+     * margin. The ratio is dominated by the gain, not the floor: 0.130 (the
+     * first value tried) already pushes it to 1.000. Do not raise this
+     * further without re-running that check.
      */
-    public static double PROFILE_MIN_POWER = 0.100;
-    /** Enable/disable the profile-lite cap (true = shaped approach). */
-    public static boolean PROFILE_LITE_ENABLED = false;
+    public static double PROFILE_MIN_POWER = 0.120;
+    /**
+     * Enable/disable the profile-lite cap (true = shaped approach).
+     *
+     * <p><b>true since §12.35</b> (was false). It had been left off after the
+     * §12.34 simplification, so every approach ran at the full mode cap and
+     * the only things shaping a move were the gains — which is why the turret
+     * felt sluggish off the start and over-braked near the target. The user
+     * asked for the opposite trade: a livelier start and a slightly wider
+     * slam tolerance. The cap is the correct place for that because it
+     * bounds the COMMAND (a shaped approach), not the safety envelope.
+     *
+     * <p><b>The §12.26 stability rule still holds and is what was checked
+     * before turning this on:</b> {@code kP*|err| + kS*ramp < cap(|err|)}
+     * across the whole approach. With the §12.35 values (gain 0.040, floor
+     * 0.120) the worst saturation ratio is 0.875, flat across 3–4 deg —
+     * linear everywhere, never relay control. Do NOT raise kP or the floor, or
+     * lower the gain, without re-checking that ratio; that is exactly what
+     * produced the 4 Hz limit cycle in capture 20261028-012540.
+     */
+    public static boolean PROFILE_LITE_ENABLED = true;
 
     /**
      * Velocity feedforward — power per deg/s of DESIRED turret velocity
