@@ -46,11 +46,11 @@ public class Flywheel extends SubsystemBase {
     /** Coast destination + PID hold point after the coast arrives. */
     public static double IDLE_RPM = 0;
     public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(1.0);
-    public static double kP = 20;
+    public static double kP = 25;
     public static double kI = 0;
     public static double kD = 0;
-    public static double kF = 19;
-    public static boolean MOTOR_REVERSED = false;
+    public static double kF = 16.0;
+    public static boolean MOTOR_REVERSED = true;
     /** Within this of TARGET counts as "at speed" for sequencing / telemetry. */
     public static double AT_SPEED_TOLERANCE_RPM = 75;
     /** Coast is "arrived" once actual RPM has fallen to IDLE + this. */

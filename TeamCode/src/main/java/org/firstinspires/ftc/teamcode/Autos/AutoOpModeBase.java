@@ -14,6 +14,8 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.PPAssets;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.VisionFusion;
 
+import java.util.function.Supplier;
+
 //@Autonomous(name = "Red_AutoOpMode", group = "Autos")
 @Disabled
 public abstract class AutoOpModeBase extends OpMode {
@@ -29,10 +31,35 @@ public abstract class AutoOpModeBase extends OpMode {
     public ALLIANCE_COLOR SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
     public PPFile pp;//loads and manages our pathFiles we create in the pedro path visualizer. (visualizer.pedropathing.com)
 
+    // The left-trigger toggle's latched state is owned by the COMMAND itself:
+    // toggleWhenActive() schedules/cancels the same instance, so "is it on" is
+    // simply isScheduled(). That keeps the button and the robot in lockstep
+    // even if something else (an auto, the panic button) ends the command.
+    //
+    // NOT the command object itself — that single instance is OWNED by TeleOp's
+    // toggleWhenActive() (KeyBindings) and can only ever belong to one command
+    // group. Pulling it into the auto routine's group throws
+    // "Commands cannot be added to more than one CommandGroup".
+    // Call autoShoot() to get a FRESH AutoShootAtGoal for this auto's group.
+    public Supplier<Command> autoShoot;
+
     /**
      *  <em>Must</em> be overridden for auton to have any actions!
      */
     public abstract Command autoRoutine();//Must be overridden, this is the command that runs, this is your auto.
+
+    /**
+     * A FRESH auto-shoot command for this auto's command group (null when the
+     * turret is absent from the RC config).
+     *
+     * <p>Never reuse {@code CommandFactory.getAutoShootCommand()}'s instance
+     * here: it is bound to TeleOp's trigger via {@code toggleWhenActive()}, so
+     * {@code withTimeout()} on it wraps an already-grouped command and throws
+     * at START. This builds a new, independent instance owned only by the auto.
+     */
+    public Command autoShoot() {
+        return robot == null ? null : robot.CommandF.AutoShootAtGoal();
+    }
 
     @Override
     public void init() {

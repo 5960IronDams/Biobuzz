@@ -115,7 +115,7 @@ public class Ramp extends SubsystemBase {
      * Lowered, ramp on the floor. CALIBRATE: jog down, then copy the shown
      * "Ramp jog" value here. Placeholder = half travel, NEVER drive on it.
      */
-    public static double POS_DOWN = 0.5;
+    public static double POS_DOWN = 0.405;
 
     /**
      * Which way is DOWN in servo units: +1 = a LARGER position lowers the ramp

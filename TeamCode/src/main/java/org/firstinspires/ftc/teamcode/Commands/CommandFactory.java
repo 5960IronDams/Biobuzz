@@ -89,7 +89,7 @@ public class CommandFactory {
      */
     public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
     /** RPM at each distance in {@link #LUT_DISTANCES_IN} (same order). */
-    public static double[] LUT_RPMS = {2500, 3000, 3500, 3800, 4000, 4000};//max observed RPM is 4100;
+    public static double[] LUT_RPMS = {2500, 2800, 3000, 3800, 4000, 4000};//max observed RPM is 4100;
 
     /**
      * Max slew of the COMMANDED flywheel setpoint, RPM/sec. The raw LUT output
@@ -320,7 +320,12 @@ public class CommandFactory {
         if (aim == null) {
             return Commands.none();
         }
-        return new AimAtGoal(turret, follower, hardwareMap,
+        // Shared, pre-parsed aim points (the asset is read ONCE for the whole
+        // OpMode, not once per command construction) but a FRESH AimAtGoal:
+        // a Command may join exactly one CommandGroup, so returning anything
+        // cached here would break the second call. `aim` is passed rather than
+        // re-loaded so repeated construction stays free.
+        return new AimAtGoal(turret, follower, aim.aimPoints,
                 () -> RobotMain.CurrentAlliance, this::getCommandedRpm);
     }
 
@@ -331,16 +336,25 @@ public class CommandFactory {
      * {@link #FireAtGoal()}'s job, which runs alongside it gated on
      * {@link #isReadyToShoot()}.
      *
-     * <p>Requirements: the shared aim instance (turret) + the RPM manager
-     * (flywheel) — a manual turret spin or flywheel command interrupts it.
+     * <p>Requirements: the turret (aim) + the RPM manager (flywheel) — a manual
+     * turret spin or flywheel command interrupts it.
+     *
+     * <p>Every call returns a NEW command tree.
      */
     public Command TrackTarget() {
         if (aim == null) {
             return Commands.none();
         }
+        // Fresh AimAtGoal per TrackTarget, NOT the shared `aim` field: a Command
+        // may join exactly one CommandGroup (CommandGroupBase enforces this in a
+        // static set). Wrapping the field instance would make the SECOND
+        // AutoShootAtGoal() throw "Commands cannot be added to more than one
+        // CommandGroup". The `aim` field stays the long-lived instance for
+        // TeleOp's toggleWhenActive(); its live state is exposed through the
+        // is*OnTarget()/live*() accessors either way.
         return new ParallelCommandGroup(
                 // 1) Aim: spins the TURRET to the target; chassis stays with the driver.
-                aim,
+                AimAtClosestGoal(),
                 // 2) RPM manager: distance -> linear LUT -> slew-limited setpoint.
                 rpmManagerCommand()
         ).setName("TrackTarget");
@@ -414,14 +428,23 @@ public class CommandFactory {
     }
 
     /**
-     * The whole auto-firing shot the driver latches ON: {@link #TrackTarget()}
-     * plus {@link #FireAtGoal()}. This is "auto aim auto-runs the transfer when
+     * The whole auto-firing shot: {@link #TrackTarget()} plus
+     * {@link #FireAtGoal()}. This is "auto aim auto-runs the transfer when
      * ready", i.e. IndianaJoe's
      * {@code isReadyToShoot().whileTrue(FeedAndKick())} with the aim command
      * already running — the transfer fires itself, no second button.
+     *
+     * <p>This is a FACTORY: every call returns a NEW, ungrouped command tree.
+     * Do not "optimise" it back into {@code return autoShootCmd} — a Command
+     * may join exactly one CommandGroup (CommandGroupBase enforces this in a
+     * static set), so a cached instance throws "Commands cannot be added to
+     * more than one CommandGroup" the second time it is decorated with
+     * {@code .withTimeout()} or placed in a group. A TeleOp that needs one
+     * STABLE instance for {@code toggleWhenActive()} must use
+     * {@link #getAutoShootCommand()} instead.
      */
     public Command AutoShootAtGoal() {
-        return autoShootCmd == null ? Commands.none() : autoShootCmd;
+        return aim == null ? Commands.none() : buildAutoShoot();
     }
 
     /** Builds the latched compound (called once, from the constructor). */
@@ -595,6 +618,7 @@ public class CommandFactory {
                     commandedRpm = lastCmdRpm;
                     flywheel.setTargetRpm(lastCmdRpm);
                     // addData only — flushed once per loop by RobotMain.
+                    RobotMain.DashTelemetry.addData("Shoot LUT dist (in)", "%.1f", d);
                     RobotMain.DashTelemetry.addData("Shoot LUT raw RPM", "%.0f", raw);
                     RobotMain.DashTelemetry.addData("Shoot LUT cmd RPM", "%.0f", lastCmdRpm);
                 },
@@ -1064,6 +1088,20 @@ public class CommandFactory {
             RobotMain.DashTelemetry.addData("Chassis speed (in/s)", "%.2f", measuredSpeedInS);
             RobotMain.DashTelemetry.addData("Chassis yaw (dps)", "%.1f", measuredYawDps);
         }
+
+        // Live target distance is tracked continuously by the aim model
+        // (even when no aim/shoot command is scheduled).
+        if (aim != null) {
+            double targetDist = aim.liveDistanceInches();
+            if (!Double.isNaN(targetDist)) {
+                RobotMain.DashTelemetry.addData("Target dist (in)", "%.1f", targetDist);
+            }
+        }
+    }
+
+    /** Live distance (in) to the closest target right now (NaN if no pose/target). */
+    public double getLiveTargetDistanceInches() {
+        return aim != null ? aim.liveDistanceInches() : Double.NaN;
     }
 
     /** How long a driver's manual transfer overrides the auto-fire (s). */

@@ -32,7 +32,7 @@ public class Intake extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- Panels tuning ----
-    public static double INTAKE_RPM = 400; // max measured speed 850
+    public static double INTAKE_RPM = 450; // max measured speed 850
     /** goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6 (IronConstants helper - same motor + ratio as the transfer). */
     public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(19.2);
     public static double kP = 20;

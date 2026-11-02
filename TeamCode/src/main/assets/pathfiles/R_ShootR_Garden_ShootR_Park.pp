@@ -1,0 +1,181 @@
+{
+  "startPoint": {
+    "x": 58.76190819671113,
+    "y": 11.533872841695091,
+    "name": "start",
+    "locked": false,
+    "headingDeg": 180
+  },
+  "lines": [
+    {
+      "id": "line-muc4znbw-2sfgyn",
+      "color": "#ffc516",
+      "name": "GardenCorner",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 10.60773259123788,
+        "y": 10.622842082893149
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "constant",
+        "startDeg": 90,
+        "endDeg": 180,
+        "degrees": 180,
+        "reverse": false,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "line-mvywxuaw-4wg0d2",
+      "color": "#856B56",
+      "name": "shootcloseleft",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 41.62115127175369,
+        "y": 28.2690763052209
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "constant",
+        "reverse": true,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        },
+        "degrees": 180
+      }
+    },
+    {
+      "id": "line-mvywyfe9-1zwdra",
+      "color": "#8D79C8",
+      "name": "parkplace",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 9.265729585006703,
+        "y": 97.40963855421688
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "tangential",
+        "reverse": false,
+        "startDeg": 0,
+        "endDeg": 0,
+        "degrees": 0
+      }
+    }
+  ],
+  "shapes": [
+    {
+      "id": "triangle-1",
+      "name": "Red Goal",
+      "vertices": [
+        {
+          "x": 141.5,
+          "y": 70
+        },
+        {
+          "x": 141.5,
+          "y": 141.5
+        },
+        {
+          "x": 118.3,
+          "y": 141.5
+        },
+        {
+          "x": 135.5,
+          "y": 118
+        },
+        {
+          "x": 136.3,
+          "y": 70.2
+        }
+      ],
+      "color": "#dc2626",
+      "fillColor": "#ff6b6b"
+    },
+    {
+      "id": "triangle-2",
+      "name": "Blue Goal",
+      "vertices": [
+        {
+          "x": 6.2,
+          "y": 116.9
+        },
+        {
+          "x": 25,
+          "y": 141.5
+        },
+        {
+          "x": 0,
+          "y": 141.5
+        },
+        {
+          "x": 0,
+          "y": 70
+        },
+        {
+          "x": 6,
+          "y": 70
+        }
+      ],
+      "color": "#2563eb",
+      "fillColor": "#60a5fa"
+    }
+  ],
+  "sequence": [
+    {
+      "kind": "path",
+      "lineId": "line-muc4znbw-2sfgyn"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mvywxuaw-4wg0d2"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mvywyfe9-1zwdra"
+    }
+  ],
+  "fieldPoints": [],
+  "version": "1.5.0",
+  "timestamp": "2026-11-02T07:13:09.097Z"
+}

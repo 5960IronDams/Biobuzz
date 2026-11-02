@@ -159,7 +159,10 @@ public class AimAtGoal extends CommandBase {
 
     private final TurretPivot turret;
     private final Follower follower;
-    private final PPFile aimPoints;
+    /** Read-only aim points. Package-visible so CommandFactory can build FRESH
+     *  AimAtGoal instances around the SAME parsed file instead of re-reading
+     *  the asset every time a command group is assembled. */
+    final PPFile aimPoints;
     private final Supplier<ALLIANCE_COLOR> alliance;
     /**
      * SESSION 6: the RPM the flywheel manager is driving to right now — the

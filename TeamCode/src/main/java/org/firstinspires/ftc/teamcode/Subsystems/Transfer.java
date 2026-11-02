@@ -33,7 +33,7 @@ public class Transfer extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- Panels tuning ----
-    public static double TRANSFER_RPM = 500.0; //max measured empty RL = 1050rpm;
+    public static double TRANSFER_RPM = 600.0; //max measured empty RL = 1050rpm;
     /**
      * goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6
      * (computed by {@link IronConstants#gobilda5203TicksPerRev(double)} - the

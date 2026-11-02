@@ -217,11 +217,11 @@ public class TurretPivot extends SubsystemBase {
      * whole approach. With the 0.050 profile gain that holds up to 3 deg at
      * 0.40x for kP = 0.020 (worst case), versus 1.64x at 0.120.
      */
-    public static double kP = 0.015;
+    public static double kP = 0.02;
     /** Power per (deg*second) of accumulated error, inside I_ZONE only. */
     public static double kI = 0.000;
     /** Power per deg/s of measured motion (derivative on measurement — no setpoint-step kick). */
-    public static double kD = 0.0008;
+    public static double kD = 0.0009;
     /** Static-friction feedforward (power), added in the sign of the PID output. FRC analog: kS. */
     public static double kS = 0.060;
     /**
@@ -299,7 +299,7 @@ public class TurretPivot extends SubsystemBase {
      */
     public static double PROFILE_MIN_POWER = 0.100;
     /** Enable/disable the profile-lite cap (true = shaped approach). */
-    public static boolean PROFILE_LITE_ENABLED = true;
+    public static boolean PROFILE_LITE_ENABLED = false;
 
     /**
      * Velocity feedforward — power per deg/s of DESIRED turret velocity
