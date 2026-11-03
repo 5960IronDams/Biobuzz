@@ -178,7 +178,7 @@ public class TurretPivot extends SubsystemBase {
      * again a sane band; tighten it ONLY after the loop can actually hold
      * inside 1 deg without oscillating.
      */
-    public static double POSITION_TOLERANCE_DEG = 2.0;
+    public static double POSITION_TOLERANCE_DEG = 2.5;
 
     /**
      * Edge slow zone: within this many degrees of a soft limit, cap power

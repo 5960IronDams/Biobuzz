@@ -25,7 +25,7 @@ dependencies {
     // fix for the single-client WebSocket wedge (watchdog + claim-steal +
     // reflective stream close). Revert to 1.0.1 when upstream ships the fix.
     implementation 'com.pedropathing:tuning:1.0.1-patched'
-    implementation "com.bylazar:fullpanels:1.0.18"
+    implementation "com.bylazar:fullpanels:1.0.19"
     // LOCAL DEV: unpublished panels builds — win over fullpanels' pinned versions
     // (panels 1.0.7, battery 1.0.5, capture 1.0.5, telemetry 1.0.7). Revert these
     // lines to test released versions.
