@@ -10,14 +10,19 @@ import com.pedropathing.paths.interpolator.PiecewiseInterpolator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Parses a Pedro Pathing Visualizer {@code .pp} file (JSON) into {@link Pose} points and
- * {@link Path} paths.
+ * Parses a Pedro Pathing Visualizer project file into {@link Pose} points and {@link Path} paths.
+ *
+ * <p>The visualizer saves JSON under a {@code .pp.json} name; older builds used {@code .pp} and
+ * both still load. The file's {@code version} is not interpreted: the structure itself is read,
+ * so 1.5 and 2.0 documents are handled the same way.
  *
  * <p>Point 0 is the file's start point and point {@code i > 0} is where the {@code i}-th path ends,
  * so a point borrows the name of the line that arrives at it (unnamed points fall back to
@@ -65,7 +70,7 @@ public final class PPFile {
     private PPFile(Object json, PoseFactory poseFactory) {
         Map<String, Object> root = requiredObject(json, "a JSON object");
         Map<String, Object> start = requiredObject(root.get("startPoint"), "a startPoint");
-        addPoint(string(start.get("name")).trim(),
+        addPoint(startPointName(start),
                 poseFactory.of(number(start, "x"), number(start, "y"), startHeadingDeg(start)));
 
         Cursor cursor = new Cursor();
@@ -89,6 +94,10 @@ public final class PPFile {
             }
         }
 
+        // A group is one drivable path, but the visualizer lists its children in the sequence
+        // separately. Tracking which top-level line has already been exposed keeps a group from
+        // being driven once per child.
+        Set<Integer> exposedLines = new HashSet<>();
         for (Map<String, Object> step : maps(root.get("sequence"))) {
             if ("wait".equals(string(step.get("kind"), ""))) {
                 steps.add(new Step(-1, (long) Math.max(0, number(step, "durationMs", 0))));
@@ -98,15 +107,35 @@ public final class PPFile {
             if (index == null) {
                 continue;
             }
+            if (!exposedLines.add(index)) {
+                // This line (or its group) was already added by an earlier step.
+                if (isCompound(lineOf.get(index))) {
+                    continue;
+                }
+            }
             expose(built.get(index), lineOf.get(index));
             steps.add(new Step(paths.size() - 1, 0));
+            // The visualizer pauses after a path for as long as that line's waitAfterMs asks,
+            // and the preview timeline shows it, so the pause belongs in the run plan too.
+            long pauseAfter = waitAfterMs.get(paths.size() - 1);
+            if (pauseAfter > 0) {
+                steps.add(new Step(-1, pauseAfter));
+            }
         }
         if (paths.isEmpty()) {
             for (int i = 0; i < built.size(); i++) {
                 expose(built.get(i), lineOf.get(i));
                 steps.add(new Step(i, 0));
+                long pauseAfter = waitAfterMs.get(paths.size() - 1);
+                if (pauseAfter > 0) {
+                    steps.add(new Step(-1, pauseAfter));
+                }
             }
         }
+    }
+
+    private static boolean isCompound(Map<String, Object> line) {
+        return line.get("segments") instanceof List;
     }
 
     /**
@@ -277,19 +306,127 @@ public final class PPFile {
             throw new IllegalArgumentException(".pp file has a compound line without segments");
         }
         Map<String, Object> groupHeading = optObject(line.get("heading"));
+        // Only the outermost group heading applies; a nested group's rule is shadowed by an
+        // ancestor's, matching the visualizer's effectiveHeadingAt().
         boolean groupOverrides = !overridden && groupHeading != null;
-        HeadingSpec group = headingSpec(groupHeading, cursor.deg);
         double startX = cursor.x;
         double startY = cursor.y;
 
-        List<Path> children = new ArrayList<>();
-        for (Map<String, Object> child : segments) {
-            children.add(buildPath(child, overridden || groupHeading != null, cursor, poseFactory));
+        if (!groupOverrides) {
+            List<Path> children = new ArrayList<>();
+            for (Map<String, Object> child : segments) {
+                children.add(buildPath(child, overridden, cursor, poseFactory));
+            }
+            return Paths.path(children.toArray(new Path[0]));
         }
-        Path compound = Paths.path(children.toArray(new Path[0]));
-        return groupOverrides
-                ? applySpec(compound, group, startX, startY, cursor.x, cursor.y, cursor, poseFactory)
-                : compound;
+
+        // A group rule runs across the whole group measured by DISTANCE, so child i covers the
+        // slice [travelled/total, (travelled + length_i)/total] of its group's ramp. Applying the
+        // group rule to each child on its own would restart the ramp for every child instead.
+        List<Path> children = new ArrayList<>();
+        List<Double> lengths = new ArrayList<>();
+        for (Map<String, Object> child : segments) {
+            Path built = buildPath(child, true, cursor, poseFactory);
+            children.add(built);
+            lengths.add(built.curve.length());
+        }
+        double total = 0;
+        for (double length : lengths) {
+            total += length;
+        }
+
+        Path[] shaped = new Path[children.size()];
+        HeadingSpec group = headingSpec(groupHeading, cursor.deg);
+        double travelled = 0;
+        for (int i = 0; i < children.size(); i++) {
+            double from = total <= 1e-9 ? 0 : travelled / total;
+            travelled += lengths.get(i);
+            double to = total <= 1e-9 ? 1 : travelled / total;
+            // Angles ride on the child's own endpoint, as applySpec does for atomic lines.
+            Map<String, Object> childEnd = endpointOf(segments.get(i));
+            shaped[i] = applyGroupRule(children.get(i), group, from, to, poseFactory,
+                    number(childEnd, "x"), number(childEnd, "y"));
+        }
+        cursor.deg = group.endDeg;
+        return Paths.path(shaped);
+    }
+
+    /** The endpoint a compound child finishes at, whether atomic or nested. */
+    private static Map<String, Object> endpointOf(Map<String, Object> child) {
+        Map<String, Object> end = optObject(child.get("endPoint"));
+        if (end != null) {
+            return end;
+        }
+        List<Map<String, Object>> nested = maps(child.get("segments"));
+        return nested.isEmpty() ? Collections.emptyMap() : endpointOf(nested.get(nested.size() - 1));
+    }
+
+    /**
+     * Applies the {@code [from, to]} slice of a group's heading rule to one child path. The slice
+     * is what that child would have shown if the group were driven as one lump, so the ramp stays
+     * continuous across the group's children.
+     */
+    private static Path applyGroupRule(
+            Path child, HeadingSpec group, double from, double to, PoseFactory poseFactory,
+            double endX, double endY) {
+        if (group.type.startsWith("tangent")) {
+            // Tangential is purely geometric: the same rule for every child, no ramp to slice.
+            return group.reverse ? child.reverseTangent() : child.tangent();
+        }
+        if (group.type.equals("piecewise")) {
+            return piecewise(child, slicePiecewise(group.piecewise, from, to), endX, endY, poseFactory);
+        }
+        if (group.type.equals("constant")) {
+            return child.constant(poseFactory.of(endX, endY, group.endDeg).heading());
+        }
+        // linear: re-ramp over this child's own window of the group rule, using the same
+        // degree-exact rotation the rule itself uses.
+        double startDeg = interpolateDegrees(group.startDeg, group.endDeg, from);
+        double endDeg = interpolateDegrees(group.startDeg, group.endDeg, to);
+        return child.heading(linearRule(startDeg, endDeg));
+    }
+
+    /**
+     * The visualizer's shortest rotation from {@code startDeg} to {@code endDeg} at
+     * {@code fraction} of the way along, computed in degrees exactly as its math.ts does: an
+     * exact half turn resolves to a POSITIVE rotation, which Pedro's radian helpers do not.
+     */
+    private static double interpolateDegrees(double startDeg, double endDeg, double fraction) {
+        double normalizedStart = ((startDeg % 360) + 360) % 360;
+        double normalizedEnd = ((endDeg % 360) + 360) % 360;
+        double difference = normalizedEnd - normalizedStart;
+        if (difference > 180) {
+            difference -= 360;
+        } else if (difference < -180) {
+            difference += 360;
+        }
+        return startDeg + difference * Math.min(Math.max(fraction, 0), 1);
+    }
+
+    /**
+     * Re-maps a piecewise rule's nodes onto the {@code [from, to]} window of the group rule, so a
+     * child covering part of its group gets the nodes falling inside that window, rescaled to span
+     * the child. Nodes entirely outside the window are dropped.
+     */
+    private static Map<String, Object> slicePiecewise(Map<String, Object> interpolation, double from, double to) {
+        List<Map<String, Object>> nodes = maps(interpolation == null ? null : interpolation.get("segments"));
+        nodes.sort((left, right) -> Double.compare(number(left, "startProgress", 0), number(right, "startProgress", 0)));
+        double span = to - from;
+        List<Object> sliced = new ArrayList<>();
+        for (Map<String, Object> node : nodes) {
+            double overlapStart = Math.max(number(node, "startProgress", 0), from);
+            double overlapEnd = Math.min(number(node, "endProgress", 1), to);
+            if (span <= 1e-9 || overlapEnd <= overlapStart) {
+                continue;
+            }
+            Map<String, Object> copy = new LinkedHashMap<>(node);
+            copy.put("startProgress", (overlapStart - from) / span);
+            copy.put("endProgress", (overlapEnd - from) / span);
+            sliced.add(copy);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("segments", sliced);
+        return out;
     }
 
     private static Path atomicPath(Map<String, Object> line, boolean overridden, Cursor cursor, PoseFactory poseFactory) {
@@ -338,14 +475,41 @@ public final class PPFile {
             return piecewise(path, spec.piecewise, endX, endY, poseFactory);
         }
         if (spec.type.startsWith("tangent")) {
-            return spec.reverse ? path.reverseTangent() : path.tangent();
+            return path.heading(tangentRule(spec.reverse));
         }
         if (spec.type.equals("constant")) {
+            // `reverse` on a constant heading is meaningless (the angle never moves), and the
+            // visualizer's codegen drops it, so the stored angle is used as-is.
             return path.constant(poseFactory.of(endX, endY, spec.endDeg).heading());
         }
-        return path.linear(
-                poseFactory.of(startX, startY, spec.startDeg).heading(),
-                poseFactory.of(endX, endY, spec.endDeg).heading());
+        // A linear rule ramps by DISTANCE the short way round, with an exact half turn resolved
+        // as a positive rotation. Pedro's linear() lerps radians and always turns a half turn
+        // negative, so the rule is supplied directly to match the visualizer. The visualizer's
+        // codegen ignores `reverse` on a linear heading, so the stored angles are used as-is.
+        return path.heading(linearRule(spec.startDeg, spec.endDeg));
+    }
+
+    /**
+     * The visualizer's tangential rule: face along the direction of travel, optionally a half turn
+     * round. Pedro's own {@code Interpolator.tangent} samples the curve at the arc-length
+     * completion as if it were the Bezier parameter, which visibly twists the heading on curved
+     * paths, so the true tangent at the real parameter is used instead.
+     */
+    private static Interpolator tangentRule(boolean reverse) {
+        return Interpolator.geometric((curve, t) -> {
+            Vector2D direction = curve.tangent(t);
+            double theta = Math.atan2(direction.y(), direction.x());
+            return reverse ? theta + Math.PI : theta;
+        });
+    }
+
+    /**
+     * The visualizer's linear rule: shortest rotation from {@code startDeg} to {@code endDeg} as a
+     * function of arc-length progress, with a tie at 180 degrees going positive.
+     */
+    private static Interpolator linearRule(double startDeg, double endDeg) {
+        return Interpolator.geometric((curve, t) ->
+                Math.toRadians(interpolateDegrees(startDeg, endDeg, curve.pathCompletion(t))));
     }
 
     private static Path piecewise(Path path, Map<String, Object> interpolation, double endX, double endY, PoseFactory poseFactory) {
@@ -370,7 +534,7 @@ public final class PPFile {
             previousT = untilT;
         }
         if (nodes.isEmpty()) {
-            return path.tangent();
+            return path.heading(tangentRule(false));
         }
         bounds.set(bounds.size() - 1, 1.0);
         PiecewiseInterpolator piecewise = Interpolator.piecewise();
@@ -389,7 +553,9 @@ public final class PPFile {
         Double linked = linkedHeading(segments, index, endX, endY, path, poseFactory);
         switch (type) {
             case "tangential":
-                return reversed ? Interpolator.tangent.reverse() : Interpolator.tangent;
+                // Piecewise nodes receive arc-length completion, so a plain tangent() would sample
+                // the curve at the wrong parameter; the geometric rule recovers the real one.
+                return geometricTangent(reversed);
             case "facing-point": {
                 Map<String, Object> target = optObject(parameters == null ? null : parameters.get("point"));
                 if (target == null) {
@@ -412,6 +578,30 @@ public final class PPFile {
                         : Interpolator.linear(startHeading, endHeading);
             }
         }
+    }
+
+    /**
+     * A tangential node for the piecewise interpolator, which hands its nodes the arc-length
+     * completion rather than the Bezier parameter. Completion and parameter are inverse functions
+     * of each other, so the parameter is looked back up before sampling the tangent.
+     */
+    private static Interpolator geometricTangent(boolean reversed) {
+        return Interpolator.geometric((curve, completion) -> {
+            // Solve completion(t) = c by bisection; curve.pathCompletion is monotonic.
+            double low = 0;
+            double high = 1;
+            for (int i = 0; i < 30; i++) {
+                double mid = (low + high) / 2;
+                if (curve.pathCompletion(mid) < completion) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            Vector2D direction = curve.tangent((low + high) / 2);
+            double theta = Math.atan2(direction.y(), direction.x());
+            return reversed ? theta + Math.PI : theta;
+        });
     }
 
     /**
@@ -517,6 +707,21 @@ public final class PPFile {
         private double deg;
     }
 
+    /**
+     * The start point's display name. The visualizer only writes {@code name} when the point was
+     * named, so an anonymous start point is normal and falls back to {@code StartPoint} rather than
+     * leaving point 0 unnamed (which {@link #pointName(int)} would otherwise report as "start").
+     */
+    private static String startPointName(Map<String, Object> start) {
+        String name = string(start.get("name")).trim();
+        return name.isEmpty() ? "StartPoint" : name;
+    }
+
+    /**
+     * The start point's heading in file degrees, from either the current {@code headingDeg} field or
+     * the pre-migration heading type stored on the point. An unreadable heading means 0, matching
+     * the visualizer's own normalization.
+     */
     private static double startHeadingDeg(Map<String, Object> start) {
         if (start.get("headingDeg") instanceof Number) {
             return number(start, "headingDeg", 0);
@@ -527,6 +732,10 @@ public final class PPFile {
         }
         if (type.equals("constant")) {
             return number(start, "degrees", 0);
+        }
+        if (type.equals("tangential")) {
+            // A tangential start has no stored angle; the pose factory treats 0 as "as drawn".
+            return 0;
         }
         return 0;
     }

@@ -14,7 +14,7 @@ public class R_ShootR_Garden_ShootR_Park extends AutoOpModeBase {
 
     public R_ShootR_Garden_ShootR_Park()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
     {
-        super.assetPath = "pathfiles/R_ShootR_Garden_ShootR_Park.pp";//this must be set to alliance this auton is made for
+        super.assetPath = "pathfiles/R_ShootR_Garden_ShootR_Park.pp.json";//this must be set to alliance this auton is made for
         super.SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
     }
     @Override

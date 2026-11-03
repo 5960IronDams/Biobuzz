@@ -1,10 +1,12 @@
 {
+  "version": "2.0.0",
+  "timestamp": "2026-01-01T00:00:00.000Z",
   "startPoint": {
     "x": 59.25,
     "y": 9.639629200463489,
     "name": "Robot",
     "locked": false,
-    "headingDeg": 90.0
+    "headingDeg": 90
   },
   "lines": [
     {
@@ -24,8 +26,8 @@
       "controlPoints": [],
       "heading": {
         "type": "linear",
-        "startDeg": 90.0,
-        "endDeg": 180.0
+        "startDeg": 90,
+        "endDeg": 180
       }
     },
     {
@@ -45,8 +47,8 @@
       "controlPoints": [],
       "heading": {
         "type": "linear",
-        "startDeg": 90.0,
-        "endDeg": 180.0
+        "startDeg": 90,
+        "endDeg": 180
       }
     },
     {
@@ -91,7 +93,35 @@
     }
   ],
   "shapes": [],
-  "sequence": [],
+  "sequence": [
+    {
+      "kind": "path",
+      "lineId": "line-8a5c41a4-061479"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-dfe0da69-7bcbbc"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-5017b269-a6257d"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-34396b6e-c1c834"
+    }
+  ],
   "fieldPoints": [],
-  "version": "1.5.0"
+  "robot": {
+    "forwardVelocity": 75,
+    "strafeVelocity": 65,
+    "aVelocity": 3.141592653589793,
+    "kFriction": 0.1,
+    "rLength": 16,
+    "rWidth": 16,
+    "safetyMargin": 1,
+    "maxAcceleration": 50,
+    "maxDeceleration": 50
+  },
+  "activePaths": []
 }

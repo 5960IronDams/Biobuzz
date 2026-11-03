@@ -25,7 +25,7 @@ import java.util.function.Supplier;
  * (translation AND rotation stay on the sticks — the robot no longer aims
  * itself, the turret does).
  *
- * <p>Targets come from {@code assets/pathfiles/AimPoints.pp}, parsed with
+ * <p>Targets come from {@code assets/pathfiles/AimPoints.pp.json}, parsed with
  * {@link PPFile}. Points are filtered by alliance name prefix
  * ({@code "Red*"} / {@code "Blue*"}), and the closest one (by XY distance to
  * the follower pose) is picked fresh every loop, so the lock follows you
@@ -155,7 +155,7 @@ public class AimAtGoal extends CommandBase {
     public static double TOL_RPM_REF = 2000.0;
 
     /** Asset path of the aim-point file. Already contains BOTH alliances' points. */
-    public static final String ASSET_PATH = "pathfiles/AimPoints.pp";
+    public static final String ASSET_PATH = "pathfiles/AimPoints.pp.json";
 
     private final TurretPivot turret;
     private final Follower follower;

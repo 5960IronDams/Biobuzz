@@ -14,7 +14,7 @@ public class RightAuto extends AutoOpModeBase {
 
     public RightAuto()//constructor argument creates object, it should have same name as the class it constructs (the class this file is named after)
     {
-        super.assetPath = "pathfiles/exampleAuto1.pp";//this must be set to alliance this auton is made for
+        super.assetPath = "pathfiles/exampleAuto1.pp.json";//this must be set to alliance this auton is made for
         super.SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
     }
     @Override

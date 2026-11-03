@@ -24,7 +24,7 @@ public abstract class AutoOpModeBase extends OpMode {
     /**
      *  <em>Must</em> be overridden inside Constructor Or Example  paths Will be Loaded!
      */
-    public String assetPath = "pathfiles/exampleAuto1.pp";;
+    public String assetPath = "pathfiles/exampleAuto1.pp.json";;
     /**
      *  The Alliance This Auton is for, Default Red! Must Be Overridden in child constructor (unless red)
      */

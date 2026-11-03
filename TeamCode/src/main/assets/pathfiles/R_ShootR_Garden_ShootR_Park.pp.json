@@ -1,4 +1,6 @@
 {
+  "version": "2.0.0",
+  "timestamp": "2026-01-01T00:00:00.000Z",
   "startPoint": {
     "x": 58.76190819671113,
     "y": 11.533872841695091,
@@ -176,6 +178,16 @@
     }
   ],
   "fieldPoints": [],
-  "version": "1.5.0",
-  "timestamp": "2026-11-02T07:13:09.097Z"
+  "robot": {
+    "forwardVelocity": 75,
+    "strafeVelocity": 65,
+    "aVelocity": 3.141592653589793,
+    "kFriction": 0.1,
+    "rLength": 16,
+    "rWidth": 16,
+    "safetyMargin": 1,
+    "maxAcceleration": 50,
+    "maxDeceleration": 50
+  },
+  "activePaths": []
 }

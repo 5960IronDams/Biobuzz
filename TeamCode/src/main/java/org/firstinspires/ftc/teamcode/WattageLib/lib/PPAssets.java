@@ -6,11 +6,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 
 /**
- * Loads a {@code .pp} file from the Robot Controller's assets (copy your file into
+ * Loads a {@code .pp.json} file from the Robot Controller's assets (copy your file into
  * {@code TeamCode/src/main/assets/...}) and parses it into a {@link PPFile}.
  *
  * <pre>{@code
- * PPFile pp = PPAssets.fromAsset(hardwareMap, "pathfiles/exampleAuto1.pp", poseFactory);
+ * PPFile pp = PPAssets.fromAsset(hardwareMap, "pathfiles/exampleAuto1.pp.json", poseFactory);
  * }</pre>
  */
 public final class PPAssets {
