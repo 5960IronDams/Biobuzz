@@ -14,6 +14,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.Commands.CommandFactory;
 import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
+import org.firstinspires.ftc.teamcode.Subsystems.Hood;
 import org.firstinspires.ftc.teamcode.Subsystems.turret.TurretPivot;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.HiveCellMonitor;
 import org.firstinspires.ftc.teamcode.Subsystems.Intake;
@@ -66,6 +67,9 @@ public class RobotMain {
     public Ramp ramp;
     /** Turret rotation (null when the turret hardware isn't in the RC config). */
     public TurretPivot turret;
+    /** Adjustable launcher hood (null when the hood servo isn't in the RC config). */
+    @Nullable
+    public Hood hood;
     /** Null when no Limelight3A is in the RC config (Pinpoint-only mode). */
     @Nullable
     public Vision vision;
@@ -139,10 +143,12 @@ public class RobotMain {
         if (turret != null) {
             HardwareHealth.get().expect("TURRET");
         }
-
+        // Optional subsystem: tryCreate logs + returns null instead of crashing
+        // every OpMode when the hood servo isn't in the RC config.
+        hood = Hood.tryCreate(opmode);
 
         //after all subsystems are started (i.e their variables point to an object). Build the command factory
-        CommandF = new CommandFactory(follower,intake,transfer,flywheel,PosServ,turret, opmode.hardwareMap);
+        CommandF = new CommandFactory(follower,intake,transfer,flywheel,PosServ,turret,hood, opmode.hardwareMap);
 
         // Initialize telemetry file logger (optional: comment out to disable logging).
         // Must pass appContext: the RC app UID can only write to its app-private

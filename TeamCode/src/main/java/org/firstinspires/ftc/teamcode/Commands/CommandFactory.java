@@ -15,6 +15,7 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.Subsystems.Flywheel;
+import org.firstinspires.ftc.teamcode.Subsystems.Hood;
 import org.firstinspires.ftc.teamcode.Subsystems.Intake;
 import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
 import org.firstinspires.ftc.teamcode.Subsystems.Transfer;
@@ -91,6 +92,18 @@ public class CommandFactory {
     /** RPM at each distance in {@link #LUT_DISTANCES_IN} (same order). */
     public static double[] LUT_RPMS = {2500, 2800, 3000, 3800, 4000, 4000};//max observed RPM is 4100;
 
+    // ---- Shoot Hood LUT (Panels-tunable): distance from the aimed hive -> hood launch angle (deg) ----
+    /**
+     * Launch angle at each distance in {@link #LUT_DISTANCES_IN} (same order).
+     * 0 deg = vertical up, 90 deg = horizontal forward.
+     * Closer distances = steeper trajectory (lower deg value);
+     * Farther distances = flatter trajectory (higher deg value).
+     * Placeholder curve - tune on the robot (Panels -> CommandFactory).
+     */
+    public static double[] LUT_HOOD_DEGS = {16.831, 20.0, 26.0, 34.0, 42.0, 46.852};
+
+    public static double LUT_MAX_HOOD_SLEW_DPS = 90.0;
+
     /**
      * Max slew of the COMMANDED flywheel setpoint, RPM/sec. The raw LUT output
      * can step for two reasons that are NOT the LUT's shape: the aim lock hops
@@ -125,12 +138,20 @@ public class CommandFactory {
     private double lastLutDist = Double.NaN;
     private double lutFilteredRpm = Double.NaN;
 
+    /** Last slew-limited Hood angle commanded (NaN until the first lock). */
+    private double lastCmdHoodDeg = Double.NaN;
+    private long lastHoodNs = 0L;
+    /** The Hood angle the manager is commanding right now (NaN when idle). */
+    private double commandedHoodDeg = Double.NaN;
+    private double lutFilteredHoodDeg = Double.NaN;
+
     public final Follower follower;
     public final Intake intake;
     public final Transfer transfer;
     public final Flywheel flywheel;
     public final ShootGateServo PosServ;
     public final TurretPivot turret;
+    public final Hood hood;
     public final HardwareMap hardwareMap;
 
     /**
@@ -263,13 +284,14 @@ public class CommandFactory {
      */
     private final Command autoShootCmd;
 
-    public CommandFactory(Follower _follower, Intake _intake, Transfer _transfer, Flywheel _flywheel, ShootGateServo _posServ, TurretPivot _turret, HardwareMap _hardwareMap) {
+    public CommandFactory(Follower _follower, Intake _intake, Transfer _transfer, Flywheel _flywheel, ShootGateServo _posServ, TurretPivot _turret, Hood _hood, HardwareMap _hardwareMap) {
         follower = _follower;
         intake = _intake;
         transfer = _transfer;
         flywheel = _flywheel;
         PosServ = _posServ;
         turret = _turret;
+        hood = _hood;
         hardwareMap = _hardwareMap;
 
         // The shared aim model (alliance points + shot-aware tolerance).
@@ -279,6 +301,10 @@ public class CommandFactory {
 
         // Build the single latched instance LAST — its halves need `aim`.
         autoShootCmd = aim == null ? null : buildAutoShoot();
+    }
+
+    public CommandFactory(Follower _follower, Intake _intake, Transfer _transfer, Flywheel _flywheel, ShootGateServo _posServ, TurretPivot _turret, HardwareMap _hardwareMap) {
+        this(_follower, _intake, _transfer, _flywheel, _posServ, _turret, null, _hardwareMap);
     }
 
     // =====================================================================
@@ -352,6 +378,16 @@ public class CommandFactory {
         // CommandGroup". The `aim` field stays the long-lived instance for
         // TeleOp's toggleWhenActive(); its live state is exposed through the
         // is*OnTarget()/live*() accessors either way.
+        if (hood != null) {
+            return new ParallelCommandGroup(
+                    // 1) Aim: spins the TURRET to the target; chassis stays with the driver.
+                    AimAtClosestGoal(),
+                    // 2) RPM manager: distance -> linear LUT -> slew-limited setpoint.
+                    rpmManagerCommand(),
+                    // 3) Hood manager: distance -> linear LUT -> slew-limited launch angle.
+                    hoodManagerCommand()
+            ).setName("TrackTarget");
+        }
         return new ParallelCommandGroup(
                 // 1) Aim: spins the TURRET to the target; chassis stays with the driver.
                 AimAtClosestGoal(),
@@ -532,6 +568,7 @@ public class CommandFactory {
                     if (transfer != null) transfer.stop();
                     if (flywheel != null) flywheel.coastToIdle();
                     if (turret != null) turret.BRAKE();
+                    if (hood != null) hood.stow();
                     firing = false;
                     intakeStoppedByFire = false;
                     fireSuppressedByDriver = false; // a deliberate unlock re-arms for next time
@@ -634,6 +671,68 @@ public class CommandFactory {
                 flywheel);
     }
 
+    /**
+     * Distance -> linear LUT -> slew-limited Hood launch angle every loop.
+     * The LUT input is the shared aim instance's locked distance while aiming,
+     * or the live target distance otherwise. Reuses the same distance deadband
+     * as the flywheel to prevent pose noise from moving the hood.
+     */
+    private Command hoodManagerCommand() {
+        if (hood == null) {
+            return Commands.none();
+        }
+        return new FunctionalCommand(
+                () -> {
+                    lastCmdHoodDeg = Double.NaN;
+                    lastHoodNs = 0L;
+                    commandedHoodDeg = Double.NaN;
+                    lutFilteredHoodDeg = Double.NaN;
+                },
+                () -> {
+                    double d = currentShotDistanceInches();
+                    if (Double.isNaN(d) || d <= 0) {
+                        return;
+                    }
+                    if (!Double.isNaN(lastLutDist)) {
+                        d = lastLutDist;
+                    }
+                    double raw = lutHoodDeg(d);
+                    long nowNs = System.nanoTime();
+                    double dt = lastHoodNs == 0L ? 0.02
+                            : Math.min(Math.max((nowNs - lastHoodNs) / 1.0e9, 0.0), 0.25);
+                    lastHoodNs = nowNs;
+
+                    if (Double.isNaN(lutFilteredHoodDeg)) {
+                        lutFilteredHoodDeg = raw;
+                    } else {
+                        double a = Math.max(0.0, Math.min(1.0, LUT_RPM_FILTER_ALPHA));
+                        lutFilteredHoodDeg += a * (raw - lutFilteredHoodDeg);
+                    }
+                    raw = lutFilteredHoodDeg;
+
+                    if (Double.isNaN(lastCmdHoodDeg) || LUT_MAX_HOOD_SLEW_DPS <= 0) {
+                        lastCmdHoodDeg = raw;
+                    } else {
+                        double maxDelta = LUT_MAX_HOOD_SLEW_DPS * dt;
+                        lastCmdHoodDeg += Math.max(-maxDelta, Math.min(maxDelta, raw - lastCmdHoodDeg));
+                    }
+                    commandedHoodDeg = lastCmdHoodDeg;
+                    hood.setTargetDegrees(lastCmdHoodDeg);
+
+                    RobotMain.DashTelemetry.addData("Shoot LUT raw Hood deg", "%.2f", raw);
+                    RobotMain.DashTelemetry.addData("Shoot LUT cmd Hood deg", "%.2f", lastCmdHoodDeg);
+                },
+                (interrupted) -> {
+                    if (hood != null) hood.stow();
+                    lastCmdHoodDeg = Double.NaN;
+                    commandedHoodDeg = Double.NaN;
+                    lutFilteredHoodDeg = Double.NaN;
+                },
+                () -> false,
+                hood
+        );
+    }
+
     /** The distance (in) from the shooter to the target the shot is being made at. */
     private double currentShotDistanceInches() {
         if (aim == null) {
@@ -661,6 +760,18 @@ public class CommandFactory {
     /** True when the TURRET has reached a commanded setpoint (FRC {@code isHoodAtAngle()} slot). */
     public Trigger isTurretAtSetpoint() {
         return new Trigger(this::turretAtSetpoint);
+    }
+
+    /** True when the HOOD has reached its commanded launch angle (or hood is not implemented). */
+    public Trigger isHoodAtAngle() {
+        return new Trigger(this::hoodAtAngle);
+    }
+
+    private boolean hoodAtAngle() {
+        if (hood == null || !Hood.IMPLEMENTED) {
+            return true;
+        }
+        return hood.isAtTargetDegrees(Hood.TOLERANCE_DEG);
     }
 
     /**
@@ -722,10 +833,11 @@ public class CommandFactory {
         final boolean translation;
         final boolean rotation;
         final boolean clear;
+        final boolean hood;
         final boolean all;
 
         Readiness(boolean flywheel, boolean turretPos, boolean aim, boolean gate,
-                  boolean translation, boolean rotation, boolean clear) {
+                  boolean translation, boolean rotation, boolean clear, boolean hood) {
             this.flywheel = flywheel;
             this.turretPos = turretPos;
             this.aim = aim;
@@ -733,7 +845,8 @@ public class CommandFactory {
             this.translation = translation;
             this.rotation = rotation;
             this.clear = clear;
-            this.all = flywheel && turretPos && aim && gate && translation && rotation && clear;
+            this.hood = hood;
+            this.all = flywheel && turretPos && aim && gate && translation && rotation && clear && hood;
         }
     }
 
@@ -746,7 +859,8 @@ public class CommandFactory {
                 gateOk(),
                 translationOk(),
                 rotationOk(),
-                shooterIsClear());
+                shooterIsClear(),
+                hoodAtAngle());
     }
 
     /**
@@ -916,11 +1030,26 @@ public class CommandFactory {
         RobotMain.DashTelemetry.addData("  ok: rotation", flag(r.rotation)
                 + String.format(java.util.Locale.US, " %.0f/%.0f dps", Math.abs(measuredYawDps), MAX_ROTATION_SPEED_DPS));
         RobotMain.DashTelemetry.addData("  ok: clear", flag(r.clear));
+        RobotMain.DashTelemetry.addData("  ok: hood", flag(r.hood) + hoodText());
         RobotMain.DashTelemetry.addData("Fire transfer", transferState);
     }
 
     private static String flag(boolean ok) {
         return ok ? "OK  " : "NO  ";
+    }
+
+    /** Explain the hood member: missing hardware is called out explicitly, not passed off as OK. */
+    private String hoodText() {
+        if (hood == null) {
+            return " (no hood)";
+        }
+        if (!Hood.IMPLEMENTED) {
+            return " (NOT IMPLEMENTED - ignored)";
+        }
+        return String.format(java.util.Locale.US, " %.1f/%.1f deg (err %.1f, tol %.1f)",
+                hood.getCurrentDegrees(), hood.getTargetDegrees(),
+                Math.abs(hood.getCurrentDegrees() - hood.getTargetDegrees()),
+                Hood.TOLERANCE_DEG);
     }
 
     /** Explain the gate member: missing hardware is called out explicitly, not passed off as OK. */
@@ -989,6 +1118,9 @@ public class CommandFactory {
         }
         if (!r.clear) {
             return "NO-FIRE ZONE";
+        }
+        if (!r.hood) {
+            return "HOOD" + hoodText();
         }
         return "none";
     }
@@ -1283,6 +1415,33 @@ public class CommandFactory {
         int n = Math.min(xs.length, ys.length);
         if (n < 2) {
             return ys.length > 0 ? ys[0] : 0.0;
+        }
+        if (distIn <= xs[0]) return ys[0];
+        if (distIn >= xs[n - 1]) return ys[n - 1];
+        for (int i = 0; i < n - 1; i++) {
+            if (distIn <= xs[i + 1]) {
+                double t = (distIn - xs[i]) / (xs[i + 1] - xs[i]);
+                return ys[i] + t * (ys[i + 1] - ys[i]);
+            }
+        }
+        return ys[n - 1];
+    }
+
+    /** The Hood angle the manager is commanding right now (NaN when idle). */
+    public double getCommandedHoodDeg() {
+        return commandedHoodDeg;
+    }
+
+    /**
+     * Linear LUT lookup for hood angle, edge-clamped to endpoints.
+     * Reads the tunable arrays live, so Panels edits apply on the very next lookup.
+     */
+    public static double lutHoodDeg(double distIn) {
+        double[] xs = LUT_DISTANCES_IN;
+        double[] ys = LUT_HOOD_DEGS;
+        int n = Math.min(xs.length, ys.length);
+        if (n < 2) {
+            return ys.length > 0 ? ys[0] : Hood.HOOD_DOWN_DEG;
         }
         if (distIn <= xs[0]) return ys[0];
         if (distIn >= xs[n - 1]) return ys[n - 1];

@@ -18,6 +18,7 @@ public class IronConstants {
     public static final String TransferMotorName = CompBot? "ehm1" :"transfer";
     public static final String FlywheelMotorName = CompBot? "ehm2" :"flywheel";
     public static final String FrontServoName = CompBot? "shootgate" :"shootgate";
+    public static final String HoodServoName = CompBot? "chservo2" : "chservo2";
     public static final String TurretMotorName = CompBot? "ehm3" :"turret_motor";
     public static final String TurretOctoQuadName = CompBot? "octoquad" :"octoquad"; //octoquad MK1
     public static final String DriverSideServoName = CompBot? "CHservo5" :"DSServo";
