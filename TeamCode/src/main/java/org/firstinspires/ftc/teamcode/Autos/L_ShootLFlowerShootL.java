@@ -26,8 +26,8 @@ public class L_ShootLFlowerShootL extends AutoOpModeBase {
                 //drive to flower ready position
                 follow(robot.follower, pp.path("ReadyFlowerPos")),
                 // Drive into flower command group
+                rampDown(),
                 new ParallelCommandGroup(
-                        //drop servo for flowerintake scoop
                         //activate intake
                         robot.intake.runCmd(),
                         //go into flower
@@ -36,6 +36,7 @@ public class L_ShootLFlowerShootL extends AutoOpModeBase {
                 //wait for all pollen to be intaken
                 new WaitCommand(500),
                 robot.intake.stopCmd(),
+                rampUp(),
                 //drive back to second shot on left hive
                 new SequentialCommandGroup(
                         follow(robot.follower, pp.path("Shot2Left"))

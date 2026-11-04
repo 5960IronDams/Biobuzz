@@ -21,12 +21,14 @@ public class RightAuto extends AutoOpModeBase {
     public Command autoRoutine() {
         return new SequentialCommandGroup(
                 //fire or whatever.
-                robot.PosServ.toPos(0.5),
+                autoShoot().withTimeout(4000),
+                rampDown(),
                 //move out of way
                 follow(robot.follower, pp.path("StartToOffset")),
                 // move to next location
                 new ParallelCommandGroup(
                         robot.intake.runCmd(),
+                        rampUp(),
                         follow(robot.follower, pp.path("OffsetToPark"))
                 ),
                 //stop intakeing and other functions.

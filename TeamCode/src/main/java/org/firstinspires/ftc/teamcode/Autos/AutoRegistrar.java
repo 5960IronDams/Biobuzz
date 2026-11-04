@@ -28,9 +28,11 @@ public final class AutoRegistrar {
             RightAuto.class,//shoot and turn
             R_ShootPark.class,//shoot Right, then go park.
             L_ShootLFlowerShootL.class,
-            R_ShootR_Garden_ShootR_Park.class
-            //Right auto That Shoots, goes under middle, shoots again, grabs flower, shoots again, parks.
-            // Red_LeftAuto.class,  // <-- just add the class here when you write it
+            R_ShootR_Garden_ShootR_Park.class,
+            ShootAndParkFlowerSide.class,
+            TwoTipSingle.class,
+            TwoPointFiveTipAuto.class,
+            TwoPointFiveTipUnderneathAuto.class
     };
 
     @OpModeRegistrar

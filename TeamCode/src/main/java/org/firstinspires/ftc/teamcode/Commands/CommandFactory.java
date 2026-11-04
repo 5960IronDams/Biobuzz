@@ -81,18 +81,14 @@ public class CommandFactory {
 
     // ---- Shoot LUT (Panels-tunable): distance from the aimed hive -> flywheel RPM ----
     /**
-     * PLACEHOLDER curve - tune on the robot (Panels -> CommandFactory).
      * Keys MUST be strictly increasing; distances outside the table clamp to
      * the nearest endpoint RPM. PLAIN LINEAR interpolation between points
-     * (the SolversLib InterpLUT this replaces is a monotone cubic SPLINE, not
-     * linear) and the arrays are read live, so Panels edits apply instantly -
+     * and the arrays are read live, so Panels edits apply instantly -
      * no rebuild step.
      */
-    public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
-    /** RPM at each distance in {@link #LUT_DISTANCES_IN} (same order). */
-    public static double[] LUT_RPMS = {2500, 2800, 3000, 3800, 4000, 4000};//max observed RPM is 4100;
-
+    /** RPM at each distance in {@link #LUT_DISTANCES_IN} (same order). //max observed RPM is 4100; */
     // ---- Shoot Hood LUT (Panels-tunable): distance from the aimed hive -> hood launch angle (deg) ----
+
     /**
      * Launch angle at each distance in {@link #LUT_DISTANCES_IN} (same order).
      * 0 deg = vertical up, 90 deg = horizontal forward.
@@ -100,6 +96,8 @@ public class CommandFactory {
      * Farther distances = flatter trajectory (higher deg value).
      * Placeholder curve - tune on the robot (Panels -> CommandFactory).
      */
+    public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
+    public static double[] LUT_RPMS = {2500, 2800, 3000, 3800, 4000, 4000};
     public static double[] LUT_HOOD_DEGS = {16.831, 20.0, 26.0, 34.0, 42.0, 46.852};
 
     public static double LUT_MAX_HOOD_SLEW_DPS = 90.0;

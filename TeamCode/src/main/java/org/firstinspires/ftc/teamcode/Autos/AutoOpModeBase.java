@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.Autos;
 import com.pedropathing.api.PoseFactory;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.CommandScheduler;
+import com.seattlesolvers.solverslib.command.InstantCommand;
 import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
@@ -59,6 +60,20 @@ public abstract class AutoOpModeBase extends OpMode {
      */
     public Command autoShoot() {
         return robot == null ? null : robot.CommandF.AutoShootAtGoal();
+    }
+
+    /**
+     * A fresh ramp-down command for this auto's command group (no-op when ramp servos are absent).
+     */
+    public Command rampDown() {
+        return robot == null || robot.ramp == null ? new InstantCommand() : robot.ramp.downCmd();
+    }
+
+    /**
+     * A fresh ramp-up command for this auto's command group (no-op when ramp servos are absent).
+     */
+    public Command rampUp() {
+        return robot == null || robot.ramp == null ? new InstantCommand() : robot.ramp.upCmd();
     }
 
     @Override
