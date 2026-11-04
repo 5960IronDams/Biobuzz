@@ -31,6 +31,8 @@ import org.firstinspires.ftc.teamcode.WattageLib.PanelsTelemLogging.TelemetryFil
 import com.bylazar.configurables.annotations.Configurable;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 @Configurable
@@ -39,8 +41,8 @@ public class RobotMain {
 
     // ---- Loop-time I/O switches (Panels -> RobotMain). All ON = full debug
     // richness (~30-50ms loops); turn OFF for matches / fast loops. ----
-    /** Master switch for the telemetry FILE logger (disk write+flush per tick). */
-    public static boolean TELEMETRY_IO = true;
+    /** Master switch for the telemetry FILE logger (disk write+flush per tick). Defaults false for fast match loops. */
+    public static boolean TELEMETRY_IO = false;
     /**
      * Master switch for the Panels dashboard: field canvas draw, Fusion/*
      * report lines, captureSnapshot, and the Panels update() send. False =
@@ -82,6 +84,8 @@ public class RobotMain {
     //
     public CommandFactory CommandF;
     public static Pose autonomousEndPose = new Pose(0, 0, 0);
+    /** REV Hubs cached for fast manual bulk reads. */
+    private List<LynxModule> allHubs = new ArrayList<>();
     /** The owning OpMode — the DS failure board evaluates on its telemetry every flushTelemetry(). */
     private final OpMode opmode;
     /**
@@ -103,13 +107,12 @@ public class RobotMain {
         HardwareHealth.get().reset();
 
         // REV Hub bulk-read caching: batch all encoder/digital I2C reads on each
-        // hub into ONE transaction per loop instead of one-per-read. AUTO mode
-        // refreshes the cache automatically on first read each loop. Cuts
-        // multi-device loop latency (same win Pedro's tuners already use).
-        // Wrapped: skip silently on non-REV test rigs with no Lynx module.
+        // hub into ONE transaction per loop. MANUAL mode with clearBulkCache()
+        // at the top of each loop provides maximum performance (~10-15ms loop times).
         try {
-            for (LynxModule hub : opmode.hardwareMap.getAll(LynxModule.class)) {
-                hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
+            allHubs = opmode.hardwareMap.getAll(LynxModule.class);
+            for (LynxModule hub : allHubs) {
+                hub.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
             }
         } catch (Exception ignored) {
         }
@@ -300,6 +303,9 @@ public class RobotMain {
 
     public void RobotRunPeriodic()
     {
+        for (int i = 0; i < allHubs.size(); i++) {
+            allHubs.get(i).clearBulkCache();
+        }
         runPeriodicSeen = true; // post-PLAY marker for the DS failure board
         follower.update();//updates this robots pedro Follower (predict: Pinpoint)
         if (visionFusion != null) visionFusion.correct(); // correct: Limelight -> Kalman
@@ -327,6 +333,9 @@ public class RobotMain {
      */
     public void InitRunPeriodic()
     {
+        for (int i = 0; i < allHubs.size(); i++) {
+            allHubs.get(i).clearBulkCache();
+        }
         follower.update(); // predict step: keeps the pose fresh (robot is parked)
         if (visionFusion != null) visionFusion.correct(); // LL connect + solve + fuse
         if (vision != null) vision.healthPing(); // DS failure-board heartbeat during init too
@@ -400,6 +409,14 @@ public class RobotMain {
         // OpModes' UpdateTelemetry() own their DS screens and pull
         // HardwareHealth.get().dsLine()); the Panels summary line is added
         // further down, before the single update().
+        //
+        // Loop rate rides along on that same line ("OK | 19.8 ms 50.5 Hz"):
+        // Panels owns the rich per-tick view, but with the dashboard OFF this
+        // is the only place a driver can see a stuttering loop. It is fed
+        // here, AFTER looptime() ran in RobotRunPeriodic(), not from
+        // looptime() itself — looptime() is skipped on the init screen, so a
+        // stale pre-match number must not linger into the match.
+        HardwareHealth.get().setLoopStats(lastLoopTimeMs);
         HardwareHealth.get().evaluate(runPeriodicSeen);
 
         if (!DASHBOARD) {
@@ -484,17 +501,38 @@ public class RobotMain {
         }
     }
     long lastTime = System.nanoTime();
+    /** Measured loop period (ms) from the LAST looptime() — 0 until the first tick. */
+    private double lastLoopTimeMs = 0.0;
+
+    /**
+     * Measures the loop period and queues the Panels {"Loop Time (ms)", "Hz"}
+     * lines (addData only — {@link #flushTelemetry()} does the single update).
+     *
+     * <p>The measurement is also kept in {@link #lastLoopTimeMs} so the DS
+     * drivers hub gets the SAME numbers via {@link HardwareHealth#dsLine()}
+     * even when the Panels dashboard is off: game day has no Panels laptop,
+     * and "is the loop healthy?" is exactly what you cannot see without it.
+     * The value is consumed in flushTelemetry(), which runs while the
+     * dashboard is off too, so the two surfaces can never disagree.
+     */
     public void looptime() {
         long currentTime = System.nanoTime();
 
         // Calculate loop time in milliseconds
         double loopTimeMs = (currentTime - lastTime) / 1_000_000.0;
         lastTime = currentTime;
-
-        // ... Your Robot Logic Here ...
+        lastLoopTimeMs = loopTimeMs;
 
         RobotMain.DashTelemetry.addData("Loop Time (ms)", "%.2f ms", loopTimeMs);
         RobotMain.DashTelemetry.addData("Hz", "%.1f Hz", 1000.0 / loopTimeMs);
         // No update() here — flushed once via flushTelemetry() at end of loop().
+    }
+
+    /**
+     * Loop period measured by the last {@link #looptime()} tick, in ms
+     * (0.0 until the first tick — the match loop has not run yet).
+     */
+    public double getLoopTimeMs() {
+        return lastLoopTimeMs;
     }
 }

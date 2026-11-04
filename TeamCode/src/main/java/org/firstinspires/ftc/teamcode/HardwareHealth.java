@@ -190,7 +190,13 @@ public final class HardwareHealth {
     private String lastWarning = "";
     /** Tracks the OpMode PLAY edge so silence windows restart when the match begins. */
     private boolean started = false;
-
+    /**
+     * Loop period (ms) from the last {@code RobotMain.looptime()} tick, fed by
+     * {@link #setLoopStats} every flush. 0 = not measured yet (init screen).
+     */
+    private double loopTimeMs = 0.0;
+    /** Last DS line we built, rebuilt only when the text changes (hot path). */
+    private String lastDsLine = null;
     private HardwareHealth() {
     }
 
@@ -204,6 +210,8 @@ public final class HardwareHealth {
         faults.clear();
         started = false;
         lastWarning = "";
+        loopTimeMs = 0.0;
+        lastDsLine = null;
         WARNING_SOURCE.clearGlobalWarning();
     }
 
@@ -262,6 +270,7 @@ public final class HardwareHealth {
         long now = nowMs();
         boolean startEdge = startedNow && !started;
         started = startedNow;
+        lastDsLine = null; // fault list is about to change — rebuild dsLine()
 
         faults.clear();
         for (Entry e : systems.values()) {
@@ -314,24 +323,81 @@ public final class HardwareHealth {
     }
 
     /**
-     * The one driver-facing line for the DS telemetry screen ("OK", or the
-     * first fault plus a count of the rest) — pulled by each OpMode's
-     * UpdateTelemetry() into its OWN DS update flow (see the evaluate()
-     * javadoc for why this class never calls telemetry.update() itself).
-     * Truncated to fit the DS phone.
+     * Loop-rate facts for the DS line, fed once per tick by
+     * {@code RobotMain.flushTelemetry()} from the same {@code looptime()}
+     * measurement the Panels {"Loop Time (ms)", "Hz"} lines report.
+     *
+     * <p>Deliberately NOT a fault: a slow loop is a performance symptom, not a
+     * hardware failure, so it never enters the warning banner or
+     * {@link #anyFault()}. It simply rides on the DS line so game day has the
+     * number with the dashboard off.
+     *
+     * @param loopTimeMs last measured loop period in ms; &lt;= 0 means "not
+     *                   measured yet" and prints a placeholder
+     */
+    public void setLoopStats(double loopTimeMs) {
+        if (Math.abs(loopTimeMs - this.loopTimeMs) < 1e-9) {
+            return; // same reading — no need to rebuild the DS line
+        }
+        this.loopTimeMs = loopTimeMs;
+        lastDsLine = null;
+    }
+
+    /**
+     * The one driver-facing line for the DS telemetry screen — pulled by each
+     * OpMode's UpdateTelemetry() into its OWN DS update flow (see the
+     * evaluate() javadoc for why this class never calls telemetry.update()
+     * itself). Always ends with the loop rate, so the drivers hub keeps the
+     * loop time + Hz even when the Panels dashboard is off:
+     * <ul>
+     *   <li>healthy: {@code "OK | 19.8 ms 50.5 Hz"}</li>
+     *   <li>faulted: {@code "TURRET CRT_CROSSCHECK (+1 more) | 24.1 ms 41.5 Hz"}</li>
+     * </ul>
+     * The loop-rate suffix is reserved out of the truncation budget FIRST, so
+     * a long fault text can never hide it. Before the first loop tick the
+     * suffix is a bare {@code "loop -- ms"}, then {@link #DS_LINE_MAX} applies
+     * to the whole line as before.
      */
     public String dsLine() {
-        if (faults.isEmpty()) {
-            return "OK";
-        }
-        String line = faults.get(0);
-        if (faults.size() > 1) {
-            line += " (+" + (faults.size() - 1) + " more)";
-        }
-        if (line.length() > DS_LINE_MAX) {
-            line = line.substring(0, DS_LINE_MAX - 3) + "...";
+        String line = lastDsLine;
+        if (line == null) {
+            line = buildDsLine();
+            lastDsLine = line;
         }
         return line;
+    }
+
+    /** Builds the DS line from scratch (health head + loop-rate suffix). */
+    private String buildDsLine() {
+        String head;
+        if (faults.isEmpty()) {
+            head = "OK";
+        } else {
+            head = faults.get(0);
+            if (faults.size() > 1) {
+                head += " (+" + (faults.size() - 1) + " more)";
+            }
+        }
+        String rate = loopSuffix(loopTimeMs);
+        // Reserve the rate suffix out of the budget first: MS/Hz must survive
+        // even when a long fault text would otherwise be cut in front of it.
+        int budget = Math.max(4, DS_LINE_MAX - 3 - rate.length()); // -3 for " | "
+        if (head.length() > budget) {
+            head = head.substring(0, budget - 3) + "...";
+        }
+        return head + " | " + rate;
+    }
+
+    /**
+     * The loop-rate suffix for the DS line, e.g. {@code "19.8 ms 50.5 Hz"}
+     * (unmeasured ticks print {@code "loop -- ms"}). Matches the Panels
+     * formats exactly: 2 decimals for ms, 1 for Hz.
+     */
+    private static String loopSuffix(double loopTimeMs) {
+        if (loopTimeMs <= 0.0 || !Double.isFinite(loopTimeMs)) {
+            return "loop -- ms";
+        }
+        return String.format(Locale.US, "%.2f ms %.1f Hz", loopTimeMs, 1000.0 / loopTimeMs);
     }
 
     /** Compact one-line summary for the Panels dashboard: "OK" or the full fault list. */

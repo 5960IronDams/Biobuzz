@@ -295,12 +295,10 @@ public class KeyBindings {
                 driveStrafe(),
                 driveTurn(),
                 robot.follower.pose().heading());
+        // Apply field-centric powers to the follower. RobotRunPeriodic() performs
+        // the single follower.update() and visionFusion.correct() at the top of the
+        // loop, ensuring clean delta-time and eliminating redundant I2C Pinpoint reads.
         robot.follower.manual(powers);
-        robot.follower.update();
-        // Correct AFTER the trailing update (same predict->correct order as RobotMain).
-        // Same-frame re-poll no-ops inside VisionFusion; a new LL frame still fuses.
-        // No field draw here — flushTelemetry() paints once per loop (final pose).
-        if (robot.visionFusion != null) robot.visionFusion.correct();
     }
 
     // Alliance-aware stick mapping (preserved from JowByTeleOp).

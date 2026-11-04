@@ -77,14 +77,18 @@ public class JowByTeleOp extends OpMode {
 //    }
 
 
+    private long lastDsTelemetryMs = 0;
+
     public void UpdateTelemetry()
     {
-        // DS screen: re-added every tick because update() clears the buffer.
-        // "HW" is the driver-station failure board (see HardwareHealth) — the
-        // game-day surface when the Panels laptop is in the pits.
-        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        telemetry.addData("HW", HardwareHealth.get().dsLine());
-        telemetry.update();
+        long now = System.currentTimeMillis();
+        // DS screen: rate-limit to ~20 Hz (every 50 ms) so fast loops (70-100 Hz) don't congest Wi-Fi
+        if (now - lastDsTelemetryMs >= 50) {
+            telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+            telemetry.addData("HW", HardwareHealth.get().dsLine());
+            telemetry.update();
+            lastDsTelemetryMs = now;
+        }
 
         // addData only — flushed once via flushTelemetry() at end of loop().
         RobotMain.DashTelemetry.addData("Status", "Running");

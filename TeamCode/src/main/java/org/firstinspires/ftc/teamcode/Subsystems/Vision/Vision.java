@@ -131,6 +131,18 @@ public class Vision {
     /** Re-seed early if the yaw moved more than this (degrees) since last seed. */
     public static double SEED_YAW_DELTA_DEG = 0.5;
 
+    // ---- Corner Hive Pipelines (Whitelist 4 tags per corner) ----
+    /**
+     * Automatically switch Limelight pipeline to whitelist only the hive in the robot's current corner.
+     * Set to false by default until Pipelines 0, 1, 2, and 3 are all configured on the Limelight Web UI
+     * with the 3D field map (.fmap) and their respective fiducial ID filters.
+     */
+    public static boolean AUTO_CORNER_PIPELINE = true;
+    public static int PIPELINE_RED_SCORING = 0;   // Tags 30-33 (X < 72, Y >= 72)
+    public static int PIPELINE_RED_AUDIENCE = 1;  // Tags 34-37 (X < 72, Y < 72)
+    public static int PIPELINE_BLUE_AUDIENCE = 2; // Tags 38-41 (X >= 72, Y < 72)
+    public static int PIPELINE_BLUE_SCORING = 3;  // Tags 42-45 (X >= 72, Y >= 72)
+
     // ---- BIOBUZZ cluster IDs (from SDK 12.0 AprilTagGameDatabase) ----
     // All 16 tags live on 4 tipping hive cells (30deg-rest poses in the .fmap):
     // 30-33 RED SCORING, 34-37 RED AUDIENCE, 38-41 BLUE AUDIENCE, 42-45 BLUE SCORING.
@@ -319,7 +331,57 @@ public class Vision {
         start(0);
     }
 
+    private int currentPipeline = -1;
+
+    public int getCurrentPipeline() {
+        return currentPipeline;
+    }
+
+    public void switchPipeline(int pipeline) {
+        if (limelight == null || pipeline == currentPipeline) return;
+        try {
+            limelight.pipelineSwitch(pipeline);
+            currentPipeline = pipeline;
+        } catch (Exception ignored) {
+        }
+    }
+
+    public static int cornerPipelineForPose(@Nullable Pose pose, int current) {
+        if (pose == null) return PIPELINE_RED_SCORING;
+        double deadband = 4.0;
+        double x = pose.x();
+        double y = pose.y();
+
+        boolean isBlue;
+        if (current == PIPELINE_BLUE_AUDIENCE || current == PIPELINE_BLUE_SCORING) {
+            isBlue = x >= (72.0 - deadband);
+        } else {
+            isBlue = x >= (72.0 + deadband);
+        }
+
+        boolean isScoring;
+        if (current == PIPELINE_RED_SCORING || current == PIPELINE_BLUE_SCORING) {
+            isScoring = y >= (72.0 - deadband);
+        } else {
+            isScoring = y >= (72.0 + deadband);
+        }
+
+        if (!isBlue && isScoring) return PIPELINE_RED_SCORING;
+        if (!isBlue && !isScoring) return PIPELINE_RED_AUDIENCE;
+        if (isBlue && !isScoring) return PIPELINE_BLUE_AUDIENCE;
+        return PIPELINE_BLUE_SCORING;
+    }
+
+    public void updateCornerPipeline(@Nullable Pose pose) {
+        if (!AUTO_CORNER_PIPELINE || pose == null || limelight == null) return;
+        int target = cornerPipelineForPose(pose, currentPipeline);
+        if (target != currentPipeline) {
+            switchPipeline(target);
+        }
+    }
+
     public void start(int pipeline) {
+        currentPipeline = pipeline;
         try {
             limelight.pipelineSwitch(pipeline);
         } catch (Exception ignored) {
@@ -451,6 +513,17 @@ public class Vision {
         }
         if (r == null || !r.isValid()) return null;
 
+        // CRITICAL GATE: If no AprilTags were used in the botpose solve,
+        // Limelight returns a dummy (0,0,0) Pose3D object with 0 tags.
+        // Reject immediately if tagCount <= 0 so we never feed dummy (72, 72)
+        // coordinates into VisionFusion or compute seed-agreement against dummy yaw.
+        int tags = 0;
+        try {
+            tags = r.getBotposeTagCount();
+        } catch (Exception ignored) {
+        }
+        if (tags <= 0) return null;
+
         // BOTH solves, same frame, no either/or. MT2 = XY source (its yaw is
         // seed echo). MT1 = yaw source (no gyro in). Each may be null.
         Pose3D mt2 = null;
@@ -496,14 +569,9 @@ public class Vision {
         final boolean hasMt2 = mt2 != null;
         final boolean hasMt1 = yawSource != null && Double.isFinite(mt1HeadingRad);
 
-        int tags = 0;
         double dist = 0, area = 0, span = 0, latMs = 0;
         long staleMs = 0;
         double stdXY = -1;
-        try {
-            tags = r.getBotposeTagCount();
-        } catch (Exception ignored) {
-        }
         try {
             dist = r.getBotposeAvgDist();
         } catch (Exception ignored) {

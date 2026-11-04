@@ -175,7 +175,7 @@ public class VisionFusion {
     /** Agreement at/above this (deg) = full penalty. */
     public static double YAW_AGR_MAX_DEG = 60.0;
     /** Hard-reject the frame when disagreement exceeds this (deg). 0 disables. */
-    public static double YAW_AGR_REJECT_DEG = 120.0;
+    public static double YAW_AGR_REJECT_DEG = 45.0;
 
     // ================= base trust (variances, NOT stddevs) =================
     // R is digested as Matrix.diag(x, y, heading). These match
@@ -225,6 +225,8 @@ public class VisionFusion {
     public static double YAW_MAX_DIST_M = 2.5;
     /** Fuse MT1 yaw with residual-scaled R; this is the knee of the ramp (deg). Soft. */
     public static double YAW_MAX_RESIDUAL_DEG = 20.0;
+    /** Hard innovation gate: skip MT1 yaw if |MT1 - fused| exceeds this (deg). Guards against tag flips / tilted cells. */
+    public static double YAW_MAX_INNOV_DEG = 25.0;
     /** Extra R x per tag below 2 (single-tag solves are ambiguous). */
     public static double SINGLE_TAG_PENALTY = 3.0;
     /** R x per meter of mean tag distance past CLOSE_DIST_M. */
@@ -385,6 +387,11 @@ public class VisionFusion {
             return;
         }
 
+        // Whitelist only the hive in the robot's current corner (edge-triggered)
+        if (vision != null) {
+            vision.updateCornerPipeline(fused);
+        }
+
         // Seed MT2 with the CURRENT fused heading in Limelight coordinates.
         // The Limelight MT2 solver uses the seed to condition its XY solve.
         // We send it in Limelight's native frame: Pedro -> Field -> Limelight.
@@ -433,7 +440,13 @@ public class VisionFusion {
         lastVision = rd.pedroPose;
         // Raw per-solve snapshot for the dashboard overlay (drawn even when the
         // frame later rejects — a stale/dropped solve still shows its last pose).
-        lastMt1Pedro = rd.mt1Pedro;
+        // If MT1 has suffered a planar ambiguity flip or collinear degenerate solve
+        // (|yaw error| > YAW_MAX_INNOV_DEG), suppress drawing the phantom yellow ghost
+        // at field center so the driver station overlay remains clean and trustworthy.
+        double mt1YawErrDeg = (rd.mt1Pedro != null && Double.isFinite(rd.mt1HeadingRad))
+                ? Math.abs(norm180Deg(Math.toDegrees(rd.mt1HeadingRad - fused.heading())))
+                : Double.NaN;
+        lastMt1Pedro = (Double.isFinite(mt1YawErrDeg) && mt1YawErrDeg <= YAW_MAX_INNOV_DEG) ? rd.mt1Pedro : null;
         lastMt2Pedro = rd.mt2Pedro;
         lastMt2 = rd.hasMt2;
         lastXySrc = rd.hasMt2 ? "MT2" : "MT1fb";
@@ -694,12 +707,10 @@ public class VisionFusion {
             fuseYaw = false;
             yawSkip = "dist";
         }
-        // Corruption guard: a >90deg yaw innovation is a flipped/garbage solve
-        // or an already-corrupted state — never a real heading measurement.
-        // (With a healthy state, MT1 innovations stay under ~30deg.) Skip it:
-        // fusing it either poisons the heading or, against a poisoned state,
-        // "confirms" the poison via the wrap-shortest path.
-        if (fuseYaw && Double.isFinite(dhDeg) && dhDeg > 90.0) {
+        // Corruption guard: skip MT1 yaw if innovation exceeds YAW_MAX_INNOV_DEG.
+        // A flipped/garbage solve or tipped cell can report a large angular shift;
+        // fusing it poisons the heading and corrupts the MT2 seed in feedback loop.
+        if (fuseYaw && Double.isFinite(dhDeg) && dhDeg > YAW_MAX_INNOV_DEG) {
             fuseYaw = false;
             yawSkip = "innov";
         }
@@ -787,6 +798,9 @@ public class VisionFusion {
         }
         RobotMain.DashTelemetry.addData("Fusion/status", lastStatus);
         RobotMain.DashTelemetry.addData("Fusion/active", isActive());
+        if (vision != null) {
+            RobotMain.DashTelemetry.addData("Vision/pipeline", vision.getCurrentPipeline());
+        }
         RobotMain.DashTelemetry.addData("Fusion/xySrc", lastXySrc);
         if (lastVision != null) {
             RobotMain.DashTelemetry.addData("Fusion/visionX", "%.2f", lastVision.x());
@@ -873,6 +887,14 @@ public class VisionFusion {
     }
 
     // ---- accessors (tuning OpModes / tests) ----
+    public void reset() {
+        tipFilter.reset();
+    }
+
+    public TipSanityFilter tipFilter() {
+        return tipFilter;
+    }
+
     public String lastStatus() {
         return lastStatus;
     }

@@ -47,20 +47,24 @@ public class TipSanityFilter {
     public static double MAX_BOT_PITCH_DEG = 12.0;
     /** Same for |botpose roll|, degrees. 0 disables. */
     public static double MAX_BOT_ROLL_DEG = 12.0;
+    /** Enable the camera/botpose Z height gate. True by default. */
+    public static boolean CHECK_HEIGHT = true;
     /**
-     * Reject when reported camera height (botpose Z, meters) is outside this
-     * band. Set to YOUR Limelight lens height +/- slack: a tipped solve shoves
-     * Z toward the floor (underground = the "robot inside the ground" bug) or
-     * skyward. Measure lens height once, allow +/- 4in (0.10m) for map/floor slop.
+     * Reject when reported camera/robot height (botpose Z, meters) is outside this
+     * band. Set to safe boundaries (-0.15m to 0.70m): a tipped solve shoves
+     * Z toward the floor (underground = the "robot inside the ground" bug, often < -0.2m)
+     * or skyward (> 0.7m).
      */
-    public static double CAM_Z_MIN_M = 0.10;
-    public static double CAM_Z_MAX_M = 0.45;
+    public static double CAM_Z_MIN_M = -0.15;
+    public static double CAM_Z_MAX_M = 0.70;
     /**
      * Reject when the solve moved faster than this since the last ACCEPTED
      * solve (in/s). Tipped-cell solves teleport as cells rock; the real robot
      * cannot teleport. 0 disables.
      */
     public static double MAX_SOLVE_SPEED_IPS = 120.0;
+    /** Max time gap in seconds between accepted solves before resetting teleport baseline. */
+    public static double MAX_TELEPORT_GAP_S = 1.5;
 
     /** Verdict for one reading. */
     public enum Verdict {
@@ -103,6 +107,13 @@ public class TipSanityFilter {
     private long lastAcceptedNs = 0L;
     private Decision lastDecision = null;
 
+    /** Reset filter history (call on OpMode start or pose relocalize). */
+    public void reset() {
+        lastAcceptedXY = null;
+        lastAcceptedNs = 0L;
+        lastDecision = null;
+    }
+
     /**
      * Filter one reading. Returns the decision; when accepted, fuse
      * {@code decision.pose} (== the input pose, untouched). Pure function of
@@ -120,16 +131,18 @@ public class TipSanityFilter {
             return decided(new Decision(Verdict.REJECT_TILT, rd.pedroPose,
                     pitch, roll, rd.botZMeters, Double.NaN));
         }
-        //check if tag height makes sense;
-//        if (!(rd.botZMeters >= CAM_Z_MIN_M && rd.botZMeters <= CAM_Z_MAX_M)) {
-//            return decided(new Decision(Verdict.REJECT_HEIGHT, rd.pedroPose,
-//                    pitch, roll, rd.botZMeters, Double.NaN));
-//        }
+        // Check if robot/camera height makes sense (tipped solves project underground or skyward)
+        if (CHECK_HEIGHT && Double.isFinite(rd.botZMeters)) {
+            if (rd.botZMeters < CAM_Z_MIN_M || rd.botZMeters > CAM_Z_MAX_M) {
+                return decided(new Decision(Verdict.REJECT_HEIGHT, rd.pedroPose,
+                        pitch, roll, rd.botZMeters, Double.NaN));
+            }
+        }
         double speedIps = Double.NaN;
         long nowNs = System.nanoTime();
         if (lastAcceptedXY != null && MAX_SOLVE_SPEED_IPS > 0) {
             double dtS = (nowNs - lastAcceptedNs) / 1.0e9;
-            if (dtS > 1e-3) {
+            if (dtS > 1e-3 && dtS <= MAX_TELEPORT_GAP_S) {
                 double d = Math.hypot(rd.pedroPose.x() - lastAcceptedXY.x(),
                         rd.pedroPose.y() - lastAcceptedXY.y());
                 speedIps = d / dtS;

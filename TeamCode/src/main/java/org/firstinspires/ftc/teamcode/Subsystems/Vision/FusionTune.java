@@ -90,11 +90,6 @@ public class FusionTune extends OpMode {
                         -DriveController.getLeftY(), -DriveController.getLeftX(), -DriveController.getRightX(),
                         robot.follower.pose().heading());
         robot.follower.manual(powers);
-        robot.follower.update();
-
-        // Correct AFTER the trailing update (same order as RobotMain).
-        // Same-frame re-poll no-ops inside VisionFusion; a new LL frame still fuses.
-        if (robot.visionFusion != null) robot.visionFusion.correct();
 
         // Extra compare telemetry: raw Pinpoint vs fused vs vision.
         try {

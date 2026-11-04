@@ -61,6 +61,7 @@ public class TelemetryFileLogger {
     private File logFile;
     private long startTimeMs;
     private boolean enabled;
+    private int snapshotCount = 0;
 
     /**
      * Creates a new logger and opens the log file.
@@ -184,8 +185,10 @@ public class TelemetryFileLogger {
 
             writer.write(timestamp + " " + telemetryStr + "\n");
 
-            // Flush every snapshot for real-time visibility (can reduce for performance)
-            writer.flush();
+            // Flush periodically (every 50 snapshots ~1s) to avoid blocking the main loop on flash storage
+            if (++snapshotCount % 50 == 0) {
+                writer.flush();
+            }
         } catch (IOException e) {
             Log.e(TAG, "Failed to write telemetry snapshot", e);
             enabled = false;
