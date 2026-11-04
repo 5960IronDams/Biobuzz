@@ -50,7 +50,7 @@ public class Flywheel extends SubsystemBase {
     public static double kI = 0;
     public static double kD = 0;
     public static double kF = 16.0;
-    public static boolean MOTOR_REVERSED = true;
+    public static boolean MOTOR_REVERSED = false;
     /** Within this of TARGET counts as "at speed" for sequencing / telemetry. */
     public static double AT_SPEED_TOLERANCE_RPM = 75;
     /** Coast is "arrived" once actual RPM has fallen to IDLE + this. */
