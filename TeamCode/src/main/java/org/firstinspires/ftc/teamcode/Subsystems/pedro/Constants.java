@@ -71,17 +71,21 @@ public class Constants {
     // ================= Localizer (from Pinpoint Tuner) =================
     // You have the goBILDA Pinpoint computer (RC name "odo"). Paste the tuner's
     // generated block here (pod type, offsets, directions).
+    //• X-offset (Forward/Back Pod): Distance from the center of rotation to the pod. Moving toward the front of the robot is positive, moving toward the rear is negative.
+    //• Y-offset (Strafe Pod): Distance from the center of rotation to the pod. Moving toward the left side of the robot is positive, moving toward the right side is negative.
+    // pinpoint user guide says : Xpod offset measures how sideways the xpod is from the tracking point. +left -RIght
+    // pinpoint user guide says : Ypod offset measures how far forward/backward Ypod is, + forward - backward
     public static PinpointConfig localizerConfig =
         IronConstants.CompBot ?
              new PinpointConfig(c -> {
-                c.name.set("odo");
-                c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
-                c.xPodOffset.set(-.216);
-                c.yPodOffset.set(-3.853);
-                c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
-                c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
-                c.globalDistanceUnit.set(DistanceUnit.INCH);
-                c.offsetUnits.set(DistanceUnit.INCH);
+                c.name.set(IronConstants.PinpointOdometryName);
+                 c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
+                 c.xPodOffset.set(.217);
+                 c.yPodOffset.set(-3.853);
+                 c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                 c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                 c.globalDistanceUnit.set(DistanceUnit.INCH);
+                 c.offsetUnits.set(DistanceUnit.INCH);
             })
         : //else -> decode test vehicle
                 new PinpointConfig(c -> { //Decode Test Bot Config.

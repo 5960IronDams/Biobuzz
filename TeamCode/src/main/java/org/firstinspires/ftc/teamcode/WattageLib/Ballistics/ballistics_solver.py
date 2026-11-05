@@ -67,7 +67,7 @@ SPIN_PER_WHEEL_SURFACE = 0.75     # Backspin fraction relative to wheel surface 
 
 # ---- Flywheel Transfer & Slip Model ----
 # exit velocity = wheel_surface_speed * (EXIT_SPEED_PER_WHEEL_SURFACE - slip_at_high_rpm)
-EXIT_SPEED_PER_WHEEL_SURFACE = 0.45  # Nominal exit speed ratio at moderate RPM
+EXIT_SPEED_PER_WHEEL_SURFACE = 0.35  # Nominal exit speed ratio at moderate RPM
 HIGH_SPEED_EFFICIENCY_DROP = 0.04    # Efficiency reduction at max RPM due to slip / compression
 
 # ---- Desired Trajectory Shape (Downward plunge into the hive) ----

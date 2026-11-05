@@ -161,8 +161,8 @@ public class TurretPivot extends SubsystemBase {
     public static double PWM_ONLY_MAX_POWER = 0.15;
 
     /** Soft limits (deg). The ±180 window is INTENTIONAL — one cable-safe revolution. */
-    public static double MAX_ANGLE_DEG = 180.0;
-    public static double MIN_ANGLE_DEG = -180.0;
+    public static double MAX_ANGLE_DEG = 45.0;//180.0;
+    public static double MIN_ANGLE_DEG = -90.0;//-180.0;
 
     /**
      * "At target" tolerance (deg) for the state machine and the settled-hold.
@@ -377,7 +377,7 @@ public class TurretPivot extends SubsystemBase {
      * lower the gain, without re-checking that ratio; that is exactly what
      * produced the 4 Hz limit cycle in capture 20261028-012540.
      */
-    public static boolean PROFILE_LITE_ENABLED = true;
+    public static boolean PROFILE_LITE_ENABLED = false;
 
     /**
      * Velocity feedforward — power per deg/s of DESIRED turret velocity
