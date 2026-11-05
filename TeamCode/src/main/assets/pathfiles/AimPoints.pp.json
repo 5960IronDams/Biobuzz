@@ -1,0 +1,127 @@
+{
+  "version": "2.0.0",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "startPoint": {
+    "x": 59.25,
+    "y": 9.639629200463489,
+    "name": "Robot",
+    "locked": false,
+    "headingDeg": 90
+  },
+  "lines": [
+    {
+      "id": "line-8a5c41a4-061479",
+      "color": "#ffc516",
+      "name": "RedFront",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 59.25,
+        "y": 55.3125
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "startDeg": 90,
+        "endDeg": 180
+      }
+    },
+    {
+      "id": "line-dfe0da69-7bcbbc",
+      "color": "#C97D77",
+      "name": "BlueFront",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 84.75,
+        "y": 55.3125
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "startDeg": 90,
+        "endDeg": 180
+      }
+    },
+    {
+      "id": "line-5017b269-a6257d",
+      "color": "#6AAA6B",
+      "name": "RedBack",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 59.25,
+        "y": 88.6875
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "tangential",
+        "reverse": true
+      }
+    },
+    {
+      "id": "line-34396b6e-c1c834",
+      "color": "#7DB9AC",
+      "name": "BlueBack",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 84.75,
+        "y": 88.6875
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "tangential",
+        "reverse": true
+      }
+    }
+  ],
+  "shapes": [],
+  "sequence": [
+    {
+      "kind": "path",
+      "lineId": "line-8a5c41a4-061479"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-dfe0da69-7bcbbc"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-5017b269-a6257d"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-34396b6e-c1c834"
+    }
+  ],
+  "fieldPoints": [],
+  "robot": {
+    "forwardVelocity": 75,
+    "strafeVelocity": 65,
+    "aVelocity": 3.141592653589793,
+    "kFriction": 0.1,
+    "rLength": 16,
+    "rWidth": 16,
+    "safetyMargin": 1,
+    "maxAcceleration": 50,
+    "maxDeceleration": 50
+  },
+  "activePaths": []
+}
