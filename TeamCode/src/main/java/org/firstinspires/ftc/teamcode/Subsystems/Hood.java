@@ -62,18 +62,18 @@ public class Hood extends SubsystemBase {
      * Calibrated servo position at HOOD_DOWN_DEG (16.831 deg).
      * Measured on the robot at lowest hood setting: ~0.94.
      */
-    public static double POS_DOWN = 0.94;
+    public static double POS_DOWN = 0.17;
 
     /**
      * Calibrated servo position at HOOD_UP_DEG (46.852 deg).
      * Meshed calibration position: 0.0.
      */
-    public static double POS_UP = 0.0;
+    public static double POS_UP = 1.0;
 
     /**
      * Servo zero position used when meshing gears at the physical stop.
      */
-    public static double ZERO_SERVO_POS = 0.0;
+    public static double ZERO_SERVO_POS = 1.0;
 
     /** Invert servo command direction if hardware linkage requires it. */
     public static boolean REVERSED = false;

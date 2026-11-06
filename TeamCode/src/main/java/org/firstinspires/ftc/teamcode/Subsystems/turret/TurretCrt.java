@@ -61,8 +61,8 @@ public final class TurretCrt {
      * seeing the dashboard rotate the wrong way) only mirrors the direction
      * and NEVER invalidates the calibration.
      */
-    public static double CRT_ZERO_OFFSET_A_REV = 648.0 / 1024.0;  // "Turret CRT A raw us": 648
-    public static double CRT_ZERO_OFFSET_B_REV = 289.0 / 1024.0;  // "Turret abs raw us": 289
+    public static double CRT_ZERO_OFFSET_A_REV = 250.0 / 1024.0;  // "Turret CRT A raw us": 648
+    public static double CRT_ZERO_OFFSET_B_REV = 963.0 / 1024.0;  // "Turret abs raw us": 289
 
     /** True once both CRT zero offsets have been calibrated at the bench. */
     public static boolean CRT_ZERO_CALIBRATED = true;
