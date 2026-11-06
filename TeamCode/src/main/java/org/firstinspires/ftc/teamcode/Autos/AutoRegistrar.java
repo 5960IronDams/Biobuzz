@@ -27,6 +27,7 @@ public final class AutoRegistrar {
     private static final Class<? extends AutoOpModeBase>[] RED_AUTOS = new Class[]{
             RightAuto.class,//shoot and turn
             R_ShootPark.class,//shoot Right, then go park.
+            L_ShootPark.class,//shoot Left, then go park.
             L_ShootLFlowerShootL.class,
             R_ShootR_Garden_ShootR_Park.class,
             ShootAndParkFlowerSide.class,
