@@ -104,30 +104,30 @@ public class Constants {
     public static ForesightConfig foresightConfig =
             IronConstants.CompBot ?
 
-            new ForesightConfig(
-            c -> {
-                Controller primaryTranslationalForward = Controller.proportional(0.3680993590996792);
-                Controller secondaryTranslationalForward = Controller.proportional(0.1360028773913079);
-                Controller primaryTranslationalLateral = Controller.proportional(1.0111167105109307);
-                Controller secondaryTranslationalLateral = Controller.proportional(0.37358060699769496);
+                    new ForesightConfig(
+                            c -> {
+                                Controller primaryTranslationalForward = Controller.proportional(0.3665259400739857);
+                                Controller secondaryTranslationalForward = Controller.proportional(0.1354215411038448);
+                                Controller primaryTranslationalLateral = Controller.proportional(0.5436961260415588);
+                                Controller secondaryTranslationalLateral = Controller.proportional(0.20088119074430533);
 
-                c.forwardTranslational.set(Controller.piecewise(secondaryTranslationalForward).put(2.5, primaryTranslationalForward));
-                c.strafeTranslational.set(Controller.piecewise(secondaryTranslationalLateral).put(2.5, primaryTranslationalLateral));
+                                c.forwardTranslational.set(Controller.piecewise(secondaryTranslationalForward).put(2.5, primaryTranslationalForward));
+                                c.strafeTranslational.set(Controller.piecewise(secondaryTranslationalLateral).put(2.5, primaryTranslationalLateral));
 
-                c.coast.set(Controller.proportionalFeedforward(0.020815130951162417));
-                c.brake.set(Controller.proportionalFeedforward(0.017692861308488055));
+                                c.coast.set(Controller.proportionalFeedforward(0.018450401657160703));
+                                c.brake.set(Controller.proportionalFeedforward(0.015682841408586598));
 
-                c.headingFeedback.set(Controller.proportional(5.833429041146632));
-                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.08387076285487965, 8.980950461228712E-4));
+                                c.headingFeedback.set(Controller.proportional(7.053233721352339));
+                                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.04200838389926333, 0.010638718620967255));
 
-                c.linearBrakeCoefficients.set(Matrix.diag(0.06324445922266038, -0.024683033218025646));
-                c.quadraticBrakeCoefficients.set(Matrix.diag(0.002029909359073901, 0.00509100061294111));
+                                c.linearBrakeCoefficients.set(Matrix.diag(0.09886073043024897, 0.06395072950045347));
+                                c.quadraticBrakeCoefficients.set(Matrix.diag(0.0012237011082222719, 0.0015335255775064192));
 
-                c.maxAchievableForwardVelocity.set(55.61526864127053);
-                c.maxAchievableStrafeVelocity.set(37.745577193556436);
-                c.naturalForwardDeceleration.set(47.54025495649283);
-                c.naturalStrafeDeceleration.set(99.72710534088235);
-            })
+                                c.maxAchievableForwardVelocity.set(56.73965911534591);
+                                c.maxAchievableStrafeVelocity.set(45.20970756530965);
+                                c.naturalForwardDeceleration.set(39.05961008468984);
+                                c.naturalStrafeDeceleration.set(70.445350253194);
+                            })
             : //else -> decode test vehicle
             new ForesightConfig(
                     c -> {
