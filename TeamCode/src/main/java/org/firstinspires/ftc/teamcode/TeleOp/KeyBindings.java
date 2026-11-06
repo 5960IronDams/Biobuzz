@@ -173,16 +173,15 @@ public class KeyBindings {
                 .whenActive(robot.intake.reverseCmd())
                 .whenInactive(robot.intake.stopCmd());
 
-        // ---- Transfer (bench test): RB = forward, R3 = reverse ----
-        // LB moved to the panic button, so BOTH manual transfer directions
-        // live on the right side: hold RB to run forward, hold the right
-        // stick click (R3) to run reverse. Either release PID-brakes to zero.
-        // A manual transfer press also OVERRIDES the auto-fire for a moment
-        // (see CommandFactory.FIRE_OVERRIDE_HOLD_S) so a jam can be cleared.
-        DriveController.rightBumper()
+        // ---- Transfer: RB = forward, B = reverse ----
+        // Gated on !isAutoAimOn(): when auto-shoot is active, holding RB or B
+        // directly drives the transfer via CommandFactory without cancelling
+        // the auto-shoot compound (turret continues tracking, flywheel stays at speed).
+        // When auto-shoot is OFF, these schedule transfer.holdCmd() / stopCmd().
+        new Trigger(() -> DriveController.rightBumper().get() && !isAutoAimOn())
                 .whenActive(robot.transfer.holdCmd())
                 .whenInactive(robot.transfer.stopCmd());
-        DriveController.b()
+        new Trigger(() -> DriveController.b().get() && !isAutoAimOn())
                 .whenActive(robot.transfer.reverseHoldCmd())
                 .whenInactive(robot.transfer.stopCmd());
 
@@ -244,12 +243,14 @@ public class KeyBindings {
 
     /** Poll every binding once. Call once per loop, after {@code robot.RobotRunPeriodic()}. */
     public void update() {
-        // Tell the shoot factory whether the driver still wants the intake, so
-        // the auto-fire can hand it back after it got it out of the way. Same
-        // threshold as the binding above, so "held" means exactly what started
-        // holdCmd().
+        // Tell the shoot factory whether the driver wants the intake or transfer,
+        // so auto-shoot can incorporate manual intent without cancelling the compound.
         robot.CommandF.setManualIntakeHeld(robot.intake != null
                 && DriveController.rightTrigger(INTAKE_TRIGGER_THRESHOLD).get());
+        robot.CommandF.setManualTransferForwardHeld(robot.transfer != null
+                && DriveController.rightBumper().get());
+        robot.CommandF.setManualTransferReverseHeld(robot.transfer != null
+                && DriveController.b().get());
         // Shoot-readiness sensing: advances the debounce/warmup timers and
         // samples the chassis motion from the follower pose. Home for both is
         // one call — the scheduler already polled this loop's triggers, so this

@@ -431,8 +431,20 @@ public class CommandFactory {
                     // once for the display) would consume two Schmitt steps and
                     // make the telemetry not match what was decided.
                     Readiness r = evaluateReadiness();
-                    boolean ready = !fireSuppressedByDriver && r.all;
-                    if (ready) {
+                    boolean manualFwd = manualTransferForwardHeld;
+                    boolean manualRev = manualTransferReverseHeld;
+                    boolean autoReady = !fireSuppressedByDriver && r.all;
+
+                    if (manualRev) {
+                        closeGate();
+                        if (transfer != null) transfer.runReverse();
+                        setTransferState(FeedState.REVERSING);
+                    } else if (manualFwd) {
+                        openGate();
+                        holdManualIntakeOutOfTheWay();
+                        if (transfer != null) transfer.runForward();
+                        setTransferState(FeedState.MANUAL);
+                    } else if (autoReady) {
                         openGate();
                         holdManualIntakeOutOfTheWay();
                         // Re-assert runForward every loop: it re-reads
@@ -446,7 +458,7 @@ public class CommandFactory {
                         setTransferState(FeedState.OFF);
                     }
                     // Explain the verdict: WHICH member is holding the shot.
-                    reportReadinessDetails(r, ready);
+                    reportReadinessDetails(r, autoReady, manualFwd, manualRev);
                 },
                 (interrupted) -> {
                     firing = false;
@@ -1039,9 +1051,23 @@ public class CommandFactory {
      * from ONE {@link Readiness} snapshot per loop, so they cannot disagree.
      */
     private void reportReadinessDetails(Readiness r, boolean ready) {
-        RobotMain.DashTelemetry.addData("Fire policy", ready ? "FIRE (ready)" : "WAIT (not ready)");
+        reportReadinessDetails(r, ready, false, false);
+    }
+
+    private void reportReadinessDetails(Readiness r, boolean ready, boolean manualFwd, boolean manualRev) {
+        String policy;
+        if (manualRev) {
+            policy = "REVERSE (manual)";
+        } else if (manualFwd) {
+            policy = "FIRE (manual)";
+        } else if (ready) {
+            policy = "FIRE (ready)";
+        } else {
+            policy = "WAIT (not ready)";
+        }
+        RobotMain.DashTelemetry.addData("Fire policy", policy);
         RobotMain.DashTelemetry.addData("Ready to shoot", r.all);
-        RobotMain.DashTelemetry.addData("Fire block", ready ? "none"
+        RobotMain.DashTelemetry.addData("Fire block", (ready || manualFwd || manualRev) ? "none"
                 : (fireSuppressedByDriver ? "driver override (manual transfer)" : firstBlocker(r)));
         // Per-member flags and the live numbers behind them.
         RobotMain.DashTelemetry.addData("  ok: flywheel", flag(r.flywheel) + flywheelText());
@@ -1342,6 +1368,30 @@ public class CommandFactory {
     /** Tell the factory whether the driver is holding the intake trigger (right trigger). */
     public void setManualIntakeHeld(boolean held) {
         manualIntakeHeld = held;
+    }
+
+    /**
+     * Driver's manual transfer intent from gamepad (RB = forward, B = reverse).
+     * Set by KeyBindings.update() each loop so manual feeding/jam-clear can run
+     * during auto-shoot without cancelling the auto-aim or flywheel setpoint.
+     */
+    private boolean manualTransferForwardHeld = false;
+    private boolean manualTransferReverseHeld = false;
+
+    public void setManualTransferForwardHeld(boolean held) {
+        manualTransferForwardHeld = held;
+    }
+
+    public void setManualTransferReverseHeld(boolean held) {
+        manualTransferReverseHeld = held;
+    }
+
+    public boolean isManualTransferForwardHeld() {
+        return manualTransferForwardHeld;
+    }
+
+    public boolean isManualTransferReverseHeld() {
+        return manualTransferReverseHeld;
     }
 
     /** An intake spinning above this (RPM) is considered "running". */
