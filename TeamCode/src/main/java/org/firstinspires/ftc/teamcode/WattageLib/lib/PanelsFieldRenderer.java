@@ -11,6 +11,7 @@ import com.pedropathing.math.Pose;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.teamcode.Commands.AimAtGoal;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import org.firstinspires.ftc.teamcode.WattageLib.pedroHelpers.PedroFieldBridge;
 
@@ -290,7 +291,7 @@ public class PanelsFieldRenderer {
     }
 
     /**
-     * Queue the turret heading ray (robot center -> turret direction); NO
+     * Queue the turret heading ray (shooter pivot -> turret direction); NO
      * canvas send. Call BEFORE {@link #drawFusedAndVision} so the ray lands in
      * the same single-canvas frame that call flushes (its batching contract:
      * queue N shapes, exactly one flush per loop).
@@ -303,15 +304,16 @@ public class PanelsFieldRenderer {
         if (!DRAW_TURRET_RAY || !isDrawablePose(fusedPedro)) return;
         if (!Double.isFinite(turretDegRobot)) return;
         try {
-            double rx = fusedPedro.x() + ORIGIN_OFFSET_X;
-            double ry = fusedPedro.y() + ORIGIN_OFFSET_Y;
+            Pose shooter = AimAtGoal.getShooterPose(fusedPedro);
+            double sx = (shooter != null ? shooter.x() : fusedPedro.x()) + ORIGIN_OFFSET_X;
+            double sy = (shooter != null ? shooter.y() : fusedPedro.y()) + ORIGIN_OFFSET_Y;
             // Pedro heading is CCW+ radians from +X; the turret's robot-relative
             // angle is +CCW degrees, so field heading = robot heading + turret.
             double h = fusedPedro.heading() + Math.toRadians(turretDegRobot);
-            double tx = rx + TURRET_RAY_IN * Math.cos(h);
-            double ty = ry + TURRET_RAY_IN * Math.sin(h);
+            double tx = sx + TURRET_RAY_IN * Math.cos(h);
+            double ty = sy + TURRET_RAY_IN * Math.sin(h);
             if (!Double.isFinite(tx) || !Double.isFinite(ty)) return;
-            field.moveCursor(rx, ry);
+            field.moveCursor(sx, sy);
             field.setOutline(TURRET_STROKE, OUTLINE_WIDTH);
             field.line(tx, ty);
         } catch (Exception ignored) {

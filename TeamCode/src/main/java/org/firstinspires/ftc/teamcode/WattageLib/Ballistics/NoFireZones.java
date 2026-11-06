@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.WattageLib.Ballistics;
 
+import org.firstinspires.ftc.teamcode.Commands.AimAtGoal;
 import org.firstinspires.ftc.teamcode.RobotMain;
 
 import com.pedropathing.math.Pose;
@@ -50,13 +51,11 @@ public final class NoFireZones {
     );
 
     /**
-     * Robot-relative shooter offset (inches) from the pose Pedro tracks, applied
-     * (rotated by heading) before the zone test — the IndianaJoe version used
-     * {@code constants.Turret.ShooterPivotRobotRelative2d} for this. Defaults to
-     * 0,0 (test the robot center); set to the shoot-gate/shooter position when
-     * the mechanism geometry is known.
+     * Robot-relative shooter offset (inches) from the pose Pedro tracks.
+     * Tuned in {@link AimAtGoal#SHOOTER_OFFSET_X_IN} / {@link AimAtGoal#SHOOTER_OFFSET_Y_IN}.
+     * Defaults match AimAtGoal (5.5 in towards the rear: X = -5.5, Y = 0.0).
      */
-    public static double SHOOTER_OFFSET_X_IN = 0.0;
+    public static double SHOOTER_OFFSET_X_IN = -5.5;
     public static double SHOOTER_OFFSET_Y_IN = 0.0;
 
     // -----------------------------------------------------------------------
@@ -68,7 +67,7 @@ public final class NoFireZones {
      * inside any of the configured {@link #NO_FIRE_ZONES}.
      *
      * <p>Call this with the current robot pose; the shooter offset is applied
-     * internally using {@link #SHOOTER_OFFSET_X_IN}/{@link #SHOOTER_OFFSET_Y_IN}.
+     * internally using {@link AimAtGoal#getShooterPose(Pose)}.
      *
      * @param robotPose Current field-relative robot pose (Pedro, inches)
      * @return true if the shooter is inside a no-fire zone
@@ -76,12 +75,10 @@ public final class NoFireZones {
     public static boolean isInNoFireZone(Pose robotPose) {
         if (robotPose == null) return false;
 
-        // Rotate the robot-relative offset into the field frame ( Pedro
-        // heading is radians), then test the shooter point against all zones.
-        double cos = Math.cos(robotPose.heading());
-        double sin = Math.sin(robotPose.heading());
-        double sx = robotPose.x() + SHOOTER_OFFSET_X_IN * cos - SHOOTER_OFFSET_Y_IN * sin;
-        double sy = robotPose.y() + SHOOTER_OFFSET_X_IN * sin + SHOOTER_OFFSET_Y_IN * cos;
+        Pose shooter = AimAtGoal.getShooterPose(robotPose);
+        if (shooter == null) return false;
+        double sx = shooter.x();
+        double sy = shooter.y();
 
         for (NoFireZone zone : NO_FIRE_ZONES) {
             if (zone.contains(sx, sy)) {

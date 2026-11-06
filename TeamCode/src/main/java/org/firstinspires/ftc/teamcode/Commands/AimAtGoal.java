@@ -14,7 +14,6 @@ import org.firstinspires.ftc.teamcode.Subsystems.turret.TurretPivot;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PPAssets;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
-import org.firstinspires.ftc.teamcode.WattageLib.Ballistics.NoFireZones;
 
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
@@ -71,6 +70,16 @@ import java.util.function.Supplier;
 public class AimAtGoal extends CommandBase {
 
     // ---- Panels-tunable aim constants (Panels -> AimAtGoal) ----
+    /**
+     * Robot-relative shooter offset (inches) from robot center (Pedro tracking point).
+     * +X is chassis forward, -X is chassis rear.
+     * +Y is chassis left, -Y is chassis right.
+     * The ball leaves the shooter 5.5 inches towards the rear of the robot (-5.5).
+     * Tunable live via Panels -> Configurables -> AimAtGoal.
+     */
+    public static double SHOOTER_OFFSET_X_IN = -3.4;//-5.5;
+    public static double SHOOTER_OFFSET_Y_IN = 0.0;
+
     /** Trigger value above which "aim is held" (TeleOp wiring helper). */
     public static double TRIGGER_THRESHOLD = 0.3;
     /**
@@ -719,16 +728,19 @@ public class AimAtGoal extends CommandBase {
     /**
      * Compute the SHOOTER's actual field-frame position: the robot's pose
      * rotated through its own heading to apply the physical pivot offset
-     * ({@link NoFireZones#SHOOTER_OFFSET_X_IN}/{@code _Y_IN}). Shots originate
+     * ({@link #SHOOTER_OFFSET_X_IN}/{@link #SHOOTER_OFFSET_Y_IN}). Shots originate
      * from here — the bearing and distance to targets must both be measured
      * from this point, not the robot center.
      */
-    private static Pose getShooterPose(Pose robot) {
+    public static Pose getShooterPose(Pose robot) {
+        if (robot == null) {
+            return null;
+        }
         double heading = robot.heading();
         double cos = Math.cos(heading);
         double sin = Math.sin(heading);
-        double shooterX = robot.x() + NoFireZones.SHOOTER_OFFSET_X_IN * cos - NoFireZones.SHOOTER_OFFSET_Y_IN * sin;
-        double shooterY = robot.y() + NoFireZones.SHOOTER_OFFSET_X_IN * sin + NoFireZones.SHOOTER_OFFSET_Y_IN * cos;
+        double shooterX = robot.x() + SHOOTER_OFFSET_X_IN * cos - SHOOTER_OFFSET_Y_IN * sin;
+        double shooterY = robot.y() + SHOOTER_OFFSET_X_IN * sin + SHOOTER_OFFSET_Y_IN * cos;
         return new Pose(shooterX, shooterY, heading);
     }
 
