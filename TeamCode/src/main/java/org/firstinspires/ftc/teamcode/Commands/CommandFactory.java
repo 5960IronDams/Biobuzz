@@ -189,23 +189,23 @@ public class CommandFactory {
      */
     public static double READY_DEBOUNCE_S = 0.15;
 
-    // ---- Flywheel readiness band (hysteresis) ----
+    // ---- Flywheel readiness band (hysteresis + dwell) ----
     /**
      * Enter "at speed" when |actual − target| is within this (RPM).
-     *
-     * <p>Sized against the MEASURED quantisation, not a guess: the 5203's
-     * built-in encoder gives 28 ticks/rev, so at a ~50 ms loop one tick is
-     * ~43 RPM, and the 20261025-005022 capture shows readings stepping
-     * 1671.4 / 1714.3 / 1757.1 / 1800.0. The previous single band (75 RPM,
-     * {@link Flywheel#AT_SPEED_TOLERANCE_RPM}) was under two ticks wide, so
-     * normal PID hunting flipped readiness. 120 RPM ≈ 2.8 ticks — enter only
-     * once the wheel is solidly there.
+     * goBILDA 5203 encoder quantisation is ~42.9 RPM/tick at 20 Hz, so 55 RPM
+     * allows roughly ±1 tick of steady-state error.
      */
-    public static double FLYWHEEL_READY_ON_RPM = 120.0;
+    public static double FLYWHEEL_READY_ON_RPM = 55.0;
+    /**
+     * Minimum continuous time (seconds) actual RPM must remain inside
+     * {@link #FLYWHEEL_READY_ON_RPM} before the wheel is declared ready.
+     * Prevents firing while the wheel is in a steep transient ramp.
+     */
+    public static double FLYWHEEL_SETTLE_DWELL_S = 0.10;
     /**
      * Leave "at speed" only once |actual − target| exceeds this (RPM). Wider
      * than the enter band on purpose: a shot in progress is not abandoned for
-     * a one-tick reading. 220 RPM ≈ 5 ticks.
+     * a one-tick reading, but ball impact (~350-400 RPM drop) cleanly pauses the feed.
      */
     public static double FLYWHEEL_READY_OFF_RPM = 220.0;
 
@@ -253,6 +253,8 @@ public class CommandFactory {
     /** Hysteresis latches for the two readiness members that were measured to chatter. */
     private final Hysteresis alignHyst = new Hysteresis();
     private boolean flywheelBandLatched = false;
+    /** Timestamp (ns) when actual RPM first entered FLYWHEEL_READY_ON_RPM continuously. */
+    private long flywheelInToleranceSinceNs = 0L;
 
     /** What the fire half is currently asking the transfer to do (for the dashboard). */
     private FeedState transferState = FeedState.OFF;
@@ -419,6 +421,8 @@ public class CommandFactory {
                     // state, so a first ready tick can fire immediately
                     // without having to re-prove alignment.
                     alignHyst.reset(aimAlignedHyst());
+                    flywheelBandLatched = false;
+                    flywheelInToleranceSinceNs = 0L;
                     transferState = FeedState.OFF;
                 },
                 () -> {
@@ -449,6 +453,8 @@ public class CommandFactory {
                     closeGate(); // no-op until the gate exists
                     if (transfer != null) transfer.stop();
                     setTransferState(FeedState.OFF);
+                    flywheelBandLatched = false;
+                    flywheelInToleranceSinceNs = 0L;
                     // A manual transfer command interrupting us is a driver
                     // override (jam-clear): do not slam straight back.
                     if (interrupted) {
@@ -916,21 +922,40 @@ public class CommandFactory {
     private boolean flywheelReadyHyst() {
         if (flywheel == null || !flywheel.isHoldingTarget()) {
             flywheelBandLatched = false;
+            flywheelInToleranceSinceNs = 0L;
             return false;
         }
         double target = commandedRpm;
         if (Double.isNaN(target) || target <= 0) {
             // Nothing commanded yet (e.g. before the first LUT lock).
             flywheelBandLatched = false;
+            flywheelInToleranceSinceNs = 0L;
             return false;
         }
         double err = Math.abs(flywheel.getActualRpm() - target);
-        double bandOn = Math.max(FLYWHEEL_READY_ON_RPM, Flywheel.AT_SPEED_TOLERANCE_RPM);
+        double bandOn = FLYWHEEL_READY_ON_RPM;
         double bandOff = Math.max(bandOn, FLYWHEEL_READY_OFF_RPM);
+
         if (flywheelBandLatched) {
-            if (err > bandOff) flywheelBandLatched = false;
-        } else if (err <= bandOn) {
-            flywheelBandLatched = true;
+            // Once latched, only unlatch if speed drops past bandOff (e.g. ball impact)
+            if (err > bandOff) {
+                flywheelBandLatched = false;
+                flywheelInToleranceSinceNs = 0L;
+            }
+        } else {
+            // Rising edge: must stay inside bandOn continuously for at least FLYWHEEL_SETTLE_DWELL_S
+            long nowNs = System.nanoTime();
+            if (err <= bandOn) {
+                if (flywheelInToleranceSinceNs == 0L) {
+                    flywheelInToleranceSinceNs = nowNs;
+                }
+                long dwellNs = (long) (Math.max(0.0, FLYWHEEL_SETTLE_DWELL_S) * 1.0e9);
+                if (nowNs - flywheelInToleranceSinceNs >= dwellNs) {
+                    flywheelBandLatched = true;
+                }
+            } else {
+                flywheelInToleranceSinceNs = 0L;
+            }
         }
         return flywheelBandLatched;
     }
@@ -1067,10 +1092,11 @@ public class CommandFactory {
             return " (no RPM commanded)";
         }
         double act = flywheel == null ? 0.0 : flywheel.getActualRpm();
-        return String.format(java.util.Locale.US, " %.0f/%.0f RPM (err %.0f, on<=%.0f off>%.0f)",
+        return String.format(java.util.Locale.US, " %.0f/%.0f RPM (err %.0f, on<=%.0f off>%.0f, dwell %.2fs)",
                 act, tgt, Math.abs(act - tgt),
-                Math.max(FLYWHEEL_READY_ON_RPM, Flywheel.AT_SPEED_TOLERANCE_RPM),
-                Math.max(FLYWHEEL_READY_OFF_RPM, Math.max(FLYWHEEL_READY_ON_RPM, Flywheel.AT_SPEED_TOLERANCE_RPM)));
+                FLYWHEEL_READY_ON_RPM,
+                Math.max(FLYWHEEL_READY_OFF_RPM, FLYWHEEL_READY_ON_RPM),
+                FLYWHEEL_SETTLE_DWELL_S);
     }
 
     private String turretPosText() {
