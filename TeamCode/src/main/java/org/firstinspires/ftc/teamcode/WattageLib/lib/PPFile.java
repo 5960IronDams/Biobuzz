@@ -383,7 +383,9 @@ public final class PPFile {
         // degree-exact rotation the rule itself uses.
         double startDeg = interpolateDegrees(group.startDeg, group.endDeg, from);
         double endDeg = interpolateDegrees(group.startDeg, group.endDeg, to);
-        return child.heading(linearRule(startDeg, endDeg));
+        double transformedStartDeg = Math.toDegrees(poseFactory.of(endX, endY, startDeg).heading());
+        double transformedEndDeg = Math.toDegrees(poseFactory.of(endX, endY, endDeg).heading());
+        return child.heading(linearRule(transformedStartDeg, transformedEndDeg));
     }
 
     /**
@@ -397,7 +399,7 @@ public final class PPFile {
         double difference = normalizedEnd - normalizedStart;
         if (difference > 180) {
             difference -= 360;
-        } else if (difference < -180) {
+        } else if (difference <= -180) {
             difference += 360;
         }
         return startDeg + difference * Math.min(Math.max(fraction, 0), 1);
@@ -486,7 +488,9 @@ public final class PPFile {
         // as a positive rotation. Pedro's linear() lerps radians and always turns a half turn
         // negative, so the rule is supplied directly to match the visualizer. The visualizer's
         // codegen ignores `reverse` on a linear heading, so the stored angles are used as-is.
-        return path.heading(linearRule(spec.startDeg, spec.endDeg));
+        double startDeg = Math.toDegrees(poseFactory.of(startX, startY, spec.startDeg).heading());
+        double endDeg = Math.toDegrees(poseFactory.of(endX, endY, spec.endDeg).heading());
+        return path.heading(linearRule(startDeg, endDeg));
     }
 
     /**

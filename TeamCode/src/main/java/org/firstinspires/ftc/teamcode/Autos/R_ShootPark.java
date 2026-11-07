@@ -21,7 +21,7 @@ public class R_ShootPark extends AutoOpModeBase {
                 //goto easier shot
                 follow(robot.follower, pp.path("Toshoot")),
                 //fire or whatever.
-                autoShoot().withTimeout(4000),
+                autoShoot().withTimeout(10000),
                 //goto park
                 follow(robot.follower, pp.path("ToPark"))
         );
