@@ -33,11 +33,10 @@ public class Transfer extends SubsystemBase {
     Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
 
     // ---- Panels tuning ----
-    public static double TRANSFER_RPM = 600.0; //max measured empty RL = 1050rpm;
+    public static double TRANSFER_RPM = 200.0; // 19.2:1 motor (312 RPM no-load rating; ~240 max loaded)
     /**
-     * goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6
-     * (computed by {@link IronConstants#gobilda5203TicksPerRev(double)} - the
-     * same motor + ratio as the intake).
+     * goBILDA 5203 Yellow Jacket geared 19.2:1 = 28 PPR x 19.2 = 537.6
+     * (computed by {@link IronConstants#gobilda5203TicksPerRev(double)}).
      */
     public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(19.2);
     public static double kP = 20.0;
@@ -60,7 +59,7 @@ public class Transfer extends SubsystemBase {
 
         motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         applyPids(true);
     }
 

@@ -205,9 +205,9 @@ public class CommandFactory {
     /**
      * Leave "at speed" only once |actual − target| exceeds this (RPM). Wider
      * than the enter band on purpose: a shot in progress is not abandoned for
-     * a one-tick reading, but ball impact (~350-400 RPM drop) cleanly pauses the feed.
+     * normal ball impact dips (~350-400 RPM drop), preventing rapid transfer chatter.
      */
-    public static double FLYWHEEL_READY_OFF_RPM = 220.0;
+    public static double FLYWHEEL_READY_OFF_RPM = 450.0;
 
     /**
      * Aim-alignment hysteresis: once aligned, the turret may drift this many
@@ -215,7 +215,7 @@ public class CommandFactory {
      * settled turret (and a shot in progress) from being cancelled by the
      * turret PID's own deadband.
      */
-    public static double AIM_HYST_EXIT_MARGIN_DEG = 1.5;
+    public static double AIM_HYST_EXIT_MARGIN_DEG = 2.0;
 
     /** Include the chassis-translation check in {@link #isReadyToShoot()} (FRC always did). */
     public static boolean REQUIRE_STABLE_TRANSLATION = true;
