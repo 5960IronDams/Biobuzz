@@ -124,12 +124,12 @@ public class AimAtGoal extends CommandBase {
     /**
      * Aim-error floor (deg) for the "on target" cone: the tolerance never goes
      * below this, no matter how close or slow the shot is.
-     * Raised 2.0 -> 3.0: TurretPivot.POSITION_TOLERANCE_DEG is 2.5 deg (its in-band
-     * settled hold cuts motor power when |error| <= 2.5 deg). Having an aim floor
+     * Raised 3.0 -> 4.0: TurretPivot.POSITION_TOLERANCE_DEG is 3.5 deg (its in-band
+     * settled hold cuts motor power when |error| <= 3.5 deg). Having an aim floor
      * tighter than the turret controller's settled hold caused a deadlock where the
      * turret settled at 2.2-2.3 deg error with 0 power, blocking shots permanently.
      */
-    public static double TOLERANCE_DEG = 3.0;
+    public static double TOLERANCE_DEG = 4.0;
     /**
      * SESSION 6: how long the turret may be out of the live aim tolerance
      * before "on target" drops (s). A falling-edge debounce, the FTC sibling
@@ -145,9 +145,9 @@ public class AimAtGoal extends CommandBase {
      * of distance — the "close enough" floor. Distant targets get a looser
      * cone because the same angular error is a much smaller lateral miss far
      * away (FRC scaled its tolerances by distance exactly this way).
-     * Must be >= TurretPivot.POSITION_TOLERANCE_DEG (2.5 deg) so settled-hold doesn't stall.
+     * Must be >= TurretPivot.POSITION_TOLERANCE_DEG (3.5 deg) so settled-hold doesn't stall.
      */
-    public static double AIM_TOL_MIN_DEG = 3.0;
+    public static double AIM_TOL_MIN_DEG = 4.0;
     /** Distance (in) beyond which the aim tolerance starts to loosen (below it: MIN_DEG). */
     public static double AIM_TOL_NEAR_DEG = 24.0;
     /** Extra degrees of aim tolerance per inch of distance past {@link #AIM_TOL_NEAR_DEG}. */

@@ -178,7 +178,14 @@ public class TurretPivot extends SubsystemBase {
      * again a sane band; tighten it ONLY after the loop can actually hold
      * inside 1 deg without oscillating.
      */
-    public static double POSITION_TOLERANCE_DEG = 2.5;
+    public static double POSITION_TOLERANCE_DEG = 3.5;
+
+    /**
+     * Continuous dwell time (seconds) required inside {@link #POSITION_TOLERANCE_DEG}
+     * before declaring the turret at setpoint / ready to fire.
+     * Prevents firing mid-sweep while being immune to sensor derivative/quantization spikes.
+     */
+    public static double POSITION_DWELL_S = 0.10;
 
     /**
      * Edge slow zone: within this many degrees of a soft limit, cap power
@@ -461,6 +468,9 @@ public class TurretPivot extends SubsystemBase {
     public SubSystemState State = SubSystemState.IDLE;
     public boolean TurretPivot_OK = false;
     public boolean ENCODER_OK = false;
+
+    /** Timestamp (nanoseconds) when the turret entered the position tolerance band; 0 if outside. */
+    private long inToleranceSinceNs = 0L;
 
     // ---- boot / sanity state (facts about HOW the boot went) ----
     private boolean bootAssumedForward = true;
@@ -870,20 +880,26 @@ public class TurretPivot extends SubsystemBase {
         return requestedPosition;
     }
 
-    /** True if the turret is at the setpoint within tolerance. Also updates {@link #State} (FRC behavior). BRAKED always reads true. */
+    /** True if the turret is at the setpoint within tolerance continuously for {@link #POSITION_DWELL_S}. Also updates {@link #State} (FRC behavior). BRAKED always reads true. */
     public boolean atSetpoint() {
         if (State == SubSystemState.BRAKED) {
             return true;
         }
-        // §12.31: being INSIDE the position band is not enough — the turret has
-        // to have stopped there. Capture 20261028-024655 reported INPOSITION at
-        // -272 and +303 deg/s (8 samples) because only the position error was
-        // checked: the turret was flying THROUGH the setpoint. Anything gating
-        // on "in position" (readiness / fire-enable) would have fired mid-sweep.
-        // The settled-hold already uses this same velocity criterion, so the
-        // state and the hold now agree on what "arrived" means.
-        boolean at = Math.abs(setPointPosition - currentPosition) <= POSITION_TOLERANCE_DEG
-                && Math.abs(tracker.velocityDegPerSec()) <= SETTLE_VEL_DPS;
+        // Continuous dwell check: must stay within POSITION_TOLERANCE_DEG continuously for
+        // POSITION_DWELL_S (default 0.10s). This rejects fast fly-through sweeps (e.g. at 300 deg/s,
+        // a 7 deg window is traversed in 0.023s) while avoiding single-loop derivative velocity spikes.
+        boolean inBand = Math.abs(setPointPosition - currentPosition) <= POSITION_TOLERANCE_DEG;
+        long nowNs = System.nanoTime();
+        if (inBand) {
+            if (inToleranceSinceNs == 0L) {
+                inToleranceSinceNs = nowNs;
+            }
+        } else {
+            inToleranceSinceNs = 0L;
+        }
+
+        long dwellNs = (long) (Math.max(0.0, POSITION_DWELL_S) * 1.0e9);
+        boolean at = inBand && (inToleranceSinceNs != 0L) && (nowNs - inToleranceSinceNs >= dwellNs);
         State = at ? SubSystemState.INPOSITION : SubSystemState.MOVINGTOPOSITION;
         return at;
     }
@@ -927,6 +943,9 @@ public class TurretPivot extends SubsystemBase {
      * MotionMagic setpoint.
      */
     private void GotoPositionDeg(double wantedDeg, double velocityDps) {
+        if (Math.abs(wantedDeg - setPointPosition) > 0.05) {
+            inToleranceSinceNs = 0L;
+        }
         State = SubSystemState.MOVINGTOPOSITION;
         requestedPosition = wantedDeg;
         setPointPosition = wantedDeg;
@@ -955,6 +974,7 @@ public class TurretPivot extends SubsystemBase {
         lastAppliedPower = 0;
         desiredVelocityDps = 0;
         stuckTimer = 0;
+        inToleranceSinceNs = 0L;
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         motor.setPower(0);
     }
@@ -1355,7 +1375,7 @@ public class TurretPivot extends SubsystemBase {
             // the band or speed up and the PID re-engages (kS ramp gives
             // breakaway torque for the correction).
             if (IN_BAND_HOLD && Math.abs(error) <= POSITION_TOLERANCE_DEG
-                    && Math.abs(velocityDegPerSec) <= SETTLE_VEL_DPS) {
+                    && (Math.abs(velocityDegPerSec) <= SETTLE_VEL_DPS || State == SubSystemState.INPOSITION)) {
                 out = 0;
             }
         }
