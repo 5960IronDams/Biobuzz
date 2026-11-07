@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.Autos;
 
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.SequentialCommandGroup;
+import com.seattlesolvers.solverslib.command.WaitCommand;
 
 import static org.firstinspires.ftc.teamcode.WattageLib.pedroHelpers.PedroFollow.follow;
 
@@ -21,7 +22,7 @@ public class R_ShootPark extends AutoOpModeBase {
                 //goto easier shot
                 follow(robot.follower, pp.path("Toshoot")),
                 //fire or whatever.
-                autoShoot().withTimeout(10000),
+                autoShoot().withTimeout(6000),
                 //goto park
                 follow(robot.follower, pp.path("ToPark"))
         );

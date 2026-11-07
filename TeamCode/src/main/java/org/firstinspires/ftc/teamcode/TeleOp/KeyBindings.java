@@ -53,6 +53,13 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsGamepadDebug;
  *       dpad and how the gamepad1-Y calibration jog works.</li>
  *   <li>Localize: BACK resets the Pedro pose to the alliance start and
  *       re-anchors the Pinpoint to it.</li>
+ *   <li><b>Manual Shoot (OPERATOR pad, gamepad2): RIGHT TRIGGER is a TOGGLE</b>
+ *       (press to start, press again to stop) — {@code toggleWhenActive} on the
+ *       backup manual shoot compound. The turret does not move, the flywheel
+ *       spins to a fixed set RPM ({@code CommandFactory.MANUAL_SHOOT_RPM}),
+ *       and the TRANSFER auto-feeds once the flywheel is at speed. Allows the driver
+ *       to manually align the chassis and shoot if vision, odometry, or turret
+ *       systems fail.</li>
  * </ol>
  *
  * <p>Usage (see {@code JowByTeleOp}):
@@ -108,6 +115,9 @@ public class KeyBindings {
     // even if something else (an auto, the panic button) ends the command.
     private final Command autoShoot;
 
+    /** Operator (gamepad2) manual shoot toggle: fixed RPM, no turret movement, auto-feeds when ready. */
+    private final Command manualShoot;
+
     public KeyBindings(OpMode opMode, RobotMain robot) {
         if (opMode == null || robot == null) {
             throw new IllegalArgumentException("KeyBindings needs a non-null OpMode and RobotMain");
@@ -118,6 +128,7 @@ public class KeyBindings {
         this.gamepadDebug = new PanelsGamepadDebug(opMode.gamepad1, "GP1");
         // One instance, reused by the toggle below: its scheduled state IS the latch.
         this.autoShoot = robot.CommandF.getAutoShootCommand();
+        this.manualShoot = robot.CommandF.getManualShootCommand();
         bindCommands();
     }
 
@@ -158,6 +169,16 @@ public class KeyBindings {
                     .toggleWhenActive(autoShoot, true);
         }
 
+        // ---- MANUAL SHOOT: OPERATOR (gamepad2) RIGHT TRIGGER = TOGGLE ----
+        // Backup manual shoot mode: spins the flywheel to MANUAL_SHOOT_RPM and feeds
+        // automatically when at speed, without moving the turret.
+        // Used when vision, odometry, or turret systems have issues so the driver
+        // can manually align the chassis and shoot.
+        if (manualShoot != null) {
+            OperatorController.rightTrigger(AimAtGoal.TRIGGER_THRESHOLD)
+                    .toggleWhenActive(manualShoot, true);
+        }
+
         // ---- PANIC / UNLOCK: LEFT BUMPER ----
         // The old "one extra button to unlock" job, now the ONE dedicated safe
         // control: turn the latch OFF and re-park the shooter (gate closed,
@@ -182,14 +203,14 @@ public class KeyBindings {
                 .whenInactive(robot.intake.stopCmd());
 
         // ---- Transfer: RB = forward, B = reverse ----
-        // Gated on !isAutoAimOn(): when auto-shoot is active, holding RB or B
+        // Gated on !isShooting(): when auto-shoot or manual-shoot is active, holding RB or B
         // directly drives the transfer via CommandFactory without cancelling
-        // the auto-shoot compound (turret continues tracking, flywheel stays at speed).
-        // When auto-shoot is OFF, these schedule transfer.holdCmd() / stopCmd().
-        new Trigger(() -> DriveController.rightBumper().get() && !isAutoAimOn())
+        // the shoot compound (turret continues tracking or stays fixed, flywheel stays at speed).
+        // When shooting is OFF, these schedule transfer.holdCmd() / stopCmd().
+        new Trigger(() -> DriveController.rightBumper().get() && !isShooting())
                 .whenActive(robot.transfer.holdCmd())
                 .whenInactive(robot.transfer.stopCmd());
-        new Trigger(() -> DriveController.b().get() && !isAutoAimOn())
+        new Trigger(() -> DriveController.b().get() && !isShooting())
                 .whenActive(robot.transfer.reverseHoldCmd())
                 .whenInactive(robot.transfer.stopCmd());
 
@@ -271,10 +292,13 @@ public class KeyBindings {
         reportTelemetry();
     }
 
-    /** Cancel the latched shot (call from the OpMode's stop()). Safe when not shooting. */
+    /** Cancel any latched shot (call from the OpMode's stop()). Safe when not shooting. */
     public void stop() {
         if (autoShoot != null && autoShoot.isScheduled()) {
             autoShoot.cancel();
+        }
+        if (manualShoot != null && manualShoot.isScheduled()) {
+            manualShoot.cancel();
         }
     }
 
@@ -283,9 +307,14 @@ public class KeyBindings {
         return autoShoot != null && autoShoot.isScheduled();
     }
 
-    /** Legacy alias kept for anything that asked "are we shooting". */
+    /** True while the latched manual-shoot (fixed RPM + transfer, no turret aim) is ON. */
+    public boolean isManualShootOn() {
+        return manualShoot != null && manualShoot.isScheduled();
+    }
+
+    /** True while either shoot mode (auto-aim or manual align) is active. */
     public boolean isShooting() {
-        return isAutoAimOn();
+        return isAutoAimOn() || isManualShootOn();
     }
 
     // ------------------------------------------------------------------ drive
@@ -423,8 +452,10 @@ public class KeyBindings {
         // addData only — flushed once via robot.flushTelemetry() at end of loop().
         gamepadDebug.report(); // raw-vs-mapped gamepad axes (toggle in Panels > Configurables)
         RobotMain.DashTelemetry.addData("Shoot latch (LT toggle)", isAutoAimOn() ? "ON" : "OFF");
+        RobotMain.DashTelemetry.addData("Manual shoot latch (RT toggle)", isManualShootOn() ? "ON" : "OFF");
         RobotMain.DashTelemetry.addData("Drive mode",
-                isAutoAimOn() ? "SHOOT (latch ON, TURRET aims, chassis free)" : "manual field-centric");
+                isAutoAimOn() ? "SHOOT (latch ON, TURRET aims, chassis free)" :
+                (isManualShootOn() ? "MANUAL SHOOT (latch ON, set RPM, turret fixed, chassis free)" : "manual field-centric"));
 
         if (robot.CommandF != null) {
             RobotMain.DashTelemetry.addData("Shoot readiness", robot.CommandF.getShootReadinessSummary());

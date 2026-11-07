@@ -11,6 +11,9 @@ import com.seattlesolvers.solverslib.command.RunCommand;
 import com.seattlesolvers.solverslib.command.Subsystem;
 import com.seattlesolvers.solverslib.command.button.Trigger;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.teamcode.RobotMain;
@@ -99,6 +102,15 @@ public class CommandFactory {
     public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
     public static double[] LUT_RPMS = {1850, 1950, 2000, 2050, 2300, 2400}; // max observed RPM is 2700
     public static double[] LUT_HOOD_DEGS = {16.831, 19.831, 24.831, 45.852, 45.852, 45.852};
+
+    // ---- Manual align & shoot backup mode (Panels-tunable) ----
+    /**
+     * Fixed setpoint RPM for manual align & shoot mode.
+     * When active, the robot does not move the turret and runs the flywheel directly
+     * to this fixed RPM. Once at speed, the gate opens and transfer feeds automatically,
+     * allowing the driver to manually align the chassis and shoot if any systems have issues.
+     */
+    public static double MANUAL_SHOOT_RPM = 2000.0;
 
     public static double LUT_MAX_HOOD_SLEW_DPS = 90.0;
 
@@ -284,6 +296,12 @@ public class CommandFactory {
      */
     private final Command autoShootCmd;
 
+    /**
+     * The ONE latched manual-shoot instance: fixed RPM, no turret movement,
+     * auto-feeds via transfer when at speed.
+     */
+    private final Command manualShootCmd;
+
     public CommandFactory(Follower _follower, Intake _intake, Transfer _transfer, Flywheel _flywheel, ShootGateServo _posServ, TurretPivot _turret, Hood _hood, HardwareMap _hardwareMap) {
         follower = _follower;
         intake = _intake;
@@ -301,6 +319,8 @@ public class CommandFactory {
 
         // Build the single latched instance LAST — its halves need `aim`.
         autoShootCmd = aim == null ? null : buildAutoShoot();
+        // Manual shoot requires flywheel; does not require turret or aim.
+        manualShootCmd = flywheel == null ? null : buildManualShoot();
     }
 
     public CommandFactory(Follower _follower, Intake _intake, Transfer _transfer, Flywheel _flywheel, ShootGateServo _posServ, TurretPivot _turret, HardwareMap _hardwareMap) {
@@ -481,6 +501,71 @@ public class CommandFactory {
     }
 
     /**
+     * The FIRE half of the manual shoot mode: feeds via the transfer (and opens gate)
+     * as soon as the flywheel is at {@link #MANUAL_SHOOT_RPM} and gate is ok.
+     * Turret setpoint, aim alignment, chassis motion, and no-fire zones are NOT required,
+     * so this mode remains fully operational if any of those systems fail.
+     */
+    public Command FireManualAtGoal() {
+        List<Subsystem> reqList = new ArrayList<>();
+        if (PosServ != null) reqList.add(PosServ);
+        if (transfer != null) reqList.add(transfer);
+        final Subsystem[] requirements = reqList.toArray(new Subsystem[0]);
+
+        return new FunctionalCommand(
+                () -> {
+                    firing = true;
+                    fireSuppressedByDriver = false;
+                    fireSuppressedForS = 0.0;
+                    flywheelBandLatched = false;
+                    flywheelInToleranceSinceNs = 0L;
+                    transferState = FeedState.OFF;
+                },
+                () -> {
+                    boolean ready = flywheelReadyHyst() && gateOk();
+                    boolean manualFwd = manualTransferForwardHeld;
+                    boolean manualRev = manualTransferReverseHeld;
+                    boolean autoReady = !fireSuppressedByDriver && ready;
+
+                    if (manualRev) {
+                        closeGate();
+                        if (transfer != null) transfer.runReverse();
+                        setTransferState(FeedState.REVERSING);
+                    } else if (manualFwd) {
+                        openGate();
+                        holdManualIntakeOutOfTheWay();
+                        if (transfer != null) transfer.runForward();
+                        setTransferState(FeedState.MANUAL);
+                    } else if (autoReady) {
+                        openGate();
+                        holdManualIntakeOutOfTheWay();
+                        if (transfer != null) transfer.runForward();
+                        setTransferState(FeedState.FEEDING);
+                    } else {
+                        closeGate();
+                        if (transfer != null && transferState != FeedState.OFF) transfer.stop();
+                        setTransferState(FeedState.OFF);
+                    }
+                    reportManualReadinessDetails(ready, autoReady, manualFwd, manualRev);
+                },
+                (interrupted) -> {
+                    firing = false;
+                    closeGate();
+                    if (transfer != null) transfer.stop();
+                    setTransferState(FeedState.OFF);
+                    flywheelBandLatched = false;
+                    flywheelInToleranceSinceNs = 0L;
+                    if (interrupted) {
+                        fireSuppressedByDriver = true;
+                        fireSuppressedForS = 0.0;
+                    }
+                },
+                () -> false, // latched until cancelled
+                requirements
+        ).setName("FireManualAtGoal");
+    }
+
+    /**
      * The whole auto-firing shot: {@link #TrackTarget()} plus
      * {@link #FireAtGoal()}. This is "auto aim auto-runs the transfer when
      * ready", i.e. IndianaJoe's
@@ -506,6 +591,27 @@ public class CommandFactory {
                 TrackTarget(),
                 FireAtGoal()
         ).setName("AutoShootAtGoal");
+    }
+
+    /**
+     * Builds the compound manual shoot command: runs flywheel to MANUAL_SHOOT_RPM
+     * and auto-fires via transfer when at speed, without requiring or moving the turret.
+     */
+    private Command buildManualShoot() {
+        if (flywheel == null) {
+            return Commands.none();
+        }
+        return new ParallelCommandGroup(
+                manualRpmCommand(),
+                FireManualAtGoal()
+        ).setName("ManualShootAtGoal");
+    }
+
+    /**
+     * Factory for a fresh manual align and shoot command tree (fixed RPM, no turret movement).
+     */
+    public Command ManualShootAtGoal() {
+        return flywheel == null ? Commands.none() : buildManualShoot();
     }
 
     /**
@@ -554,12 +660,24 @@ public class CommandFactory {
     }
 
     /**
+     * The latched manual shoot instance used by KeyBindings on operator right trigger.
+     */
+    public Command getManualShootCommand() {
+        return manualShootCmd;
+    }
+
+    /** True if the manual shoot command is currently scheduled. */
+    public boolean isManualShootActive() {
+        return manualShootCmd != null && manualShootCmd.isScheduled();
+    }
+
+    /**
      * The LEFT BUMPER "unlock / panic" command: turn the auto-shoot latch OFF
      * and put the shooter in its safe rest state.
      *
-     * <p>It cancels {@link #autoShootCmd} specifically — NOT whatever happens
-     * to be scheduled — because {@code KeyBindings} toggles that exact
-     * instance with {@code toggleWhenActive}; cancelling it is what keeps the
+     * <p>It cancels {@link #autoShootCmd} and {@link #manualShootCmd} — NOT whatever happens
+     * to be scheduled — because {@code KeyBindings} toggles those exact
+     * instances with {@code toggleWhenActive}; cancelling them is what keeps the
      * trigger's pressed/released bookkeeping in lockstep with the robot (the
      * next trigger press schedules it cleanly again). The cancel runs the
      * compound's {@code end()} on both halves: gate closed, transfer stopped,
@@ -571,13 +689,16 @@ public class CommandFactory {
      * already off just re-asserts the safe state.
      */
     public Command getStopShootCommand() {
-        if (autoShootCmd == null) {
+        if (autoShootCmd == null && manualShootCmd == null) {
             return Commands.none();
         }
         return new FunctionalCommand(
                 () -> {
-                    if (autoShootCmd.isScheduled()) {
+                    if (autoShootCmd != null && autoShootCmd.isScheduled()) {
                         autoShootCmd.cancel(); // runs both halves' end()
+                    }
+                    if (manualShootCmd != null && manualShootCmd.isScheduled()) {
+                        manualShootCmd.cancel();
                     }
                     // Belt-and-suspenders: whatever end() did, make the safe
                     // resting state explicit.
@@ -590,6 +711,7 @@ public class CommandFactory {
                     intakeStoppedByFire = false;
                     fireSuppressedByDriver = false; // a deliberate unlock re-arms for next time
                     RobotMain.DashTelemetry.addData("Shoot latch (LT toggle)", "OFF (LB unlock)");
+                    RobotMain.DashTelemetry.addData("Manual shoot latch (RT toggle)", "OFF (LB unlock)");
                 },
                 () -> {},
                 (interrupted) -> {},
@@ -750,6 +872,36 @@ public class CommandFactory {
         );
     }
 
+    /**
+     * Spools the flywheel directly to {@link #MANUAL_SHOOT_RPM} without pose or distance LUT.
+     * On interrupt / end, coasts the flywheel to idle.
+     */
+    private Command manualRpmCommand() {
+        if (flywheel == null) {
+            return Commands.none();
+        }
+        return new FunctionalCommand(
+                () -> {
+                    commandedRpm = MANUAL_SHOOT_RPM;
+                    flywheel.setTargetRpm(MANUAL_SHOOT_RPM);
+                },
+                () -> {
+                    commandedRpm = MANUAL_SHOOT_RPM;
+                    if (Flywheel.TARGET_RPM != MANUAL_SHOOT_RPM) {
+                        flywheel.setTargetRpm(MANUAL_SHOOT_RPM);
+                    }
+                    RobotMain.DashTelemetry.addData("Manual Shoot cmd RPM", "%.0f", MANUAL_SHOOT_RPM);
+                },
+                (interrupted) -> {
+                    closeGate();
+                    flywheel.coastToIdle();
+                    commandedRpm = Double.NaN;
+                },
+                () -> false, // runs until cancelled
+                flywheel
+        ).setName("ManualRpmManager");
+    }
+
     /** The distance (in) from the shooter to the target the shot is being made at. */
     private double currentShotDistanceInches() {
         if (aim == null) {
@@ -876,6 +1028,13 @@ public class CommandFactory {
 
     /** Shoot readiness summary line for driver station / dashboard. */
     public String getShootReadinessSummary() {
+        if (isManualShootActive()) {
+            boolean r = flywheelReadyHyst() && gateOk();
+            if (r) {
+                return "MANUAL READY (FIRE)";
+            }
+            return "MANUAL WAIT: " + (flywheelReadyHyst() ? "gate" : "flywheel " + flywheelText());
+        }
         Readiness r = getLatestReadiness();
         if (r.all) {
             return "READY TO SHOOT (FIRE)";
@@ -1105,6 +1264,27 @@ public class CommandFactory {
         RobotMain.DashTelemetry.addData("Fire transfer", transferState);
     }
 
+    private void reportManualReadinessDetails(boolean ready, boolean autoReady, boolean manualFwd, boolean manualRev) {
+        String policy;
+        if (manualRev) {
+            policy = "REVERSE (manual)";
+        } else if (manualFwd) {
+            policy = "FIRE (manual)";
+        } else if (autoReady) {
+            policy = "FIRE (manual ready)";
+        } else {
+            policy = "WAIT (spooling)";
+        }
+        RobotMain.DashTelemetry.addData("Fire policy", policy);
+        RobotMain.DashTelemetry.addData("Ready to shoot", ready);
+        RobotMain.DashTelemetry.addData("Fire block", (autoReady || manualFwd || manualRev) ? "none"
+                : (fireSuppressedByDriver ? "driver override (manual transfer)" : (ready ? "none" : (flywheelReadyHyst() ? "gate" : "flywheel"))));
+        RobotMain.DashTelemetry.addData("  ok: flywheel", flag(flywheelReadyHyst()) + flywheelText());
+        RobotMain.DashTelemetry.addData("  ok: gate", flag(gateOk()) + gateText());
+        RobotMain.DashTelemetry.addData("  turret: MANUAL (not moving)", "0");
+        RobotMain.DashTelemetry.addData("Fire transfer", transferState);
+    }
+
     private static String flag(boolean ok) {
         return ok ? "OK  " : "NO  ";
     }
@@ -1286,9 +1466,15 @@ public class CommandFactory {
 
         // Evaluate snapshot once per loop: shared across fire policy and dashboard.
         lastReadiness = evaluateReadiness();
-        RobotMain.DashTelemetry.addData("Shoot Ready", lastReadiness.all ? "READY" : "WAIT");
-        RobotMain.DashTelemetry.addData("Shoot Blocker", lastReadiness.all ? "none" : firstBlocker(lastReadiness));
-        RobotMain.DashTelemetry.addData("Flywheel Ready", flag(lastReadiness.flywheel) + flywheelText());
+        if (isManualShootActive()) {
+            boolean manualRdy = flywheelReadyHyst() && gateOk();
+            RobotMain.DashTelemetry.addData("Shoot Ready", manualRdy ? "READY (MANUAL)" : "WAIT (MANUAL)");
+            RobotMain.DashTelemetry.addData("Shoot Blocker", manualRdy ? "none" : (flywheelReadyHyst() ? "gate" : "flywheel"));
+        } else {
+            RobotMain.DashTelemetry.addData("Shoot Ready", lastReadiness.all ? "READY" : "WAIT");
+            RobotMain.DashTelemetry.addData("Shoot Blocker", lastReadiness.all ? "none" : firstBlocker(lastReadiness));
+        }
+        RobotMain.DashTelemetry.addData("Flywheel Ready", flag(isManualShootActive() ? flywheelReadyHyst() : lastReadiness.flywheel) + flywheelText());
 
         if (firing) {
             RobotMain.DashTelemetry.addData("Chassis speed (in/s)", "%.2f", measuredSpeedInS);

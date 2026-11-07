@@ -63,6 +63,13 @@ public abstract class AutoOpModeBase extends OpMode {
     }
 
     /**
+     * A FRESH manual-shoot command for this auto's command group (fixed RPM, no turret movement).
+     */
+    public Command manualShoot() {
+        return robot == null ? null : robot.CommandF.ManualShootAtGoal();
+    }
+
+    /**
      * A fresh ramp-down command for this auto's command group (no-op when ramp servos are absent).
      */
     public Command rampDown() {
