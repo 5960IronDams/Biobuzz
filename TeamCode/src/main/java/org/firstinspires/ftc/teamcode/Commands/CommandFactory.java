@@ -430,7 +430,8 @@ public class CommandFactory {
                     // stateful, so evaluating them twice (once for the policy,
                     // once for the display) would consume two Schmitt steps and
                     // make the telemetry not match what was decided.
-                    Readiness r = evaluateReadiness();
+                    Readiness r = lastReadiness != null ? lastReadiness : evaluateReadiness();
+                    lastReadiness = r;
                     boolean manualFwd = manualTransferForwardHeld;
                     boolean manualRev = manualTransferReverseHeld;
                     boolean autoReady = !fireSuppressedByDriver && r.all;
@@ -841,16 +842,16 @@ public class CommandFactory {
      * separately for the policy and for the display, which both consumed extra
      * hysteresis steps and could print a state different from the one acted on.
      */
-    private static final class Readiness {
-        final boolean flywheel;
-        final boolean turretPos;
-        final boolean aim;
-        final boolean gate;
-        final boolean translation;
-        final boolean rotation;
-        final boolean clear;
-        final boolean hood;
-        final boolean all;
+    public static final class Readiness {
+        public final boolean flywheel;
+        public final boolean turretPos;
+        public final boolean aim;
+        public final boolean gate;
+        public final boolean translation;
+        public final boolean rotation;
+        public final boolean clear;
+        public final boolean hood;
+        public final boolean all;
 
         Readiness(boolean flywheel, boolean turretPos, boolean aim, boolean gate,
                   boolean translation, boolean rotation, boolean clear, boolean hood) {
@@ -864,6 +865,27 @@ public class CommandFactory {
             this.hood = hood;
             this.all = flywheel && turretPos && aim && gate && translation && rotation && clear && hood;
         }
+    }
+
+    private Readiness lastReadiness = null;
+
+    /** Returns the latest readiness snapshot (computed in readinessPeriodic()). */
+    public Readiness getLatestReadiness() {
+        return lastReadiness != null ? lastReadiness : evaluateReadiness();
+    }
+
+    /** Shoot readiness summary line for driver station / dashboard. */
+    public String getShootReadinessSummary() {
+        Readiness r = getLatestReadiness();
+        if (r.all) {
+            return "READY TO SHOOT (FIRE)";
+        }
+        return "BLOCKED: " + firstBlocker(r);
+    }
+
+    /** Live flywheel readiness details string. */
+    public String getFlywheelStatusText() {
+        return flywheelText();
     }
 
     /** Evaluate every member exactly once (hysteresis members advance once here). */
@@ -1261,11 +1283,13 @@ public class CommandFactory {
         }
 
         restoreManualIntakeWhenFree();
-        // NOTE: no "Ready to shoot" line here. It used to be emitted from this
-        // method, which runs ONE TICK LATER than the scheduler's fire policy —
-        // so the capture showed FIRE (ready) next to Ready-to-shoot=false and
-        // looked like a contradiction. The readiness lines now come exclusively
-        // from reportReadinessDetails(), in the same pass as the policy.
+
+        // Evaluate snapshot once per loop: shared across fire policy and dashboard.
+        lastReadiness = evaluateReadiness();
+        RobotMain.DashTelemetry.addData("Shoot Ready", lastReadiness.all ? "READY" : "WAIT");
+        RobotMain.DashTelemetry.addData("Shoot Blocker", lastReadiness.all ? "none" : firstBlocker(lastReadiness));
+        RobotMain.DashTelemetry.addData("Flywheel Ready", flag(lastReadiness.flywheel) + flywheelText());
+
         if (firing) {
             RobotMain.DashTelemetry.addData("Chassis speed (in/s)", "%.2f", measuredSpeedInS);
             RobotMain.DashTelemetry.addData("Chassis yaw (dps)", "%.1f", measuredYawDps);

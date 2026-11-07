@@ -86,6 +86,18 @@ public class JowByTeleOp extends OpMode {
         if (now - lastDsTelemetryMs >= 50) {
             telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
             telemetry.addData("HW", HardwareHealth.get().dsLine());
+
+            // ---- DRIVER DASHBOARD: SHOOT READINESS & FLYWHEEL STATUS ----
+            if (robot != null && robot.CommandF != null) {
+                telemetry.addData("SHOOT", robot.CommandF.getShootReadinessSummary());
+            }
+            if (robot != null && robot.flywheel != null) {
+                telemetry.addData("FLYWHEEL", robot.flywheel.getStatusLine());
+                if (robot.flywheel.isAutotuning()) {
+                    telemetry.addData("AUTOTUNE", robot.flywheel.getAutotuneStatus());
+                }
+            }
+
             telemetry.update();
             lastDsTelemetryMs = now;
         }

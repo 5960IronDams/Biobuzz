@@ -56,6 +56,37 @@ public class Flywheel extends SubsystemBase {
     /** Coast is "arrived" once actual RPM has fallen to IDLE + this. */
     public static double COAST_ARRIVE_TOLERANCE_RPM = 50;
 
+    /** Continuous auto-trim during match play to counter battery voltage droop. */
+    public static boolean AUTO_TRIM_ENABLED = true;
+    /** Auto-trim deadband in RPM. Within this of target, no feedforward trim is applied. */
+    public static double AUTO_TRIM_DEADBAND_RPM = 15.0;
+    /** Feedforward adjustment per auto-trim step. */
+    public static double AUTO_TRIM_STEP = 0.05;
+    /** Interval between continuous auto-trim steps in seconds. */
+    public static double AUTO_TRIM_INTERVAL_S = 0.15;
+    /** Reference RPM for the pre-match autotune routine. */
+    public static double AUTOTUNE_REF_RPM = 2000.0;
+
+    public enum AutotuneState {
+        IDLE,
+        SPOOLING,
+        SAMPLING,
+        ADJUSTING,
+        CONVERGED,
+        FAILED
+    }
+
+    private AutotuneState autotuneState = AutotuneState.IDLE;
+    private String autotuneStatus = "Autotune idle";
+    private long autotunePhaseStartNs = 0L;
+    private int autotuneIteration = 0;
+    private static final int MAX_AUTOTUNE_ITERATIONS = 8;
+    private final java.util.List<Double> autotuneSamples = new java.util.ArrayList<>();
+    private double autotuneTargetRpm = 2000.0;
+
+    private long lastAutoTrimNs = 0L;
+    private long holdingSinceNs = 0L;
+
     private enum Mode {
         STOPPED,
         HOLDING,
@@ -156,6 +187,7 @@ public class Flywheel extends SubsystemBase {
      */
     public void setTargetRpm(double rpm) {
         TARGET_RPM = rpm;
+        holdingSinceNs = 0L;
         engagePidMode();
         mode = Mode.HOLDING;
         applyVelocity();
@@ -163,6 +195,10 @@ public class Flywheel extends SubsystemBase {
 
     /** PID-brake to zero. Cancels any coast. */
     public void stop() {
+        if (autotuneState != AutotuneState.IDLE) {
+            stopAutotune();
+        }
+        holdingSinceNs = 0L;
         engagePidMode();
         mode = Mode.FLOATING;
         applyVelocity();
@@ -291,9 +327,220 @@ public class Flywheel extends SubsystemBase {
         }
     }
 
+    /** Adjust kF by delta, clamped between 5.0 and 60.0. */
+    public void adjustKf(double delta) {
+        kF = Math.round(Math.max(5.0, Math.min(60.0, kF + delta)) * 100.0) / 100.0;
+        applyPids(true);
+    }
+
+    /** Adjust kP by delta, clamped between 5.0 and 120.0. */
+    public void adjustKp(double delta) {
+        kP = Math.round(Math.max(5.0, Math.min(120.0, kP + delta)) * 10.0) / 10.0;
+        applyPids(true);
+    }
+
+    public Command adjustKfCmd(double delta) {
+        return runOnce(() -> adjustKf(delta));
+    }
+
+    public Command adjustKpCmd(double delta) {
+        return runOnce(() -> adjustKp(delta));
+    }
+
+    public void startAutotune() {
+        startAutotune(TARGET_RPM > 500.0 ? TARGET_RPM : AUTOTUNE_REF_RPM);
+    }
+
+    public void startAutotune(double targetRpm) {
+        autotuneTargetRpm = targetRpm;
+        autotuneIteration = 0;
+        autotuneSamples.clear();
+        autotuneState = AutotuneState.SPOOLING;
+        autotunePhaseStartNs = System.nanoTime();
+        autotuneStatus = String.format(java.util.Locale.US, "Spooling to %.0f RPM...", autotuneTargetRpm);
+        setTargetRpm(autotuneTargetRpm);
+    }
+
+    public void stopAutotune() {
+        autotuneState = AutotuneState.IDLE;
+        autotuneStatus = "Stopped";
+    }
+
+    public boolean isAutotuning() {
+        return autotuneState != AutotuneState.IDLE;
+    }
+
+    public String getAutotuneStatus() {
+        return autotuneStatus;
+    }
+
+    public Command autotuneCmd() {
+        return new FunctionalCommand(
+                this::startAutotune,
+                () -> {},
+                (interrupted) -> {
+                    if (interrupted) stopAutotune();
+                },
+                () -> autotuneState == AutotuneState.IDLE || autotuneState == AutotuneState.CONVERGED,
+                this
+        ).setName("FlywheelAutotune");
+    }
+
+    public void toggleTestSpin() {
+        if (isHoldingTarget()) {
+            coastToIdle();
+        } else {
+            setTargetRpm(TARGET_RPM > 500.0 ? TARGET_RPM : 2000.0);
+        }
+    }
+
+    public Command toggleTestSpinCmd() {
+        return runOnce(this::toggleTestSpin);
+    }
+
+    public String getStatusLine() {
+        double act = getActualRpm();
+        double tgt = mode == Mode.HOLDING ? TARGET_RPM : (mode == Mode.COASTING_TO_IDLE ? IDLE_RPM : 0.0);
+        double err = act - tgt;
+        boolean atSpeed = isAtTargetRpm();
+        return String.format(java.util.Locale.US, "%.0f/%.0f (err %+.0f) | kF=%.2f kP=%.1f [%s]",
+                act, tgt, err, kF, kP, atSpeed ? "OK" : (mode == Mode.HOLDING ? "WAIT" : mode.name()));
+    }
+
+    private void periodicAutotune(long nowNs) {
+        double act = getActualRpm();
+        double target = autotuneTargetRpm;
+
+        switch (autotuneState) {
+            case SPOOLING:
+                if (Math.abs(act - target) <= 120.0 || (nowNs - autotunePhaseStartNs) > 1.2e9) {
+                    autotuneState = AutotuneState.SAMPLING;
+                    autotunePhaseStartNs = nowNs;
+                    autotuneSamples.clear();
+                    autotuneStatus = String.format(java.util.Locale.US, "Sampling RPM at %.0f...", target);
+                }
+                break;
+
+            case SAMPLING:
+                autotuneSamples.add(act);
+                if ((nowNs - autotunePhaseStartNs) >= 0.4e9 && autotuneSamples.size() >= 12) {
+                    double sum = 0.0;
+                    double min = Double.MAX_VALUE;
+                    double max = -Double.MAX_VALUE;
+                    for (double s : autotuneSamples) {
+                        sum += s;
+                        if (s < min) min = s;
+                        if (s > max) max = s;
+                    }
+                    double avgRpm = sum / autotuneSamples.size();
+                    double oscillation = max - min;
+                    double err = target - avgRpm;
+
+                    autotuneIteration++;
+
+                    // 1. Excessive oscillation check: reduce kP
+                    if (oscillation > 70.0) {
+                        double oldKp = kP;
+                        kP = Math.max(12.0, Math.round(kP * 0.85 * 10.0) / 10.0);
+                        autotuneStatus = String.format(java.util.Locale.US,
+                                "Iter %d: Oscillation %.0f RPM -> kP: %.1f->%.1f",
+                                autotuneIteration, oscillation, oldKp, kP);
+                        applyPids(true);
+                        autotuneState = AutotuneState.SAMPLING;
+                        autotunePhaseStartNs = nowNs;
+                        autotuneSamples.clear();
+                        return;
+                    }
+
+                    // 2. Convergence check: within 15 RPM and steady
+                    if (Math.abs(err) <= 15.0 && oscillation <= 50.0) {
+                        autotuneState = AutotuneState.CONVERGED;
+                        autotunePhaseStartNs = nowNs;
+                        autotuneStatus = String.format(java.util.Locale.US,
+                                "DIALED IN! kF=%.2f, kP=%.1f (err %+.1f, osc %.0f)",
+                                kF, kP, err, oscillation);
+                        return;
+                    }
+
+                    // 3. Adjust kF feedforward
+                    double deltaKf = 0.7 * (kP * (err / target) + kF * (err / Math.max(1.0, avgRpm)));
+                    deltaKf = Math.max(-3.0, Math.min(3.0, deltaKf));
+                    double oldKf = kF;
+                    kF = Math.round(Math.max(5.0, Math.min(60.0, kF + deltaKf)) * 100.0) / 100.0;
+                    applyPids(true);
+
+                    if (autotuneIteration >= MAX_AUTOTUNE_ITERATIONS) {
+                        autotuneState = AutotuneState.CONVERGED;
+                        autotunePhaseStartNs = nowNs;
+                        autotuneStatus = String.format(java.util.Locale.US,
+                                "Done (max iter): kF=%.2f, kP=%.1f (err %+.1f)",
+                                kF, kP, err);
+                    } else {
+                        autotuneStatus = String.format(java.util.Locale.US,
+                                "Iter %d: err %+.0f RPM -> kF: %.2f->%.2f",
+                                autotuneIteration, err, oldKf, kF);
+                        autotuneState = AutotuneState.SAMPLING;
+                        autotunePhaseStartNs = nowNs;
+                        autotuneSamples.clear();
+                    }
+                }
+                break;
+
+            case CONVERGED:
+                if ((nowNs - autotunePhaseStartNs) > 2.0e9) {
+                    autotuneState = AutotuneState.IDLE;
+                }
+                break;
+
+            case IDLE:
+            default:
+                break;
+        }
+    }
+
+    private void periodicAutoTrim(long nowNs) {
+        if (!AUTO_TRIM_ENABLED || autotuneState != AutotuneState.IDLE) {
+            return;
+        }
+        if (mode != Mode.HOLDING || TARGET_RPM < 500.0) {
+            holdingSinceNs = 0L;
+            return;
+        }
+        if (holdingSinceNs == 0L) {
+            holdingSinceNs = nowNs;
+            lastAutoTrimNs = nowNs;
+            return;
+        }
+        if (nowNs - holdingSinceNs < 0.5e9) {
+            return;
+        }
+        if ((nowNs - lastAutoTrimNs) < (long) (AUTO_TRIM_INTERVAL_S * 1.0e9)) {
+            return;
+        }
+        lastAutoTrimNs = nowNs;
+
+        double act = getActualRpm();
+        double err = TARGET_RPM - act;
+        if (Math.abs(err) <= 250.0 && Math.abs(err) > AUTO_TRIM_DEADBAND_RPM) {
+            if (err > 0) {
+                kF = Math.round(Math.min(60.0, kF + AUTO_TRIM_STEP) * 100.0) / 100.0;
+            } else {
+                kF = Math.round(Math.max(5.0, kF - AUTO_TRIM_STEP) * 100.0) / 100.0;
+            }
+            applyPids(true);
+        }
+    }
+
     @Override
     public void periodic() {
         applyPids(false);
+
+        long nowNs = System.nanoTime();
+        if (autotuneState != AutotuneState.IDLE) {
+            periodicAutotune(nowNs);
+        } else {
+            periodicAutoTrim(nowNs);
+        }
 
         switch (mode) {
             case COASTING_TO_IDLE: {
@@ -331,6 +578,10 @@ public class Flywheel extends SubsystemBase {
         telemetry.addData("Flywheel target RPM", targetRpmText());
         telemetry.addData("Flywheel actual RPM", "%.1f", getActualRpm());
         telemetry.addData("Flywheel at speed", isCoasting() ? "COAST" : isAtTargetRpm());
+        telemetry.addData("Flywheel PIDF", "kF=%.2f kP=%.1f", kF, kP);
+        if (autotuneState != AutotuneState.IDLE) {
+            telemetry.addData("Flywheel autotune", autotuneStatus);
+        }
     }
 
     /** What the motor is actually being driven to, for the dashboard. */

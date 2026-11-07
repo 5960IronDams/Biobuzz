@@ -94,6 +94,14 @@ public class KeyBindings {
     // poll; no dependency on SDK *WasPressed APIs).
     private boolean prevBackPressed = false;
 
+    // Rising-edge tracking for operator flywheel dial controls (gamepad2)
+    private boolean prevOpB = false;
+    private boolean prevOpX = false;
+    private boolean prevOpDpadRight = false;
+    private boolean prevOpDpadLeft = false;
+    private boolean prevOpA = false;
+    private boolean prevOpDpadUp = false;
+
     // The left-trigger toggle's latched state is owned by the COMMAND itself:
     // toggleWhenActive() schedules/cancels the same instance, so "is it on" is
     // simply isScheduled(). That keeps the button and the robot in lockstep
@@ -352,10 +360,61 @@ public class KeyBindings {
 
     // ------------------------------------------------------------------ unused
 
-    /** Operator (gamepad2) bindings beyond the ramp: nothing assigned yet; add flywheel/etc. here. */
+    /**
+     * Operator (gamepad2) controls for Flywheel PIDF dialing and autotuning:
+     * - B: Nudge kF up (+0.5 coarse, +0.1 if leftTrigger held)
+     * - X: Nudge kF down (-0.5 coarse, -0.1 if leftTrigger held)
+     * - Dpad RIGHT: Nudge kP up (+1.0 coarse, +0.2 if leftTrigger held)
+     * - Dpad LEFT: Nudge kP down (-1.0 coarse, -0.2 if leftTrigger held)
+     * - A: Start / toggle Flywheel Autotune routine
+     * - Dpad UP: Toggle Flywheel test spin to target RPM (pre-match check)
+     */
     private void handleOperator() {
-        // TODO: move operator controls here as mechanism commands land, e.g.
-        // new Trigger(() -> gamepad2.y).whenActive(robot.flywheel.toRpm(2000));
+        if (robot.flywheel == null) {
+            return;
+        }
+
+        boolean fine = OperatorController.getLeftTriggerAxis() > 0.2;
+
+        boolean b = OperatorController.b().get();
+        if (b && !prevOpB) {
+            robot.flywheel.adjustKf(fine ? 0.10 : 0.50);
+        }
+        prevOpB = b;
+
+        boolean x = OperatorController.x().get();
+        if (x && !prevOpX) {
+            robot.flywheel.adjustKf(fine ? -0.10 : -0.50);
+        }
+        prevOpX = x;
+
+        boolean dpadRight = OperatorController.dpadRight().get();
+        if (dpadRight && !prevOpDpadRight) {
+            robot.flywheel.adjustKp(fine ? 0.20 : 1.0);
+        }
+        prevOpDpadRight = dpadRight;
+
+        boolean dpadLeft = OperatorController.dpadLeft().get();
+        if (dpadLeft && !prevOpDpadLeft) {
+            robot.flywheel.adjustKp(fine ? -0.20 : -1.0);
+        }
+        prevOpDpadLeft = dpadLeft;
+
+        boolean a = OperatorController.a().get();
+        if (a && !prevOpA) {
+            if (robot.flywheel.isAutotuning()) {
+                robot.flywheel.stopAutotune();
+            } else {
+                robot.flywheel.startAutotune();
+            }
+        }
+        prevOpA = a;
+
+        boolean dpadUp = OperatorController.dpadUp().get();
+        if (dpadUp && !prevOpDpadUp) {
+            robot.flywheel.toggleTestSpin();
+        }
+        prevOpDpadUp = dpadUp;
     }
 
     // ------------------------------------------------------------------ telemetry
@@ -366,6 +425,17 @@ public class KeyBindings {
         RobotMain.DashTelemetry.addData("Shoot latch (LT toggle)", isAutoAimOn() ? "ON" : "OFF");
         RobotMain.DashTelemetry.addData("Drive mode",
                 isAutoAimOn() ? "SHOOT (latch ON, TURRET aims, chassis free)" : "manual field-centric");
+
+        if (robot.CommandF != null) {
+            RobotMain.DashTelemetry.addData("Shoot readiness", robot.CommandF.getShootReadinessSummary());
+        }
+        if (robot.flywheel != null) {
+            RobotMain.DashTelemetry.addData("Flywheel Tune", robot.flywheel.getStatusLine());
+            if (robot.flywheel.isAutotuning()) {
+                RobotMain.DashTelemetry.addData("Autotune", robot.flywheel.getAutotuneStatus());
+            }
+        }
+
         if (robot.turret != null) {
             RobotMain.DashTelemetry.addData("Turret (robot-rel)", "%+.1f deg",
                     robot.turret.getPosition());
