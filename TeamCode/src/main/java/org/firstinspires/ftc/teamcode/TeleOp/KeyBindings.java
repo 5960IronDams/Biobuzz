@@ -400,15 +400,15 @@ public class KeyBindings {
         }
         prevOpDpadLeft = dpadLeft;
 
-        boolean a = OperatorController.a().get();
-        if (a && !prevOpA) {
-            if (robot.flywheel.isAutotuning()) {
-                robot.flywheel.stopAutotune();
-            } else {
-                robot.flywheel.startAutotune();
-            }
-        }
-        prevOpA = a;
+//        boolean a = OperatorController.a().get();
+//        if (a && !prevOpA) {
+//            if (robot.flywheel.isAutotuning()) {
+//                robot.flywheel.stopAutotune();
+//            } else {
+//                robot.flywheel.startAutotune();
+//            }
+//        }
+//        prevOpA = a;
 
         boolean dpadUp = OperatorController.dpadUp().get();
         if (dpadUp && !prevOpDpadUp) {

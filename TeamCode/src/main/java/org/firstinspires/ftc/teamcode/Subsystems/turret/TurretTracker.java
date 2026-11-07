@@ -613,8 +613,8 @@ public class TurretTracker {
             }
             double pwmNet = position() - watchStartPos;
             if (Math.abs(pwmNet) >= MOTOR_ENC_CONFIRM_PWM_DEG) {
-                if (Math.abs(watchMotNetDeg) >= MOTOR_ENC_CONFIRM_MOT_DEG
-                        && (pwmNet > 0) == (watchMotNetDeg > 0)) {
+                boolean sameSign = (pwmNet > 0) == (watchMotNetDeg > 0);
+                if (sameSign && Math.abs(watchMotNetDeg) >= MOTOR_ENC_CONFIRM_MOT_DEG) {
                     motorEncMode = MotEncMode.ACTIVE;
                     Log.i("IronLog", "TurretTracker hybrid ACTIVE: motor encoder confirmed (PWM "
                             + String.format(Locale.US, "%+.1f", pwmNet) + " deg vs motor "
@@ -634,7 +634,8 @@ public class TurretTracker {
                         Log.e("IronLog", "TurretTracker HYBRID OFF -> motor encoder dead;"
                                 + " PWM-only tracking resumes (speed re-capped)");
                     }
-                } else {
+                } else if (!sameSign && Math.abs(watchMotNetDeg) >= MOTOR_ENC_DEAD_MOT_DEG) {
+                    // Only flag if the signs actually contradict each other with non-trivial motion
                     faultMotorEncDir = true;
                     motorEncMode = MotEncMode.OFF;
                     motorEncOffReason = "direction mismatch — check MOTOR_ENC_POLARITY";
@@ -644,6 +645,8 @@ public class TurretTracker {
                             + String.format(Locale.US, "%+.1f", pwmNet)
                             + " deg — MOTOR_ENC_POLARITY (or an encoder flip) is wrong");
                 }
+                // If sameSign is true but watchMotNetDeg hasn't yet reached MOTOR_ENC_CONFIRM_MOT_DEG,
+                // do not fault — keep watching so backlash or slow ramping can catch up.
             }
         }
 
@@ -1011,6 +1014,9 @@ public class TurretTracker {
         lastAnchorCorrDeg = corrDeg;
         lastAnchoredRevs = anchoredRevs;
         unwrappedDeg = anchoredRevs * 360.0 / revsPerTurretB;
+        motNetSinceFresh = 0;
+        dirStreak = 0;
+        deadStreak = 0;
     }
 
     /**
@@ -1328,6 +1334,9 @@ public class TurretTracker {
         deadStreak = 0;
         dirStreak = 0;
         watchDeadStreak = 0;
+        watchStartPos = Double.NaN;
+        watchMotNetDeg = 0;
+        motNetSinceFresh = 0;
         absGlitchEvents = 0;
         feedbackFailures = 0;
         if (absoluteSource instanceof OctoQuadAbsoluteSource) {
@@ -1349,6 +1358,12 @@ public class TurretTracker {
         crtCrosscheckErrDeg = Double.NaN;
         faultMotorEnc = false;
         faultMotorEncDir = false;
+        deadStreak = 0;
+        dirStreak = 0;
+        watchDeadStreak = 0;
+        watchStartPos = Double.NaN;
+        watchMotNetDeg = 0;
+        motNetSinceFresh = 0;
         motorEncMode = resolveMotorEncMode();
     }
 
