@@ -29,6 +29,7 @@ public final class AutoRegistrar {
             R_ShootPark.class,//shoot Right, then go park.
             L_ShootPark.class,//shoot Left, then go park.
             R_waitShootPark.class,
+            R_Shoot_Under_Park.class,//twisted devils auton.
             L_ShootLFlowerShootL.class,
             R_ShootR_Garden_ShootR_Park.class,
             ShootAndParkFlowerSide.class,
