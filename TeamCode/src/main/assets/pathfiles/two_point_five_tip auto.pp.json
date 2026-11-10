@@ -1,0 +1,517 @@
+{
+  "version": "2.0.0",
+  "timestamp": "2026-11-03T23:40:42.255Z",
+  "startPoint": {
+    "x": 56,
+    "y": 8,
+    "headingDeg": 90,
+    "locked": false
+  },
+  "lines": [
+    {
+      "id": "line-mw1aw9lk-pop3kg",
+      "color": "#ffc516",
+      "name": "collect from garden",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 8,
+        "y": 8
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "startDeg": 180,
+        "endDeg": 180,
+        "degrees": 90,
+        "reverse": false,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1b6o2e-8wp7pr",
+      "endPoint": {
+        "x": 29.581601439669917,
+        "y": 94.77178423236515
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": true,
+        "degrees": 180,
+        "startDeg": 180,
+        "endDeg": 90,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#b07aa1",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "line up to flower"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1bcqbp-yjco27",
+      "endPoint": {
+        "x": 46.65,
+        "y": 130
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 0,
+        "startDeg": 90,
+        "endDeg": 90,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#f28e2b",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "collect from flower / shoot"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1bifat-jm7m0v",
+      "endPoint": {
+        "x": 16,
+        "y": 47
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 0,
+        "startDeg": 90,
+        "endDeg": 180,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#76b7b2",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "line up to flower"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1bj695-lvamyd",
+      "endPoint": {
+        "x": 11,
+        "y": 47
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "constant",
+        "reverse": false,
+        "degrees": 180,
+        "startDeg": 0,
+        "endDeg": 0,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#76b7b2",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "collect flower"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1bmohe-7ooa3w",
+      "endPoint": {
+        "x": 57.97977178423237,
+        "y": 30.433265670206538
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 0,
+        "startDeg": 180,
+        "endDeg": 90,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#f28e2b",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "shoot"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1bn7ok-iyr0zb",
+      "endPoint": {
+        "x": 30.384336099585063,
+        "y": 27.204012558173343
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 0,
+        "startDeg": 90,
+        "endDeg": 90,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#59a14f",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "get out the way"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mw1bngmn-x0ajl8",
+      "endPoint": {
+        "x": 9.24740663900415,
+        "y": 97.36687562871276
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 90,
+        "startDeg": 90,
+        "endDeg": 180,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#76b7b2",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "\"Screw u guys I'm going home\" - Cartman"
+    }
+  ],
+  "shapes": [
+    {
+      "id": "biobuzz-red-hive",
+      "name": "Red HIVE",
+      "vertices": [
+        {
+          "x": 46,
+          "y": 50
+        },
+        {
+          "x": 48.6,
+          "y": 50
+        },
+        {
+          "x": 48.6,
+          "y": 91.4
+        },
+        {
+          "x": 46,
+          "y": 91.4
+        }
+      ],
+      "color": "#dc2626",
+      "fillColor": "#ff6b6b"
+    },
+    {
+      "id": "biobuzz-blue-hive",
+      "name": "Blue HIVE",
+      "vertices": [
+        {
+          "x": 96.5,
+          "y": 91.4
+        },
+        {
+          "x": 93.9,
+          "y": 91.4
+        },
+        {
+          "x": 93.9,
+          "y": 50
+        },
+        {
+          "x": 96.5,
+          "y": 50
+        }
+      ],
+      "color": "#2563eb",
+      "fillColor": "#60a5fa"
+    },
+    {
+      "id": "biobuzz-flower-top",
+      "name": "Scoring-Side FLOWER",
+      "vertices": [
+        {
+          "x": 43.4,
+          "y": 141.5
+        },
+        {
+          "x": 50.1,
+          "y": 141.5
+        },
+        {
+          "x": 50.1,
+          "y": 139.4
+        },
+        {
+          "x": 46.75,
+          "y": 137.7
+        },
+        {
+          "x": 43.4,
+          "y": 139.4
+        }
+      ],
+      "color": "#dc2626",
+      "fillColor": "#ff6b6b"
+    },
+    {
+      "id": "biobuzz-flower-right",
+      "name": "Blue Alliance FLOWER",
+      "vertices": [
+        {
+          "x": 141.5,
+          "y": 98.1
+        },
+        {
+          "x": 139.4,
+          "y": 98.1
+        },
+        {
+          "x": 137.7,
+          "y": 94.75
+        },
+        {
+          "x": 139.4,
+          "y": 91.4
+        },
+        {
+          "x": 141.5,
+          "y": 91.4
+        }
+      ],
+      "color": "#2563eb",
+      "fillColor": "#60a5fa"
+    },
+    {
+      "id": "biobuzz-flower-bottom",
+      "name": "Audience-Side FLOWER",
+      "vertices": [
+        {
+          "x": 91.15,
+          "y": 0
+        },
+        {
+          "x": 97.8,
+          "y": 0
+        },
+        {
+          "x": 97.8,
+          "y": 2.1
+        },
+        {
+          "x": 94.5,
+          "y": 3.8
+        },
+        {
+          "x": 91.15,
+          "y": 2.1
+        }
+      ],
+      "color": "#2563eb",
+      "fillColor": "#60a5fa"
+    },
+    {
+      "id": "biobuzz-flower-left",
+      "name": "Red Alliance FLOWER",
+      "vertices": [
+        {
+          "x": 0,
+          "y": 50.35
+        },
+        {
+          "x": 2.1,
+          "y": 50.35
+        },
+        {
+          "x": 3.8,
+          "y": 47
+        },
+        {
+          "x": 2.1,
+          "y": 43.65
+        },
+        {
+          "x": 0,
+          "y": 43.65
+        }
+      ],
+      "color": "#dc2626",
+      "fillColor": "#ff6b6b"
+    }
+  ],
+  "sequence": [
+    {
+      "kind": "path",
+      "lineId": "line-mw1aw9lk-pop3kg"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1b6o2e-8wp7pr"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1bcqbp-yjco27"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1bifat-jm7m0v"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1bj695-lvamyd"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1bmohe-7ooa3w"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1bn7ok-iyr0zb"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mw1bngmn-x0ajl8"
+    }
+  ],
+  "fieldPoints": [],
+  "robot": {
+    "forwardVelocity": 75,
+    "strafeVelocity": 65,
+    "aVelocity": 3.141592653589793,
+    "kFriction": 0.1,
+    "rLength": 16,
+    "rWidth": 16,
+    "safetyMargin": 1,
+    "maxAcceleration": 30,
+    "maxDeceleration": 30
+  },
+  "activePaths": []
+}
