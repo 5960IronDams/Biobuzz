@@ -60,9 +60,10 @@ public class TipSanityFilter {
     /**
      * Reject when the solve moved faster than this since the last ACCEPTED
      * solve (in/s). Tipped-cell solves teleport as cells rock; the real robot
-     * cannot teleport. 0 disables.
+     * cannot teleport. 0 disables. Raised to 200.0 in/s to accept larger translations
+     * after gaps or drift without false teleport rejections.
      */
-    public static double MAX_SOLVE_SPEED_IPS = 120.0;
+    public static double MAX_SOLVE_SPEED_IPS = 200.0;
     /** Max time gap in seconds between accepted solves before resetting teleport baseline. */
     public static double MAX_TELEPORT_GAP_S = 1.5;
 

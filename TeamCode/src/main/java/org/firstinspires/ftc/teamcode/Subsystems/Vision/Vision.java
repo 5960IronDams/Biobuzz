@@ -374,6 +374,11 @@ public class Vision {
 
     public void updateCornerPipeline(@Nullable Pose pose) {
         if (!AUTO_CORNER_PIPELINE || pose == null || limelight == null) return;
+        if (NoVisionZones.isInNoVisionZone(pose)) {
+            // Under the center hives in a no-vision zone: avoid switching between corners
+            // and collecting degenerated data.
+            return;
+        }
         int target = cornerPipelineForPose(pose, currentPipeline);
         if (target != currentPipeline) {
             switchPipeline(target);
@@ -657,7 +662,15 @@ public class Vision {
         } catch (Exception ignored) {
         }
 
-        return new Reading(pedro, mt1HeadingRad, hasMt2, hasMt1, mt1Pedro, mt2Pedro,
+        // Ensure the reading's pedroPose has heading from MT1 (independent 6DOF solve)
+        // rather than echoing MT2 gyro seed.
+        Pose measurementPose = new Pose(
+                pedro.x(),
+                pedro.y(),
+                Double.isFinite(mt1HeadingRad) ? mt1HeadingRad : pedro.heading()
+        );
+
+        return new Reading(measurementPose, mt1HeadingRad, hasMt2, hasMt1, mt1Pedro, mt2Pedro,
                 tags, dist, area, span,
                 stdXY, latMs, staleMs, ids, clusterOnly, botPitchDeg, botRollDeg, botZM, llYawDeg,
                 mt1RawDeg, mt2RawDeg);

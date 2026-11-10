@@ -219,7 +219,7 @@ public class CommandFactory {
      * than the enter band on purpose: a shot in progress is not abandoned for
      * normal ball impact dips (~350-400 RPM drop), preventing rapid transfer chatter.
      */
-    public static double FLYWHEEL_READY_OFF_RPM = 250.0; //450.0; //450 usually sends balls right through. 250 will pause and unpause. (pre lakeveiw before adding flywheels)
+    public static double FLYWHEEL_READY_OFF_RPM = 150.0;//150 seems solid when not double loading.  //250.0; this was ok. //450.0; //450 usually sends balls right through. 250 will pause and unpause. (pre lakeveiw before adding flywheels)
 
     /**
      * Aim-alignment hysteresis: once aligned, the turret may drift this many

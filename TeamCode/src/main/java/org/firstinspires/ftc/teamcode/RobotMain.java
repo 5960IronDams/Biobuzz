@@ -337,7 +337,7 @@ public class RobotMain {
             allHubs.get(i).clearBulkCache();
         }
         follower.update(); // predict step: keeps the pose fresh (robot is parked)
-        if (visionFusion != null) visionFusion.correct(); // LL connect + solve + fuse
+        if (visionFusion != null) visionFusion.correct(true); // LL connect + solve + fuse (init mode: gather MT1 heading)
         if (vision != null) vision.healthPing(); // DS failure-board heartbeat during init too
         if (cells != null) {
             cells.update(CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE ? 'B' : 'R');
