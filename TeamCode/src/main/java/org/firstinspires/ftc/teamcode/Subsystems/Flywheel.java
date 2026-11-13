@@ -49,7 +49,7 @@ public class Flywheel extends SubsystemBase {
     public static double kP = 50.0;
     public static double kI = 0;
     public static double kD = 0;
-    public static double kF = 22.0;
+    public static double kF = 20.0;
     public static boolean MOTOR_REVERSED = false;
     /** Within this of TARGET counts as "at speed" for sequencing / telemetry. */
     public static double AT_SPEED_TOLERANCE_RPM = 100.0;

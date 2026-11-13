@@ -35,7 +35,8 @@ public final class NoVisionZones {
      */
     public static final List<NoVisionZone> NO_VISION_ZONES = new ArrayList<>(List.of(
             /* Center No-Vision Zone — identical to NoFireZones under-the-hive square */
-            NoVisionZone.fromCorners(46.0, 48.0, 95.0, 93.0)
+            //NoVisionZone.fromCorners(46.0, 48.0, 95.0, 93.0)
+            NoVisionZone.fromCorners(0.7, 44.0, 141.0, 97.0)//entire middle of field.
     ));
 
     /**

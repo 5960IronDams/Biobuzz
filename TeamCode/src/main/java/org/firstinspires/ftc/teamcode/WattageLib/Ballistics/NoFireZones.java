@@ -46,7 +46,8 @@ public final class NoFireZones {
      */
     public static final java.util.List<NoFireZone> NO_FIRE_ZONES = java.util.List.of(
         /*Center No Fire Zone - Blocks out firing anywhere underneath the hives.  */
-            NoFireZone.fromCorners(2.0,52.0,130.0,90.0),//field edge to edge of hive width no fire zone. only able to shoot in outside ring of field. from lower left flower to upper right flower.
+
+            NoFireZone.fromCorners(0.7, 44.0, 141.0, 97.0),//field edge to edge of hive width no fire zone. only able to shoot in outside ring of field. from lower left flower to upper right flower.
             NoFireZone.fromCorners(46.0,48.0,95.0,93.0)//Under the hive area.
     );
 
