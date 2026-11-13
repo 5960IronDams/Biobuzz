@@ -23,7 +23,7 @@ The tag references derive from the drawings' spec chain, not a tape:
 | `TAG_ABOVE_HOLES_IN` | tag centers above the holes, along the surface | 2.75 |
 | `LIP_FROM_WALL_IN` | furthest-out bottom edge (the pivot lip) from the audience/scoring wall, horizontal | 53.5 |
 | `HIVE_SEPARATION_IN` | red↔blue hive centerline distance (25.5 → ±12.75 about 0,0) | 25.5 |
-| `INNER_TAG_OFFSET_IN` | inner tag centers from the hive centerline | 2.5 |
+| `INNER_TAG_OFFSET_IN` | inner tag centers from the hive centerline | 2.75 |
 | `OUTER_TAG_OFFSET_IN` | outer tag centers from the hive centerline | 6.5 |
 
 The chain closes on itself: it puts the tag bottom edge at 53.531", matching
@@ -69,8 +69,8 @@ centers to 12.1560" — all 16 tags share these.
 | BLUE SCORING | 42–45 | (−CELL_X_IN, +sep/2) | away from center | descending: 45 44 43 42 |
 
 Member offsets are **measured from the hive centerline**: inner tags
-`INNER_TAG_OFFSET_IN` (2.5"), outer tags `OUTER_TAG_OFFSET_IN` (6.5") →
-(−6.5, −2.5, +2.5, +6.5), gaps 4.0 / 5.0 / 4.0.
+`INNER_TAG_OFFSET_IN` (2.75"), outer tags `OUTER_TAG_OFFSET_IN` (6.5") →
+(−6.5, −2.75, +2.75, +6.5), center-to-center 3.75 / 5.5 / 3.75.
 
 **Heights are tilt-corrected.** The map stores the tag CENTER. On a face
 pitched p from vertical, the center is `size/2` up the *face* from the bottom

@@ -21,7 +21,7 @@
       "kind": "atomic",
       "endPoint": {
         "x": 59.25,
-        "y": 55.3125
+        "y": 53.844
       },
       "controlPoints": [],
       "heading": {
@@ -42,7 +42,7 @@
       "kind": "atomic",
       "endPoint": {
         "x": 84.75,
-        "y": 55.3125
+        "y": 53.844
       },
       "controlPoints": [],
       "heading": {
@@ -63,7 +63,7 @@
       "kind": "atomic",
       "endPoint": {
         "x": 59.25,
-        "y": 88.6875
+        "y": 90.156
       },
       "controlPoints": [],
       "heading": {
@@ -83,7 +83,7 @@
       "kind": "atomic",
       "endPoint": {
         "x": 84.75,
-        "y": 88.6875
+        "y": 90.156
       },
       "controlPoints": [],
       "heading": {

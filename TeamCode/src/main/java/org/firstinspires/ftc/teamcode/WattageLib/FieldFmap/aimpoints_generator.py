@@ -22,16 +22,15 @@ GEOMETRY (what "on the centerline" means):
   * A hive's four tags are strung along Pedro X. The hive CENTERLINE is the
     line px = <tag-row midpoint>; horizontally it crosses the field at a
     fixed px and every py. (The brace gap runs along it.)
-  * The tag ROW is at a fixed py per side. DEPTH walks the aim point off that
-    row along the centerline, toward field center (audience side) or toward
-    the scoring wall (scoring side):
-        AUDIENCE  py = tag_row_py - DEPTH_IN  (field center, py 72, is
-                                              audience-side)
-        SCORING   py = tag_row_py + DEPTH_IN  (scoring wall at py 144)
-    DEPTH 0       -> on the tag row, middle of the brace gap
-    DEPTH 10.6875 -> the TRUE hive center (4-tag cluster midpoint)
-    DEPTH 6       -> the starting guess: ~4.7 in past the tag row, still
-                     ~4.7 in shy of the hive center
+  * The tag ROW is at a fixed py per side. DEPTH walks the aim point OUTWARD
+    off that cluster's tag row along the hive centerline, away from field
+    center (toward the audience wall on the audience side, or toward the
+    scoring wall on the scoring side):
+        AUDIENCE  py = tag_row_py - DEPTH_IN  (audience wall is at py 0)
+        SCORING   py = tag_row_py + DEPTH_IN  (scoring wall is at py 144)
+    DEPTH 0           -> on the tag row (exact 4-tag cluster midpoint)
+    DEPTH > 0         -> pushed outward from the cluster's tag row (e.g. 6 in)
+    DEPTH -CELL_X_IN  -> pulled inward all the way to field center (py 72)
 
 OUTPUT: a .pp in the AimPoints.pp layout — startPoint "Robot" (where the
 robot parks, so nothing aims at the stored start) plus atomic lines named
@@ -127,14 +126,14 @@ def hive_center(tags, ids):
 
 
 def depth_out(side, tag_row_y_in, depth_in):
-    """Pedro Y of a point `depth_in` out from the tag row, along the centerline."""
+    """Pedro Y of a point `depth_in` outward from the cluster's tag row, along the centerline."""
     if side == "audience":
-        return tag_row_y_in - depth_in     # toward field center (py 72)
-    return tag_row_y_in + depth_in         # toward the scoring wall (py 144)
+        return tag_row_y_in - depth_in     # outward toward the audience wall (py 0)
+    return tag_row_y_in + depth_in         # outward toward the scoring wall (py 144)
 
 
-def depth_to_hive_center(side, tags, ids):
-    """The DEPTH_IN that lands exactly on the true hive center for this side."""
+def dist_from_field_center(side, tags, ids):
+    """Distance from the cluster's tag row to the field Y centerline (py 72)."""
     return abs(tag_row_y(tags, ids) - FIELD_CENTER_IN)
 
 
@@ -223,23 +222,21 @@ def sanity_report(depth_in=DEPTH_IN, tags=_TAGS):
     print(f"depth: {depth_in:g} in out from the tag row")
     print()
     print(f"  {'name':>10}  {'px':>8}  {'py':>8}  {'hive cx':>8}  {'hive cy':>8}  "
-          f"{'d_row':>7}  {'d_depth':>8}  {'miss':>6}")
+          f"{'d_row':>7}  {'d_out':>8}")
     rows = all_points(depth_in, tags)
     for name, side, alliance, x, y in rows:
         ids = CLUSTERS[side][alliance]
         cx, cy = hive_center(tags, ids)
         print(f"  {name:>10}  {x:8.3f}  {y:8.3f}  {cx:8.3f}  {cy:8.3f}  "
-              f"{x - cx:+7.3f}  {y - cy:+8.3f}  "
-              f"{(abs(depth_in - depth_to_hive_center(side, tags, ids))):6.3f}")
+              f"{x - cx:+7.3f}  {y - cy:+8.3f}")
     print()
-    print("d_row and d_depth are offsets from the TRUE hive center (the 4-tag "
-          "midpoint).")
-    print("d_row is 0.000 by construction (on the centerline); d_depth is the "
-          "depth error.")
+    print("d_row and d_out are offsets from the cluster's 4-tag midpoint (hive cx, hive cy).")
+    print("d_row is 0.000 by construction (on the centerline); d_out is the signed "
+          "outward offset (-DEPTH_IN on audience, +DEPTH_IN on scoring).")
     for side in ("audience", "scoring"):
         ids = CLUSTERS[side]["red"]
-        print(f"depth on {side} hive center = "
-              f"{depth_to_hive_center(side, tags, ids):.4f} in")
+        print(f"{side} tag row distance from field center (py 72) = "
+              f"{dist_from_field_center(side, tags, ids):.4f} in")
 
 
 def main():

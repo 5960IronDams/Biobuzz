@@ -47,9 +47,9 @@ Frame conventions (validated on-field 2026-09-30):
     Mirroring the facing flips the tag basis; c1 flips sign to keep det = +1.
   * Member tags sit in a horizontal row on the tilted face: positions differ
     only in LL-Y by offsets measured FROM THE HIVE CENTERLINE --
-    INNER_TAG_OFFSET_IN (2.5) for the two inner tags, OUTER_TAG_OFFSET_IN
-    (6.5) for the two outer tags -> (-6.5, -2.5, +2.5, +6.5, gaps
-    4.0 / 5.0 / 4.0 in). Same z for all four (the row is horizontal; the
+    INNER_TAG_OFFSET_IN (2.75) for the two inner tags, OUTER_TAG_OFFSET_IN
+    (6.5) for the two outer tags -> (-6.5, -2.75, +2.75, +6.5, center-to-center
+    3.75 / 5.5 / 3.75 in). Same z for all four (the row is horizontal; the
     tilt is about the horizontal axis).
   * Row order along the row axis (+LL-Y = +Pedro-X), matching the real field:
     travelling in +LL-Y the audience side reads 34,35,36,37 then 38,39,40,41,
@@ -83,8 +83,8 @@ FIELD_HALF_IN = 72.0           # field half-size (144 x 144 in field)
 # bypassing the chain below -- a direct tape also absorbs the pivot's
 # unmodeled drop center, because it measures the final position. Leave None
 # to derive from the spec chain.
-TAPED_TAG_BOTTOM_IN = 48.75
-TAPED_CELL_X_BOTTOM_IN = 11.5
+TAPED_TAG_BOTTOM_IN = None     # 48.75 (commented out while retesting spec chain)
+TAPED_CELL_X_BOTTOM_IN = None  # 11.5  (commented out while retesting spec chain)
 
 # ---- SPEC CHAIN (Game Manual / production drawings; used while TAPED_* are None) ----
 # The four numbers the drawings give; the references below re-derive from
@@ -144,7 +144,7 @@ CELL_X_IN = CELL_X_BOTTOM_IN - (TAG_SIZE_MM / 25.4 / 2.0) * math.sin(math.radian
 HIVE_SEPARATION_IN = 25.5      # red<->blue hive CENTERLINE separation, inches;
                                # symmetric about 0,0 -> each centerline sits
                                # HIVE_SEPARATION_IN/2 = 12.75 in from field center
-INNER_TAG_OFFSET_IN = 2.5      # inner tag centers from their hive centerline, inches
+INNER_TAG_OFFSET_IN = 2.75     # inner tag centers from their hive centerline, inches (Fig 9-15 / SDK 12.0)
 OUTER_TAG_OFFSET_IN = 6.5      # outer tag centers from their hive centerline, inches
 TAG_FAMILY = "apriltag3_36h11_classic"
 # ---------------------------------------------------------------------
