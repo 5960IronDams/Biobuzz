@@ -114,7 +114,7 @@ public class VisionFusion {
      * MT2's yaw-seeded botpose collapsed the depth to ~0.4x truth — if MT1's
      * XY proves sane vs Pinpoint, this is the working source.
      */
-    public static boolean USE_MT1_XY = false;
+    public static boolean USE_MT1_XY = true;
     // NOTE: code-side camera lever-arm compensation (former CAM_OFFSET_FWD/LEFT_IN)
     // REMOVED — the Limelight's mount geometry (forward/side/up/pitch) is now
     // configured in the LL web UI / LL init method, so botpose already reports
