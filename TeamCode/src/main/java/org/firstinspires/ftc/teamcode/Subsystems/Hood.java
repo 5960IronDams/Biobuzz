@@ -96,6 +96,7 @@ public class Hood extends SubsystemBase {
     private long lastTimeNs = 0L;
     private long lastJogNs = -1L;
     private boolean slewOverride = false;
+    private double lastWrittenPos = Double.NaN;
 
     public static Hood tryCreate(OpMode opMode) {
         if (opMode == null || opMode.hardwareMap == null) return null;
@@ -117,7 +118,9 @@ public class Hood extends SubsystemBase {
         this.currentDeg = STOWED_DEG;
         this.lastTimeNs = System.nanoTime();
         if (servo != null && IMPLEMENTED) {
-            servo.setPosition(degreesToServoPosition(currentDeg));
+            double initPos = degreesToServoPosition(currentDeg);
+            servo.setPosition(initPos);
+            this.lastWrittenPos = initPos;
         }
     }
 
@@ -188,7 +191,12 @@ public class Hood extends SubsystemBase {
 
         double pos = degreesToServoPosition(currentDeg);
         if (servo != null && IMPLEMENTED) {
-            servo.setPosition(pos);
+            if (Double.isNaN(lastWrittenPos) || Math.abs(pos - lastWrittenPos) > 1e-4) {
+                servo.setPosition(pos);
+                lastWrittenPos = pos;
+            }
+        } else {
+            lastWrittenPos = Double.NaN;
         }
 
         if (RobotMain.DashTelemetry != null) {
@@ -225,11 +233,13 @@ public class Hood extends SubsystemBase {
                     currentDeg = targetDeg;
                     if (servo != null) {
                         servo.setPosition(ZERO_SERVO_POS);
+                        lastWrittenPos = ZERO_SERVO_POS;
                     }
                 },
                 () -> {
-                    if (servo != null) {
+                    if (servo != null && (Double.isNaN(lastWrittenPos) || Math.abs(ZERO_SERVO_POS - lastWrittenPos) > 1e-4)) {
                         servo.setPosition(ZERO_SERVO_POS);
+                        lastWrittenPos = ZERO_SERVO_POS;
                     }
                 },
                 (interrupted) -> slewOverride = false,

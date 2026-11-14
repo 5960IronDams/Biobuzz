@@ -169,6 +169,8 @@ public class Ramp extends SubsystemBase {
     /** Last slew-limited positions actually written to hardware. */
     private double leftCommanded;
     private double rightCommanded;
+    private double lastLeftOut = Double.NaN;
+    private double lastRightOut = Double.NaN;
 
     private double lastTime = Double.NaN;
     /** Shared dt tracker for the jog commands (rate * dt, loop-time independent). */
@@ -196,8 +198,7 @@ public class Ramp extends SubsystemBase {
         leftCommanded = leftTarget;
         rightCommanded = rightTarget;
         // NOTE: no setDirection() call here or anywhere else — see output().
-        left.setPosition(output(leftCommanded, LEFT_REVERSED));
-        right.setPosition(output(rightCommanded, RIGHT_REVERSED));
+        writeNow();
         timer.reset();
         Log.i("IronLog", "Ramp created (" + LeftServoName + " + " + RightServoName
                 + ", parked at POS_UP=" + POS_UP + ", right mirrored=" + RIGHT_REVERSED + ")");
@@ -345,12 +346,22 @@ public class Ramp extends SubsystemBase {
         }
     }
 
-    /** Clamp + mirror + write. Shared by the constructor, parkHere() and setPositionImmediate(). */
+    /** Clamp + mirror + write (cached so unchanged positions skip redundant REV Hub writes). */
     private void writeNow() {
-        leftCommanded = clamp(leftCommanded, Math.min(POS_MIN, POS_MAX), Math.max(POS_MIN, POS_MAX));
-        rightCommanded = clamp(rightCommanded, Math.min(POS_MIN, POS_MAX), Math.max(POS_MIN, POS_MAX));
-        left.setPosition(output(leftCommanded, LEFT_REVERSED));
-        right.setPosition(output(rightCommanded, RIGHT_REVERSED));
+        double lo = Math.min(POS_MIN, POS_MAX);
+        double hi = Math.max(POS_MIN, POS_MAX);
+        leftCommanded = clamp(leftCommanded, lo, hi);
+        rightCommanded = clamp(rightCommanded, lo, hi);
+        double outL = output(leftCommanded, LEFT_REVERSED);
+        double outR = output(rightCommanded, RIGHT_REVERSED);
+        if (Double.isNaN(lastLeftOut) || Math.abs(outL - lastLeftOut) > 1e-4) {
+            left.setPosition(outL);
+            lastLeftOut = outL;
+        }
+        if (Double.isNaN(lastRightOut) || Math.abs(outR - lastRightOut) > 1e-4) {
+            right.setPosition(outR);
+            lastRightOut = outR;
+        }
     }
 
     /** Span between the two presets (negative-safe), for the travel-time estimate. */

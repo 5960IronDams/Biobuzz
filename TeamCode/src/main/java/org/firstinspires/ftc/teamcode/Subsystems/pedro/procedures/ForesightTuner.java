@@ -572,7 +572,7 @@ class HeadingTuner extends TuningOpMode<Double> {
     private static final double POWER = 0.4;
     private static final double RUNTIME = 1.2;
     private static final int SAMPLES = 15;
-    public static double ALPHA = 18.25;
+    public static double ALPHA = 12.0; // lowered from 18.25 to avoid heading oscillation
 
     private double tau;
     private double K;

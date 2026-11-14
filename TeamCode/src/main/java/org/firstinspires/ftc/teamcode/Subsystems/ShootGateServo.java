@@ -86,6 +86,8 @@ public class ShootGateServo extends SubsystemBase {
     private double lastTime = Double.NaN;
     /** Shared dt tracker for the nudge commands (rate * dt, loop-time independent). */
     private long lastNudgeNs = -1L;
+    private Servo.Direction lastDirection = null;
+    private double lastWrittenPos = Double.NaN;
 
 
     public ShootGateServo(OpMode opMode) {
@@ -93,8 +95,13 @@ public class ShootGateServo extends SubsystemBase {
 
         target = clamp(POS_A, POS_MIN, POS_MAX);
         current = target;
-        servo.setDirection(REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD);
-        servo.setPosition(current);
+        if (IMPLEMENTED) {
+            Servo.Direction dir = REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD;
+            servo.setDirection(dir);
+            lastDirection = dir;
+            servo.setPosition(current);
+            lastWrittenPos = current;
+        }
         timer.reset();
     }
 
@@ -109,7 +116,10 @@ public class ShootGateServo extends SubsystemBase {
     public void setPositionImmediate(double position) {
         target = clamp(position, POS_MIN, POS_MAX);
         current = target;
-        servo.setPosition(current);
+        if (IMPLEMENTED) {
+            servo.setPosition(current);
+            lastWrittenPos = current;
+        }
     }
 
     public void goA() {
@@ -221,10 +231,21 @@ public class ShootGateServo extends SubsystemBase {
         double dtSec = Math.min(rawDt, 0.25); // Panels pause shouldn't slingshot servos
         lastTime = now;
 
+        if (!IMPLEMENTED) {
+            lastDirection = null;
+            lastWrittenPos = Double.NaN;
+            return;
+        }
+
         // Live-tune support: Panels edits apply without restart.
         // NOTE: no scaleRange() on purpose -- positions are absolute 0..1 and
         // software-clamped, so scaleRange would double-map them.
-        servo.setDirection(REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD);
+        Servo.Direction dir = REVERSED ? Servo.Direction.REVERSE : Servo.Direction.FORWARD;
+        if (dir != lastDirection) {
+            servo.setDirection(dir);
+            lastDirection = dir;
+            lastWrittenPos = Double.NaN;
+        }
         target = clamp(target, Math.min(POS_MIN, POS_MAX), Math.max(POS_MIN, POS_MAX));
 
         if (SLEW > 0) {
@@ -238,7 +259,10 @@ public class ShootGateServo extends SubsystemBase {
         } else {
             current = target;
         }
-        servo.setPosition(current);
+        if (Double.isNaN(lastWrittenPos) || Math.abs(current - lastWrittenPos) > 1e-4) {
+            servo.setPosition(current);
+            lastWrittenPos = current;
+        }
 
         telemetry.addData("Pos " + Servoname,
                 String.format(Locale.US, "tgt %.3f cmd %.3f %s", target, current,

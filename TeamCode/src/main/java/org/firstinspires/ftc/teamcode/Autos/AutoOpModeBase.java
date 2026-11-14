@@ -31,6 +31,7 @@ public abstract class AutoOpModeBase extends OpMode {
      */
     public ALLIANCE_COLOR SetRobotToThisColor = ALLIANCE_COLOR.ALLIANCE_RED;//this must be set to alliance this auton is made for
     public PPFile pp;//loads and manages our pathFiles we create in the pedro path visualizer. (visualizer.pedropathing.com)
+    private long lastDsTelemetryMs = 0L;
 
     // The left-trigger toggle's latched state is owned by the COMMAND itself:
     // toggleWhenActive() schedules/cancels the same instance, so "is it on" is
@@ -106,7 +107,7 @@ public abstract class AutoOpModeBase extends OpMode {
         robot.follower.update();
 
         //update telemetry and draw where our robot is on the field.
-        UpdateTelemetry();
+        UpdateTelemetry(true);
         RobotMain.DashTelemetry.addData("AutonEndPose", "Unsaved");
         robot.flushTelemetry(); // init() runs once — flush here is correct
     }
@@ -130,7 +131,7 @@ public abstract class AutoOpModeBase extends OpMode {
             robot.follower.setPose(pp.startPoint());
         }
         robot.follower.update();
-        UpdateTelemetry();
+        UpdateTelemetry(false);
         robot.flushTelemetry();
     }
 
@@ -168,28 +169,35 @@ public abstract class AutoOpModeBase extends OpMode {
         // read a permanent "stable".
         robot.CommandF.readinessPeriodic();
         robot.RobotRunPeriodic();
-        UpdateTelemetry();
+        UpdateTelemetry(false);
         robot.flushTelemetry(); // single flush LAST — see RobotMain.flushTelemetry()
     }
 
 
-    private void UpdateTelemetry()
+    private void UpdateTelemetry(boolean force)
     {
-        telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        telemetry.addData("X", robot.follower.pose().x());
-        telemetry.addData("Y", robot.follower.pose().y());
-        telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
-        telemetry.addData("Follower Mode", robot.follower.mode());
-        // DS failure board (see HardwareHealth) — same screen, one more line.
-        telemetry.addData("HW", HardwareHealth.get().dsLine());
-        telemetry.update();
+        long nowMs = System.currentTimeMillis();
+        // DS screen: rate-limit to ~10 Hz (every 100 ms) so fast loops aren't throttled by DS Wi-Fi updates
+        if (force || nowMs - lastDsTelemetryMs >= 100L) {
+            telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+            telemetry.addData("X", robot.follower.pose().x());
+            telemetry.addData("Y", robot.follower.pose().y());
+            telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
+            telemetry.addData("Follower Mode", robot.follower.mode());
+            // DS failure board (see HardwareHealth) — same screen, one more line.
+            telemetry.addData("HW", HardwareHealth.get().dsLine());
+            telemetry.update();
+            lastDsTelemetryMs = nowMs;
+        }
         // Mirror to Panels (addData only — flushTelemetry() draws the field once
         // at the end of the tick, so init()/init_loop() paint too).
-        RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
-        RobotMain.DashTelemetry.addData("X", robot.follower.pose().x());
-        RobotMain.DashTelemetry.addData("Y", robot.follower.pose().y());
-        RobotMain.DashTelemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
-        RobotMain.DashTelemetry.addData("Follower Mode", robot.follower.mode());
+        if (RobotMain.DASHBOARD) {
+            RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
+            RobotMain.DashTelemetry.addData("X", robot.follower.pose().x());
+            RobotMain.DashTelemetry.addData("Y", robot.follower.pose().y());
+            RobotMain.DashTelemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
+            RobotMain.DashTelemetry.addData("Follower Mode", robot.follower.mode());
+        }
     }
 
 

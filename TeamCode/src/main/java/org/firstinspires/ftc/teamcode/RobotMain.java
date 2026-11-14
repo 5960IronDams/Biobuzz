@@ -49,7 +49,7 @@ public class RobotMain {
      * lean loop (DS telemetry only). Panels-tunable but takes effect from the
      * NEXT flushTelemetry() call.
      */
-    public static boolean DASHBOARD = true;
+    public static boolean DASHBOARD = false;
 
     /** Panels telemetry (Panels web UI). DS telemetry stays on opmode.telemetry. */
     public static Telemetry DashTelemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();

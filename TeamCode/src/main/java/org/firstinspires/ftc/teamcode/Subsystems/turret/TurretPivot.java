@@ -501,8 +501,12 @@ public class TurretPivot extends SubsystemBase {
 
     private double stuckTimer = 0;
     private double lastAppliedPower = 0;
+    private double lastWrittenPower;
+    private DcMotor.ZeroPowerBehavior cachedZeroBehavior;
     /** Last 5203 channel current (NaN on failed read) — telemetry. */
     private double lastMotorAmps = Double.NaN;
+    private long lastMonitorNs = 0L;
+    private static final long CURRENT_POLL_INTERVAL_NS = 150_000_000L;
 
     /**
      * Builds the turret from the RC config. REQUIRES the 5203 motor
@@ -528,7 +532,9 @@ public class TurretPivot extends SubsystemBase {
         // caused the 020255 thrash).
         motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        cachedZeroBehavior = DcMotor.ZeroPowerBehavior.BRAKE;
         motor.setPower(0);
+        lastWrittenPower = 0.0;
         try {
             motor.setCurrentAlert(CURRENT_ALERT_AMPS, CurrentUnit.AMPS);
         } catch (Exception e) {
@@ -953,8 +959,9 @@ public class TurretPivot extends SubsystemBase {
         setpointActive = true;
         // Re-engage active holding: BRAKE() left the drive in FLOAT (neutral),
         // so the first goto after a release has to put BRAKE back on.
-        if (motor.getZeroPowerBehavior() != DcMotor.ZeroPowerBehavior.BRAKE) {
+        if (cachedZeroBehavior != DcMotor.ZeroPowerBehavior.BRAKE) {
             motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+            cachedZeroBehavior = DcMotor.ZeroPowerBehavior.BRAKE;
         }
     }
 
@@ -975,8 +982,11 @@ public class TurretPivot extends SubsystemBase {
         desiredVelocityDps = 0;
         stuckTimer = 0;
         inToleranceSinceNs = 0L;
-        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-        motor.setPower(0);
+        if (cachedZeroBehavior != DcMotor.ZeroPowerBehavior.FLOAT) {
+            motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            cachedZeroBehavior = DcMotor.ZeroPowerBehavior.FLOAT;
+        }
+        writePower(0);
     }
 
     public void clearFaults() {
@@ -1381,7 +1391,7 @@ public class TurretPivot extends SubsystemBase {
         }
 
         lastAppliedPower = out;
-        motor.setPower(out);
+        writePower(out);
 
         // ---- Stuck watchdog (encoder/chain sanity) ----
         boolean pushing = Math.abs(lastAppliedPower) > STUCK_POWER_THRESHOLD;
@@ -1401,23 +1411,36 @@ public class TurretPivot extends SubsystemBase {
         }
     }
 
+    private void writePower(double power) {
+        if (Double.isNaN(lastWrittenPower) || Math.abs(power - lastWrittenPower) > 1e-4) {
+            motor.setPower(power);
+            lastWrittenPower = power;
+        }
+    }
+
     /**
      * Drive health/current monitoring: read the 5203 channel current, arm the
      * Lynx over-current alert, and latch an OVER_CURRENT fault when the
      * controller flags it (alert only — no auto-brake; the soft limits are
-     * what keep the turret out of the stops). FRC analog: stator/supply
-     * current telemetry.
+     * what keep the turret out of the stops). Throttled to ~6.7 Hz because
+     * getCurrent/isOverCurrent are synchronous non-bulk-cached REV Hub reads.
      */
     private void monitorDrive() {
+        long nowNs = System.nanoTime();
+        if (lastMonitorNs != 0L && (nowNs - lastMonitorNs) < CURRENT_POLL_INTERVAL_NS) {
+            return;
+        }
+        lastMonitorNs = nowNs;
         try {
             double amps = motor.getCurrent(CurrentUnit.AMPS);
             lastMotorAmps = amps;
-            if (motor.isOverCurrent() && !faultOverCurrent) {
+            boolean overCurrent = motor.isOverCurrent();
+            if (overCurrent && !faultOverCurrent) {
                 Log.e("IronLog", "TurretPivot OVER CURRENT on the 5203 channel ("
                         + String.format(Locale.US, "%.2f A", amps)
                         + ", alert at " + CURRENT_ALERT_AMPS + " A) — check the mechanism");
             }
-            if (motor.isOverCurrent()) {
+            if (overCurrent) {
                 faultOverCurrent = true;
             }
         } catch (Exception ignored) {

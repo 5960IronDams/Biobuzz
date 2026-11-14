@@ -117,7 +117,7 @@ public class Constants {
                                 c.coast.set(Controller.proportionalFeedforward(0.01480092227751572));
                                 c.brake.set(Controller.proportionalFeedforward(0.012580783935888361));
 
-                                c.headingFeedback.set(Controller.proportional(7.591622551435788));
+                                c.headingFeedback.set(Controller.proportional(3.5)); // lowered from tuned 7.591622551435788 to eliminate heading wobble
                                 c.headingBrakeCoefficients.set(Vector2D.cartesian(0.06900331351617185, 0.0055890709013631966));
 
                                 c.linearBrakeCoefficients.set(Matrix.diag(0.12871355175085286, 0.09521706986011626));
@@ -127,6 +127,10 @@ public class Constants {
                                 c.maxAchievableStrafeVelocity.set(48.97094479690332);
                                 c.naturalForwardDeceleration.set(33.04136448469188);
                                 c.naturalStrafeDeceleration.set(84.38468368790873);
+
+                                c.maxDecelerationScale.set(0.9);
+                                c.maxBrakingPower.set(0.6);
+                                c.brakeAggression.set(0.8);
                             })
             : //else -> decode test vehicle
             new ForesightConfig(

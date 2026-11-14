@@ -109,6 +109,8 @@ public class Flywheel extends SubsystemBase {
     private Mode lastAppliedMode = null;
     /** TARGET_RPM at the last setpoint write — detects a live Panels retune. */
     private double lastAppliedRpm = Double.NaN;
+    private DcMotor.RunMode cachedRunMode;
+    private DcMotor.ZeroPowerBehavior cachedZeroBehavior = null;
     /**
      * The idle RPM latched at the moment coast-to-idle started. The coast
      * arrives at THIS, not at a live {@link #IDLE_RPM} that may have been
@@ -121,8 +123,11 @@ public class Flywheel extends SubsystemBase {
         motor = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.FlywheelMotorName);
 
         motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        cachedRunMode = DcMotor.RunMode.STOP_AND_RESET_ENCODER;
         engagePidMode();
         motor.setVelocity(0);
+        lastAppliedTicks = 0.0;
+        lastAppliedMode = Mode.STOPPED;
         applyPids(true);
         mode = Mode.STOPPED;
     }
@@ -260,49 +265,60 @@ public class Flywheel extends SubsystemBase {
         // Own the whole coast-arrive latch: the drive now falls to IDLE_RPM.
         idleLocked = IDLE_RPM;
         mode = Mode.COASTING_TO_IDLE;
-        motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        if (cachedRunMode != DcMotor.RunMode.RUN_WITHOUT_ENCODER) {
+            motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+            cachedRunMode = DcMotor.RunMode.RUN_WITHOUT_ENCODER;
+        }
+        if (cachedZeroBehavior != DcMotor.ZeroPowerBehavior.FLOAT) {
+            motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            cachedZeroBehavior = DcMotor.ZeroPowerBehavior.FLOAT;
+        }
         motor.setPower(0);
+        lastAppliedTicks = Double.NaN;
+        lastAppliedMode = Mode.COASTING_TO_IDLE;
     }
 
     /**
      * Write the velocity setpoint for the current mode. The hub-side velocity
-     * PI keeps its own target, so this is written EVERY loop rather than only
-     * on change: a single write after a loop-mode change is not enough (a
-     * velocity write while the motor sits in RUN_WITHOUT_ENCODER is ignored,
-     * which is how the hold at the shoot RPM survived the coast).
+     * PI keeps its own target, so in HOLDING mode this is written every loop
+     * rather than only on change. When STOPPED or FLOATING at 0 ticks, write
+     * once per transition so idle loops don't spam the REV Hub; while
+     * COASTING_TO_IDLE (RUN_WITHOUT_ENCODER + 0 power), velocity writes are
+     * ignored by the hub anyway and skipped.
      */
     private void applyVelocity() {
-        final double ticks;
-        if (mode == Mode.HOLDING) {
-            ticks = rpmToTicksPerSec(TARGET_RPM);
-        } else {
-            // COASTING_TO_IDLE, STOPPED and FLOATING all command zero: the coast
-            // is free-spinning (RUN_WITHOUT_ENCODER + FLOAT + 0 power, set by
-            // coastToIdle), so the wheel falls toward IDLE_RPM instead of being
-            // held at TARGET_RPM. FLOATING/STOPPED just spin down from there.
-            // (COASTING_TO_IDLE used to be lumped in with HOLDING — the PID
-            // kept the shoot RPM up, actual RPM never fell to IDLE_RPM, and
-            // the coast-to-idle never arrived. Seen in capture 20261024-232657.)
-            ticks = 0.0;
+        if (mode == Mode.COASTING_TO_IDLE) {
+            return;
         }
-        motor.setVelocity(ticks);
-        lastAppliedTicks = ticks;
-        lastAppliedRpm = TARGET_RPM;
-        lastAppliedMode = mode;
+        if (mode == Mode.HOLDING) {
+            double ticks = rpmToTicksPerSec(TARGET_RPM);
+            motor.setVelocity(ticks);
+            lastAppliedTicks = ticks;
+            lastAppliedRpm = TARGET_RPM;
+            lastAppliedMode = mode;
+            return;
+        }
+        if (lastAppliedMode != mode || lastAppliedTicks != 0.0) {
+            motor.setVelocity(0.0);
+            lastAppliedTicks = 0.0;
+            lastAppliedRpm = TARGET_RPM;
+            lastAppliedMode = mode;
+        }
     }
 
     /**
-     * PID-hold mode (RUN_USING_ENCODER, FLOAT on 0 power). A no-op when the
-     * motor is already there — setMode is a device write and this runs in the
-     * hot path.
+     * PID-hold mode (RUN_USING_ENCODER, FLOAT on 0 power). Software-cached so
+     * steady-state loops avoid synchronous REV Hub getMode/getZeroPowerBehavior
+     * transactions.
      */
     private void engagePidMode() {
-        if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
+        if (cachedRunMode != DcMotor.RunMode.RUN_USING_ENCODER) {
             motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            cachedRunMode = DcMotor.RunMode.RUN_USING_ENCODER;
         }
-        if (motor.getZeroPowerBehavior() != DcMotor.ZeroPowerBehavior.FLOAT) {
+        if (cachedZeroBehavior != DcMotor.ZeroPowerBehavior.FLOAT) {
             motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            cachedZeroBehavior = DcMotor.ZeroPowerBehavior.FLOAT;
         }
     }
 
@@ -557,17 +573,13 @@ public class Flywheel extends SubsystemBase {
                 break;
             }
             case STOPPED:
-                // Re-engage in case the mode was flipped under us.
-                if (motor.getMode() != DcMotor.RunMode.RUN_USING_ENCODER) {
-                    engagePidMode();
-                    lastAppliedMode = null; // force a fresh setpoint write
-                }
+                engagePidMode();
                 break;
             default:
                 break;
         }
 
-        // Write the setpoint (the hub velocity PI is stateful — see applyVelocity).
+        // Write the setpoint (active HOLDING PID every loop; idle/stopped cached).
         applyVelocity();
 
         // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
