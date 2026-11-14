@@ -1,0 +1,247 @@
+{
+  "version": "2.0.0",
+  "timestamp": "2026-11-14T20:07:00.675Z",
+  "startPoint": {
+    "x": 58.2120431146483,
+    "y": 9.04819764351469,
+    "name": "start",
+    "locked": false,
+    "headingDeg": 90
+  },
+  "lines": [
+    {
+      "id": "line-mw5ek8fe-ahmm4v",
+      "color": "#f28e2b",
+      "name": "Toshoot",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
+      "endPoint": {
+        "x": 58.117980888943514,
+        "y": 26.449302763298224
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 0,
+        "startDeg": 90,
+        "endDeg": 90,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mwgtd3gw-gwyksy",
+      "endPoint": {
+        "x": 11.606844305120163,
+        "y": 47.46238244514106
+      },
+      "controlPoints": [
+        {
+          "x": 30.933049072366558,
+          "y": 48.99592532244893
+        }
+      ],
+      "heading": {
+        "type": "tangential",
+        "reverse": false
+      },
+      "color": "#4e79a7",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "ToFlower"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mwgtetx1-aqyzqd",
+      "endPoint": {
+        "x": 57.59064785788923,
+        "y": 120.20846394984326
+      },
+      "controlPoints": [
+        {
+          "x": 39.516817413907766,
+          "y": 43.55273052191012
+        },
+        {
+          "x": 15.629384990257545,
+          "y": 126.07178911728992
+        }
+      ],
+      "heading": {
+        "type": "linear",
+        "reverse": true,
+        "degrees": 0,
+        "startDeg": 180,
+        "endDeg": 270,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#b07aa1",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "ToLeftShoot"
+    },
+    {
+      "kind": "atomic",
+      "id": "line-mwgth14c-h8nk7m",
+      "endPoint": {
+        "x": 12.937565308254964,
+        "y": 117.10344827586208
+      },
+      "controlPoints": [],
+      "heading": {
+        "type": "linear",
+        "reverse": false,
+        "degrees": 270,
+        "startDeg": 270,
+        "endDeg": 320,
+        "piecewiseHeading": {
+          "segments": [
+            {
+              "startProgress": 0,
+              "endProgress": 1,
+              "interpolationType": "linear",
+              "reversed": false,
+              "parameters": {
+                "startDeg": 0,
+                "endDeg": 0
+              }
+            }
+          ]
+        }
+      },
+      "color": "#f28e2b",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "name": "ToPark"
+    }
+  ],
+  "shapes": [
+    {
+      "id": "triangle-1",
+      "name": "Red Goal",
+      "vertices": [
+        {
+          "x": 141.5,
+          "y": 70
+        },
+        {
+          "x": 141.5,
+          "y": 141.5
+        },
+        {
+          "x": 118.3,
+          "y": 141.5
+        },
+        {
+          "x": 135.5,
+          "y": 118
+        },
+        {
+          "x": 136.3,
+          "y": 70.2
+        }
+      ],
+      "color": "#dc2626",
+      "fillColor": "#ff6b6b"
+    },
+    {
+      "id": "triangle-2",
+      "name": "Blue Goal",
+      "vertices": [
+        {
+          "x": 6.2,
+          "y": 116.9
+        },
+        {
+          "x": 25,
+          "y": 141.5
+        },
+        {
+          "x": 0,
+          "y": 141.5
+        },
+        {
+          "x": 0,
+          "y": 70
+        },
+        {
+          "x": 6,
+          "y": 70
+        }
+      ],
+      "color": "#2563eb",
+      "fillColor": "#60a5fa"
+    }
+  ],
+  "sequence": [
+    {
+      "kind": "path",
+      "lineId": "line-mw5ek8fe-ahmm4v"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mwgtd3gw-gwyksy"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mwgtetx1-aqyzqd"
+    },
+    {
+      "kind": "path",
+      "lineId": "line-mwgth14c-h8nk7m"
+    }
+  ],
+  "fieldPoints": [],
+  "robot": {
+    "forwardVelocity": 55,
+    "strafeVelocity": 40,
+    "aVelocity": 2.5132741228718345,
+    "kFriction": 0.1,
+    "rLength": 18,
+    "rWidth": 18,
+    "safetyMargin": 1,
+    "maxAcceleration": 20,
+    "maxDeceleration": 20
+  },
+  "activePaths": []
+}

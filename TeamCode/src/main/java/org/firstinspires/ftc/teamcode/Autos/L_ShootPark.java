@@ -19,7 +19,7 @@ public class L_ShootPark extends AutoOpModeBase {
     @Override
     public Command autoRoutine() {
         return new SequentialCommandGroup(
-                new WaitCommand(5500),
+                new WaitCommand(9500),
                 //goto easier shot
                 follow(robot.follower, pp.path("Toshoot")),
                 //fire or whatever.

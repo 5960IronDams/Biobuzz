@@ -245,7 +245,7 @@ public class TurretPivot extends SubsystemBase {
      * whole approach. With the 0.050 profile gain that holds up to 3 deg at
      * 0.40x for kP = 0.020 (worst case), versus 1.64x at 0.120.
      */
-    public static double kP = 0.02;
+    public static double kP = 0.022;
     /** Power per (deg*second) of accumulated error, inside I_ZONE only. */
     public static double kI = 0.000;
     /** Power per deg/s of measured motion (derivative on measurement — no setpoint-step kick). */
