@@ -126,6 +126,16 @@ public class Vision {
      * longer selects an either/or fallback — both solves are read every frame.
      */
     public static boolean MT1_FALLBACK = true;
+    /**
+     * Source of the botpose pitch / roll / Z used by the tilt + height sanity
+     * gates ({@link TipSanityFilter}, VisionFusion backstop, TipCompensator).
+     * True (default) = MT1 when present (MT1 solves all 6DOF, so its attitude
+     * and Z are real measurements). MT2 pins the robot to the floor and always
+     * reports pitch = roll = Z = 0, which made those gates dead. False =
+     * legacy behaviour (attitude read from the XY source, i.e. MT2 -> always 0).
+     * MT1 attitude is ALWAYS logged ({@code Fusion/mt1*}) regardless of this flag.
+     */
+    public static boolean ATTITUDE_FROM_MT1 = true;
     /** Minimum ms between updateRobotOrientation seeds (network POST throttle). */
     public static double SEED_INTERVAL_MS = 100.0;
     /** Re-seed early if the yaw moved more than this (degrees) since last seed. */
@@ -255,6 +265,15 @@ public class Vision {
          * MT2 absent.
          */
         public final double mt2LlRawDeg;
+        /**
+         * MT1's own botpose pitch / roll (deg) and Z (m) — an independent 6DOF
+         * measurement (NaN when MT1 absent). MT1 Z is the discriminator between
+         * a wrong tag-Z in the .fmap (Z offset ~= map-vs-true tag height) and a
+         * wrong camera pitch (pitch error, Z ~ 0). Logged as {@code Fusion/mt1*}.
+         */
+        public final double mt1PitchDeg;
+        public final double mt1RollDeg;
+        public final double mt1ZMeters;
 
         Reading(Pose pedroPose, double mt1HeadingRad, boolean hasMt2, boolean hasMt1,
                 @Nullable Pose mt1Pedro, @Nullable Pose mt2Pedro,
@@ -263,7 +282,8 @@ public class Vision {
                 double latencyMs, long stalenessMs,
                 int[] fiducialIds, boolean clusterOnly,
                 double botPitchDeg, double botRollDeg, double botZMeters,
-                double llYawDeg, double mt1LlRawDeg, double mt2LlRawDeg) {
+                double llYawDeg, double mt1LlRawDeg, double mt2LlRawDeg,
+                double mt1PitchDeg, double mt1RollDeg, double mt1ZMeters) {
             this.pedroPose = pedroPose;
             this.mt1HeadingRad = mt1HeadingRad;
             this.hasMt2 = hasMt2;
@@ -285,6 +305,9 @@ public class Vision {
             this.llYawDeg = llYawDeg;
             this.mt1LlRawDeg = mt1LlRawDeg;
             this.mt2LlRawDeg = mt2LlRawDeg;
+            this.mt1PitchDeg = mt1PitchDeg;
+            this.mt1RollDeg = mt1RollDeg;
+            this.mt1ZMeters = mt1ZMeters;
         }
     }
 
@@ -543,6 +566,11 @@ public class Vision {
         }
         // MT1 disabled via tunable = pretend it was absent (XY-only fusion).
         if (!MT1_FALLBACK) mt1 = null;
+        // Empty-pose guard: with too few usable tags the LL can return an all-zero
+        // MT2 pose (LL (0,0) -> Pedro (72,72)) even though tags > 0. It is not a
+        // measurement; treat it as absent so it can never be fused as XY.
+        if (isEmptyPose(mt2)) mt2 = null;
+        if (isEmptyPose(mt1)) mt1 = null;
         if (mt2 == null && mt1 == null) return null;
 
         // XY comes from MT2 when present, else MT1 position as fallback.
@@ -629,12 +657,33 @@ public class Vision {
         // GOOD (cell at rest, map holding the 30deg) reports flat ~= 0.
         double botPitchDeg = 0, botRollDeg = 0, botZM = 0, llYawDeg = Double.NaN;
         double mt1RawDeg = Double.NaN, mt2RawDeg = Double.NaN;
+        double mt1PitchDeg = Double.NaN, mt1RollDeg = Double.NaN, mt1ZM = Double.NaN;
         try {
             botPitchDeg = xySource.getOrientation().getPitch(AngleUnit.DEGREES);
             botRollDeg = xySource.getOrientation().getRoll(AngleUnit.DEGREES);
             llYawDeg = xySource.getOrientation().getYaw(AngleUnit.DEGREES);
             botZM = xySource.getPosition().toUnit(DistanceUnit.METER).z;
         } catch (Exception ignored) {
+        }
+        // MT1's own attitude + Z: a real 6DOF measurement (MT2 always reports
+        // 0/0/0 here). Always captured for telemetry; also drives the tilt/height
+        // gates when ATTITUDE_FROM_MT1 (default) so they are no longer dead.
+        try {
+            if (mt1 != null) {
+                mt1PitchDeg = mt1.getOrientation().getPitch(AngleUnit.DEGREES);
+                mt1RollDeg = mt1.getOrientation().getRoll(AngleUnit.DEGREES);
+                mt1ZM = mt1.getPosition().toUnit(DistanceUnit.METER).z;
+            }
+        } catch (Exception ignored) {
+            mt1PitchDeg = Double.NaN;
+            mt1RollDeg = Double.NaN;
+            mt1ZM = Double.NaN;
+        }
+        if (ATTITUDE_FROM_MT1 && Double.isFinite(mt1PitchDeg) && Double.isFinite(mt1RollDeg)
+                && Double.isFinite(mt1ZM)) {
+            botPitchDeg = mt1PitchDeg;
+            botRollDeg = mt1RollDeg;
+            botZM = mt1ZM;
         }
         // Raw yaw off EACH solve before mapping — the calibration reference.
         // mt2 yaw is normally seed echo; mt1 yaw is the independent solve.
@@ -673,7 +722,21 @@ public class Vision {
         return new Reading(measurementPose, mt1HeadingRad, hasMt2, hasMt1, mt1Pedro, mt2Pedro,
                 tags, dist, area, span,
                 stdXY, latMs, staleMs, ids, clusterOnly, botPitchDeg, botRollDeg, botZM, llYawDeg,
-                mt1RawDeg, mt2RawDeg);
+                mt1RawDeg, mt2RawDeg, mt1PitchDeg, mt1RollDeg, mt1ZM);
+    }
+
+    /**
+     * True when a Limelight botpose is the all-zero "no solution" placeholder
+     * (x = y = z = 0 exactly). A real solve never lands on exactly (0,0,0).
+     */
+    private static boolean isEmptyPose(@Nullable Pose3D p) {
+        if (p == null) return false;
+        try {
+            return p.getPosition().x == 0.0 && p.getPosition().y == 0.0
+                    && p.getPosition().z == 0.0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**

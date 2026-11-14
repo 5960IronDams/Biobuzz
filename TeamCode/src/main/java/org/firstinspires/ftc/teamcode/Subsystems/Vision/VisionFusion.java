@@ -143,7 +143,8 @@ public class VisionFusion {
      * GOOD (cell at rest, map matching) reports flat ~= 0 — the 30deg lives in
      * the .fmap entries, not in the solve. Mirrors TipSanityFilter (the real
      * gate); kept here so Panels shows one story. 0 disables.
-     * NOTE: pitch/roll come from the MT2 XY solve (the fused position source).
+     * NOTE: pitch/roll come from MT1 when present ({@link Vision#ATTITUDE_FROM_MT1});
+     * MT2 always reports 0/0/0 so it cannot be used for this gate.
      */
     public static double MAX_BOT_PITCH_DEG = 12.0;
     /** Same for |botpose roll|, degrees. 0 disables. */
@@ -313,6 +314,13 @@ public class VisionFusion {
     /** XY residual components (meas − fused), inches. */
     private double lastDx = Double.NaN;
     private double lastDy = Double.NaN;
+    /** MT1's own botpose Z (m) / pitch / roll (deg) this frame; NaN when MT1 absent. */
+    private double lastMt1ZM = Double.NaN;
+    private double lastMt1PitchDeg = Double.NaN;
+    private double lastMt1RollDeg = Double.NaN;
+    /** MT2 - MT1 XY difference (Pedro frame, in) this frame; NaN unless both solved. */
+    private double lastMt2Mt1Dx = Double.NaN;
+    private double lastMt2Mt1Dy = Double.NaN;
 
     private final Follower follower;
     @Nullable
@@ -484,6 +492,18 @@ public class VisionFusion {
         lastSeedSentDeg = fieldYawDeg;
         lastVisionClusterOnly = rd.clusterOnly;
         lastTags = rd.tagCount;
+        // Diagnostics only (no effect on fusion): MT1 6DOF attitude/Z and the
+        // MT2-MT1 XY disagreement, for tag-Z / camera-pitch root-causing.
+        lastMt1ZM = rd.mt1ZMeters;
+        lastMt1PitchDeg = rd.mt1PitchDeg;
+        lastMt1RollDeg = rd.mt1RollDeg;
+        if (rd.mt1Pedro != null && rd.mt2Pedro != null) {
+            lastMt2Mt1Dx = rd.mt2Pedro.x() - rd.mt1Pedro.x();
+            lastMt2Mt1Dy = rd.mt2Pedro.y() - rd.mt1Pedro.y();
+        } else {
+            lastMt2Mt1Dx = Double.NaN;
+            lastMt2Mt1Dy = Double.NaN;
+        }
 
         // ---- MT2 seed agreement (computed BEFORE any reject return) ----
         // The old location (after the residual gates) left Fusion/seedAgrDeg
@@ -879,6 +899,18 @@ public class VisionFusion {
         if (lastMt1Pedro != null) {
             RobotMain.DashTelemetry.addData("Fusion/mt1X", "%.2f", lastMt1Pedro.x());
             RobotMain.DashTelemetry.addData("Fusion/mt1Y", "%.2f", lastMt1Pedro.y());
+        }
+        // MT1 attitude/Z diagnostics. Z ~ (map tag Z - true tag Z) when the
+        // camera pose is right; ~0 with a pitch error instead. Park at a known
+        // pose and read these. mt2mt1dXY = MT2 - MT1 (Pedro frame, in).
+        if (Double.isFinite(lastMt1ZM)) {
+            RobotMain.DashTelemetry.addData("Fusion/mt1ZM", "%.4f", lastMt1ZM);
+            RobotMain.DashTelemetry.addData("Fusion/mt1PitchDeg", "%.2f", lastMt1PitchDeg);
+            RobotMain.DashTelemetry.addData("Fusion/mt1RollDeg", "%.2f", lastMt1RollDeg);
+        }
+        if (Double.isFinite(lastMt2Mt1Dx) && Double.isFinite(lastMt2Mt1Dy)) {
+            RobotMain.DashTelemetry.addData("Fusion/mt2mt1dXY", "%.2f, %.2f",
+                    lastMt2Mt1Dx, lastMt2Mt1Dy);
         }
         RobotMain.DashTelemetry.addData("Fusion/scale", "%.2fx", lastScale);
         RobotMain.DashTelemetry.addData("Fusion/Rxy", "%.2f", lastRx);

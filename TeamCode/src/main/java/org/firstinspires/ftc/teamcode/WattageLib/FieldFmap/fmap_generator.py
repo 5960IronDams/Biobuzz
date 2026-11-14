@@ -83,8 +83,8 @@ FIELD_HALF_IN = 72.0           # field half-size (144 x 144 in field)
 # bypassing the chain below -- a direct tape also absorbs the pivot's
 # unmodeled drop center, because it measures the final position. Leave None
 # to derive from the spec chain.
-TAPED_TAG_BOTTOM_IN = None     # 48.75 (commented out while retesting spec chain)
-TAPED_CELL_X_BOTTOM_IN = None  # 11.5  (commented out while retesting spec chain)
+TAPED_TAG_BOTTOM_IN = 48.75    # taped vertical height to bottom edge of black squares (in)
+TAPED_CELL_X_BOTTOM_IN = 11.5  # taped horizontal offset from X centerline to bottom edge (in)
 
 # ---- SPEC CHAIN (Game Manual / production drawings; used while TAPED_* are None) ----
 # The four numbers the drawings give; the references below re-derive from
