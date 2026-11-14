@@ -106,27 +106,27 @@ public class Constants {
 
                     new ForesightConfig(
                             c -> {
-                                Controller primaryTranslationalForward = Controller.proportional(0.3665259400739857);
-                                Controller secondaryTranslationalForward = Controller.proportional(0.1354215411038448);
-                                Controller primaryTranslationalLateral = Controller.proportional(0.5436961260415588);
-                                Controller secondaryTranslationalLateral = Controller.proportional(0.20088119074430533);
+                                Controller primaryTranslationalForward = Controller.proportional(0.5117098215543424);
+                                Controller secondaryTranslationalForward = Controller.proportional(0.18906310592607578);
+                                Controller primaryTranslationalLateral = Controller.proportional(0.8084122301542681);
+                                Controller secondaryTranslationalLateral = Controller.proportional(0.2986867178693779);
 
                                 c.forwardTranslational.set(Controller.piecewise(secondaryTranslationalForward).put(2.5, primaryTranslationalForward));
                                 c.strafeTranslational.set(Controller.piecewise(secondaryTranslationalLateral).put(2.5, primaryTranslationalLateral));
 
-                                c.coast.set(Controller.proportionalFeedforward(0.018450401657160703));
-                                c.brake.set(Controller.proportionalFeedforward(0.015682841408586598));
+                                c.coast.set(Controller.proportionalFeedforward(0.01480092227751572));
+                                c.brake.set(Controller.proportionalFeedforward(0.012580783935888361));
 
-                                c.headingFeedback.set(Controller.proportional(7.053233721352339));
-                                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.04200838389926333, 0.010638718620967255));
+                                c.headingFeedback.set(Controller.proportional(7.591622551435788));
+                                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.06900331351617185, 0.0055890709013631966));
 
-                                c.linearBrakeCoefficients.set(Matrix.diag(0.09886073043024897, 0.06395072950045347));
-                                c.quadraticBrakeCoefficients.set(Matrix.diag(0.0012237011082222719, 0.0015335255775064192));
+                                c.linearBrakeCoefficients.set(Matrix.diag(0.12871355175085286, 0.09521706986011626));
+                                c.quadraticBrakeCoefficients.set(Matrix.diag(0.0012064453776527834, 0.0012003229226430641));
 
-                                c.maxAchievableForwardVelocity.set(56.73965911534591);
-                                c.maxAchievableStrafeVelocity.set(45.20970756530965);
-                                c.naturalForwardDeceleration.set(39.05961008468984);
-                                c.naturalStrafeDeceleration.set(70.445350253194);
+                                c.maxAchievableForwardVelocity.set(69.93440213104152);
+                                c.maxAchievableStrafeVelocity.set(48.97094479690332);
+                                c.naturalForwardDeceleration.set(33.04136448469188);
+                                c.naturalStrafeDeceleration.set(84.38468368790873);
                             })
             : //else -> decode test vehicle
             new ForesightConfig(
