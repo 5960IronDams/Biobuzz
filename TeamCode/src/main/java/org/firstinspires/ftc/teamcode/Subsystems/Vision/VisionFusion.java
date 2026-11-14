@@ -175,7 +175,7 @@ public class VisionFusion {
     // Constants.fusionDefaultMeasurementNoise(); the per-reading scaler below
     // multiplies them. Heading is rad^2: 6deg stddev -> 0.011 var.
     /** Base XY measurement variance, in^2. Lower value = higher trust in vision measurements (0.56 ~= 30% more trusting than 0.80). */
-    public static double BASE_R_XY = 0.56;
+    public static double BASE_R_XY = 0.46;
     /**
      * MT1 yaw measurement variance, rad^2. Ships at 18deg stddev (~0.10): slow
      * drift correction, never a snap. Shrink toward ~10deg (0.03) once the

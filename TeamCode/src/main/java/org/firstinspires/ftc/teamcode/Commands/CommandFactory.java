@@ -100,8 +100,8 @@ public class CommandFactory {
      * Placeholder curve - tune on the robot (Panels -> CommandFactory).
      */
     public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
-    public static double[] LUT_RPMS = {1850, 1950, 2000, 2050, 2300, 2400}; // max observed RPM is 2700
-    public static double[] LUT_HOOD_DEGS = {16.831, 19.831, 24.831, 38.852, 45.852, 45.852};
+    public static double[] LUT_RPMS = {1650, 1750, 1850, 1950, 2200, 2300}; // max observed RPM is 2700
+    public static double[] LUT_HOOD_DEGS = {19.831, 20.831, 24.831, 38.852, 45.852, 45.852};
 
     // ---- Manual align & shoot backup mode (Panels-tunable) ----
     /**
