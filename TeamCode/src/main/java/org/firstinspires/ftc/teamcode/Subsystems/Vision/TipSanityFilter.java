@@ -116,12 +116,19 @@ public class TipSanityFilter {
     }
 
     /**
-     * Filter one reading. Returns the decision; when accepted, fuse
-     * {@code decision.pose} (== the input pose, untouched). Pure function of
-     * the reading + last accepted solve — safe to unit test without hardware.
+     * Filter one reading using {@code rd.pedroPose} as the XY pose to check.
      */
     public Decision filter(Vision.Reading rd) {
-        if (rd == null || rd.pedroPose == null) {
+        return filter(rd, rd != null ? rd.pedroPose : null);
+    }
+
+    /**
+     * Filter one reading against an explicit {@code xyPose} (e.g. {@code rd.mt1Pedro}
+     * when {@code VisionFusion.USE_MT1_XY} is enabled, so MT2 bimodal jumps
+     * cannot trigger false {@link Verdict#REJECT_TELEPORT} drops on steady MT1 solves).
+     */
+    public Decision filter(Vision.Reading rd, @Nullable Pose xyPose) {
+        if (rd == null || xyPose == null) {
             return decided(new Decision(Verdict.REJECT_TILT, null, 0, 0, 0, Double.NaN));
         }
         double pitch = Math.abs(rd.botPitchDeg);
@@ -129,13 +136,13 @@ public class TipSanityFilter {
         // GOOD ~= flat (map holds the 30deg): absolute tilt from 0.
         if ((MAX_BOT_PITCH_DEG > 0 && pitch > MAX_BOT_PITCH_DEG)
                 || (MAX_BOT_ROLL_DEG > 0 && roll > MAX_BOT_ROLL_DEG)) {
-            return decided(new Decision(Verdict.REJECT_TILT, rd.pedroPose,
+            return decided(new Decision(Verdict.REJECT_TILT, xyPose,
                     pitch, roll, rd.botZMeters, Double.NaN));
         }
         // Check if robot/camera height makes sense (tipped solves project underground or skyward)
         if (CHECK_HEIGHT && Double.isFinite(rd.botZMeters)) {
             if (rd.botZMeters < CAM_Z_MIN_M || rd.botZMeters > CAM_Z_MAX_M) {
-                return decided(new Decision(Verdict.REJECT_HEIGHT, rd.pedroPose,
+                return decided(new Decision(Verdict.REJECT_HEIGHT, xyPose,
                         pitch, roll, rd.botZMeters, Double.NaN));
             }
         }
@@ -144,18 +151,18 @@ public class TipSanityFilter {
         if (lastAcceptedXY != null && MAX_SOLVE_SPEED_IPS > 0) {
             double dtS = (nowNs - lastAcceptedNs) / 1.0e9;
             if (dtS > 1e-3 && dtS <= MAX_TELEPORT_GAP_S) {
-                double d = Math.hypot(rd.pedroPose.x() - lastAcceptedXY.x(),
-                        rd.pedroPose.y() - lastAcceptedXY.y());
+                double d = Math.hypot(xyPose.x() - lastAcceptedXY.x(),
+                        xyPose.y() - lastAcceptedXY.y());
                 speedIps = d / dtS;
                 if (speedIps > MAX_SOLVE_SPEED_IPS) {
-                    return decided(new Decision(Verdict.REJECT_TELEPORT, rd.pedroPose,
+                    return decided(new Decision(Verdict.REJECT_TELEPORT, xyPose,
                             pitch, roll, rd.botZMeters, speedIps));
                 }
             }
         }
-        lastAcceptedXY = rd.pedroPose;
+        lastAcceptedXY = xyPose;
         lastAcceptedNs = nowNs;
-        return decided(new Decision(Verdict.ACCEPT, rd.pedroPose,
+        return decided(new Decision(Verdict.ACCEPT, xyPose,
                 pitch, roll, rd.botZMeters, speedIps));
     }
 

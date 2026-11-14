@@ -532,11 +532,21 @@ public class VisionFusion {
             lastSeedAgrDeg = Double.NaN;
         }
 
+        // Select the active XY measurement source FIRST (before NoVisionZones,
+        // TipSanityFilter, and field-bounds checks) so that when USE_MT1_XY is
+        // true, an MT2 bimodal jump or no-vision-zone excursion never rejects a
+        // steady MT1 measurement.
+        Pose measPose = rd.pedroPose;
+        if (USE_MT1_XY && rd.mt1Pedro != null) {
+            measPose = rd.mt1Pedro;
+            lastXySrc = "MT1";
+        }
+
         // ---- absolute reject gates (XY source: NaN / stale only) ----
         // NOTE: heading is NOT gated here — MT2 yaw never fuses (NaN-masked in
         // fuse()), and MT1 yaw has its own strict gates below. A garbage MT2 yaw
         // cannot hurt us; only garbage XY can.
-        if (!Double.isFinite(rd.pedroPose.x()) || !Double.isFinite(rd.pedroPose.y())) {
+        if (!Double.isFinite(measPose.x()) || !Double.isFinite(measPose.y())) {
             lastStatus = "reject-nan";
 
             return;
@@ -549,7 +559,7 @@ public class VisionFusion {
         // ---- No-vision zone reject: ignore solve if it places the robot in a no-vision zone ----
         // When robot is at field perimeter, Limelight may see tags across the field
         // and produce an erroneous solve under the center hives; ignore these.
-        if (NoVisionZones.isInNoVisionZone(rd.pedroPose)) {
+        if (NoVisionZones.isInNoVisionZone(measPose)) {
             lastStatus = "reject-no-vision-zone";
             return;
         }
@@ -559,7 +569,7 @@ public class VisionFusion {
         // Panels shows one consistent story either way).
         TipSanityFilter.Decision sanity;
         try {
-            sanity = tipFilter.filter(rd);
+            sanity = tipFilter.filter(rd, measPose);
         } catch (Exception e) {
             lastStatus = "sanity-exception";
 
@@ -575,18 +585,6 @@ public class VisionFusion {
         // TipCompensator.ENABLED ships false. When you enable it after the
         // validation plan in that class, accepted-but-deviated solves get
         // projected back to rest here and fused with inflated R.
-        Pose measPose = rd.pedroPose;
-        // XY source override: MT1's independent per-tag-averaged solve (the yaw
-        // is still NaN-masked — XY-only). MT1's pose carries the SAME LL_* mapping
-        // as MT2's (toPedroPose already applied by poll).
-        if (USE_MT1_XY && rd.mt1Pedro != null) {
-            measPose = rd.mt1Pedro;
-            lastXySrc = "MT1";
-        }
-        if (NoVisionZones.isInNoVisionZone(measPose)) {
-            lastStatus = "reject-no-vision-zone";
-            return;
-        }
         // (No code-side camera lever-arm compensation: the Limelight mount
         // geometry lives in the LL web UI / LL init method, so botpose is
         // already robot-center — see the note at USE_MT1_XY.)
@@ -594,7 +592,7 @@ public class VisionFusion {
         if (TipCompensator.ENABLED) {
             try {
                 TipCompensator.Result comp = TipCompensator.compensate(
-                        rd.pedroPose, rd.botPitchDeg, rd.botRollDeg, rd.botZMeters);
+                        measPose, rd.botPitchDeg, rd.botRollDeg, rd.botZMeters);
                 if (comp == null) {
                     lastStatus = "reject-uncompensatable";
         
@@ -608,6 +606,10 @@ public class VisionFusion {
     
                 return;
             }
+        }
+        if (NoVisionZones.isInNoVisionZone(measPose)) {
+            lastStatus = "reject-no-vision-zone";
+            return;
         }
         // BIOBUZZ cluster-only switch: conservative Pinpoint-only fallback.
         // Ships false (you localize off the clusters); Stage 1 still drops tipped ones.
@@ -635,8 +637,8 @@ public class VisionFusion {
 //
 //            return;
 //        }
-        if (rd.pedroPose.x() < -FIELD_MARGIN_IN || rd.pedroPose.x() > 144.0 + FIELD_MARGIN_IN
-                || rd.pedroPose.y() < -FIELD_MARGIN_IN || rd.pedroPose.y() > 144.0 + FIELD_MARGIN_IN) {
+        if (measPose.x() < -FIELD_MARGIN_IN || measPose.x() > 144.0 + FIELD_MARGIN_IN
+                || measPose.y() < -FIELD_MARGIN_IN || measPose.y() > 144.0 + FIELD_MARGIN_IN) {
             lastStatus = "reject-off-field";
 
             return;
