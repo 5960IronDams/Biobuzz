@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.Commands;
 import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
+import com.pedropathing.math.Velocity;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.Commands;
 import com.seattlesolvers.solverslib.command.FunctionalCommand;
@@ -26,132 +27,64 @@ import org.firstinspires.ftc.teamcode.Subsystems.turret.TurretPivot;
 import org.firstinspires.ftc.teamcode.WattageLib.Ballistics.NoFireZones;
 
 /**
- * Multi-subsystem compositions only. Single-subsystem commands live on their
- * subsystem ({@code intake.runCmd()/holdCmd()/stopCmd()},
- * {@code transfer.runCmd()/holdCmd()/reverseCmd()/reverseHoldCmd()/stopCmd()},
- * {@code flywheel.toRpm()/holdTunable()/stopCmd()/coastToIdleCmd()},
- * {@code PosServ.toggleCmd()/toPos()/nudgeCmd()}).
+ * Multi-subsystem commands and shooting readiness checks.
  *
- * <h2>Readiness triggers + auto-transfer (ported from 2026-IndianaJoe)</h2>
- *
- * IndianaJoe's {@code SystemController} auto-fired: while the driver's "ready
- * to shoot" latch was on it ran {@code FeedAndKick()} whenever
- * {@code isReadyToShoot()} was true, and that trigger was an AND of checks:
- *
- * <pre>
- *   isReadyToShoot = isFlywheelAtSpeed()   // RPM at the LUT target (debounced)
- *                   &amp;&amp; isHoodAtAngle()     // pointing mechanism at position
- *                   &amp;&amp; isTurretOnTarget()  // turret aligned (distance-scaled tol)
- *                   &amp;&amp; isDrivetrainStable()// XY speed under a limit
- *                   &amp;&amp; isRotationStable()  // |yaw rate| under a limit
- *                   &amp;&amp; isShooterClear();   // shooter not in a no-fire zone
- * </pre>
- *
- * This class ports that set. Every member is a plain {@link Trigger} over LIVE
- * state (the shared {@link AimAtGoal}, {@link Flywheel}, the follower pose), so
- * any loop can sample them — they do not depend on an aim command running.
- *
- * <table summary="FRC readiness trigger -> FTC port">
- *   <tr><th>FRC (SystemController)</th><th>Biobuzz (this class)</th></tr>
- *   <tr><td>{@code isFlywheelAtSpeed()}</td><td>{@link #isFlywheelAtSpeed()} /
- *       {@link #isFlywheelStable()}</td></tr>
- *   <tr><td>{@code isHoodAtAngle()}</td><td>{@link #isTurretAtSetpoint()}
- *       (this robot has no hood; the LUT RPM is the "hood" variable)</td></tr>
- *   <tr><td>{@code isTurretOnTarget()}</td><td>{@link #isTurretOnTarget()}</td></tr>
- *   <tr><td>{@code isDrivetrainStable()}</td><td>{@link #isDrivetrainStable()}</td></tr>
- *   <tr><td>{@code isRotationStable()}</td><td>{@link #isRotationStable()}</td></tr>
- *   <tr><td>{@code isShooterClear()}</td><td>{@link #isShooterClear()}</td></tr>
- *   <tr><td>{@code isReadyToShoot()}</td><td>{@link #isReadyToShoot()}</td></tr>
- * </table>
- *
- * <p><b>The shot is now two halves</b> (IndianaJoe's split):
  * <ul>
- *   <li>{@link #TrackTarget()} — turret aim + the RPM LUT. Latched ON,
- *       runs ready or not.</li>
- *   <li>{@link #FireAtGoal()} — gate + transfer, feeding only while
- *       {@link #isReadyToShoot()} permits.</li>
- *   <li>{@link #AutoShootAtGoal()} — both, which is what the left trigger
- *       latch now runs ({@link #ShootAtGoal()} keeps its old name).</li>
+ *   <li>{@link #TrackTarget()} — aims the turret, hood, and flywheel RPM using the distance LUTs.</li>
+ *   <li>{@link #FireAtGoal()} — opens the shoot gate and runs transfer when {@link #isReadyToShoot()} is true.</li>
+ *   <li>{@link #AutoShootAtGoal()} — runs {@link #TrackTarget()} and {@link #FireAtGoal()} together.</li>
+ *   <li>{@link #ManualShootAtGoal()} — fixed-RPM shooting without moving the turret.</li>
  * </ul>
- * Readiness exists to protect the BALL, not the flywheel: the ball only leaves
- * through the transfer roller, so feeding while the wheel is off-RPM or the
- * turret is off target either jams the ball in the barrel or fires wherever it
- * happens to be pointed (and, inside a no-fire zone, at something we must not
- * hit).
  */
 @Configurable
 public class CommandFactory {
 
-    // ---- Shoot LUT (Panels-tunable): distance from the aimed hive -> flywheel RPM ----
+    // ---- Shoot LUTs (Panels -> CommandFactory): distance (in) -> flywheel RPM / hood angle ----
     /**
-     * Keys MUST be strictly increasing; distances outside the table clamp to
-     * the nearest endpoint RPM. PLAIN LINEAR interpolation between points
-     * and the arrays are read live, so Panels edits apply instantly -
-     * no rebuild step.
-     */
-    /** RPM at each distance in {@link #LUT_DISTANCES_IN} (same order). //max observed RPM is 4100; */
-    // ---- Shoot Hood LUT (Panels-tunable): distance from the aimed hive -> hood launch angle (deg) ----
-
-    /**
-     * Launch angle at each distance in {@link #LUT_DISTANCES_IN} (same order).
-     * 0 deg = vertical up, 90 deg = horizontal forward.
-     * Closer distances = steeper trajectory (lower deg value);
-     * Farther distances = flatter trajectory (higher deg value).
-     * Placeholder curve - tune on the robot (Panels -> CommandFactory).
+     * Lookup table distances in inches (must be strictly increasing).
+     * Distances outside this range clamp to the nearest endpoint.
      */
     public static double[] LUT_DISTANCES_IN = {6, 36, 48, 60, 72, 96};
-    public static double[] LUT_RPMS = {1650, 1800, 1850, 1950, 2200, 2300}; // max observed RPM is 2700
+    /** Target flywheel RPM at each distance in {@link #LUT_DISTANCES_IN}. */
+    public static double[] LUT_RPMS = {1650, 1800, 1850, 1950, 2200, 2300};
+    /** Target hood launch angle (deg, 0 = vertical up, 90 = horizontal) at each LUT distance. */
     public static double[] LUT_HOOD_DEGS = {19.831, 20.831, 24.831, 38.852, 45.852, 45.852};
+    /** Estimated ball time-of-flight (s) at each LUT distance for shoot-on-the-move lead. */
+    public static double[] LUT_TOF_S = {0.35, 0.45, 0.52, 0.60, 0.70, 0.85};
 
-    // ---- Manual align & shoot backup mode (Panels-tunable) ----
-    /**
-     * Fixed setpoint RPM for manual align & shoot mode.
-     * When active, the robot does not move the turret and runs the flywheel directly
-     * to this fixed RPM. Once at speed, the gate opens and transfer feeds automatically,
-     * allowing the driver to manually align the chassis and shoot if any systems have issues.
-     */
+    // ---- Manual align & shoot mode (Panels -> CommandFactory) ----
+    /** Fixed flywheel RPM used by {@link #ManualShootAtGoal()} (turret does not move). */
     public static double MANUAL_SHOOT_RPM = 2000.0;
 
+    /** Maximum hood angle change rate (deg/s) when tracking LUT changes; <= 0 disables slew limit. */
     public static double LUT_MAX_HOOD_SLEW_DPS = 90.0;
 
     /**
-     * Max slew of the COMMANDED flywheel setpoint, RPM/sec. The raw LUT output
-     * can step for two reasons that are NOT the LUT's shape: the aim lock hops
-     * to a different hive target (distance jumps by the target spacing) and
-     * fused-pose noise moves the distance every loop. This rate-limits how
-     * fast the commanded RPM chases the raw lookup, so the setpoint glides.
-     * 0 or negative = instant (slew off).
+     * Maximum flywheel setpoint change rate (RPM/s). Lower values make speed changes
+     * smoother when switching targets; <= 0 jumps immediately.
      */
     public static double LUT_MAX_RPM_SLEW = 1200.0;
 
     /**
-     * Aimed-distance deadband (in): while the distance stays within this of the
-     * last accepted value, the previous value is reused, so pose/LUT noise
-     * cannot walk the flywheel setpoint around. The 20261025-005022 capture
-     * shows the distance moving only 45.8..47.6 in while still, yet the LUT
-     * target crawled 1827 -> 1805. 1.0 in ≈ 2 RPM on the current table.
+     * Distance deadband (in): ignore distance jitter smaller than this so the LUT
+     * setpoint stays steady when the robot is stationary.
      */
-    public static double LUT_DISTANCE_DEADBAND_IN = 1.0;
+    public static double LUT_DISTANCE_DEADBAND_IN = 0.5;
 
     /**
-     * Low-pass weight on the LUT RPM output per loop (0..1; 1 = no filtering).
-     * Complements the slew limit: slew bounds the RATE, this bounds the STEP.
+     * Low-pass filter time constant (seconds) on LUT outputs (`dt / (tau + dt)`).
+     * Lower values react faster; 0 disables filtering.
      */
-    public static double LUT_RPM_FILTER_ALPHA = 0.25;
+    public static double LUT_FILTER_TAU_S = 0.02;
 
-    /** Last slew-limited RPM the RPM manager commanded (NaN until the first lock). */
     private double lastCmdRpm = Double.NaN;
     private long lastRpmNs = 0L;
-    /** The RPM the RPM manager is commanding right now (NaN when idle). */
     private double commandedRpm = Double.NaN;
-    /** Last accepted LUT distance (deadband state) and the filtered LUT RPM. */
     private double lastLutDist = Double.NaN;
     private double lutFilteredRpm = Double.NaN;
 
-    /** Last slew-limited Hood angle commanded (NaN until the first lock). */
     private double lastCmdHoodDeg = Double.NaN;
     private long lastHoodNs = 0L;
-    /** The Hood angle the manager is commanding right now (NaN when idle). */
     private double commandedHoodDeg = Double.NaN;
     private double lutFilteredHoodDeg = Double.NaN;
 
@@ -164,80 +97,38 @@ public class CommandFactory {
     public final Hood hood;
     public final HardwareMap hardwareMap;
 
-    /**
-     * The one alliance-aware aim/ballistics instance shared by every shoot
-     * command AND every readiness trigger — so the turret tracking, the RPM
-     * LUT and the "on target" check can never disagree about which point is
-     * being shot at. Null when the turret is absent from the RC config.
-     */
+    /** Shared alliance-aware aim tracker (null when turret is not present). */
     public final AimAtGoal aim;
 
     // =====================================================================
     //  READINESS THRESHOLDS (Panels -> CommandFactory)
     // =====================================================================
 
-    /**
-     * Max chassis TRANSLATION speed (in/s) for {@link #isDrivetrainStable()}.
-     * FRC analog: {@code ballisticsConstants.StableTranslationSpeedMaxMps}
-     * (0.05 m/s ≈ 2 in/s); Pedro exposes a pose but no velocity vector, so the
-     * speed is measured from the pose delta (see {@link #readinessPeriodic()}).
-     */
-    public static double MAX_TRANSLATION_SPEED_IN_S = 2.0;
+    /** Max chassis translation speed (in/s) allowed while auto-firing. */
+    public static double MAX_TRANSLATION_SPEED_IN_S = 40.0;
 
-    /**
-     * Max chassis |yaw rate| (deg/s) for {@link #isRotationStable()}.
-     * FRC analog: {@code ballisticsConstants.StablerotationSpeedMaxDegreespersecond}.
-     * A shot taken while the chassis is still spinning keeps angular momentum
-     * that spends the trajectory's spin early, so the wheel/turret can be
-     * perfectly aimed and the shot still misses by the tail swing.
-     */
-    public static double MAX_ROTATION_SPEED_DPS = 60.0;
+    /** Max chassis |yaw rate| (deg/s) allowed while auto-firing. */
+    public static double MAX_ROTATION_SPEED_DPS = 80.0;
 
-    /**
-     * Falling-edge debounce for {@link #isReadyToShoot()} and
-     * {@link #isFlywheelStable()} (s). FRC used 0.25 s
-     * ({@code shootReadyDebounceS}) on the flywheel alone so a wheel dip could
-     * not stop the feed instantly. Rising edges are immediate.
-     */
-    public static double READY_DEBOUNCE_S = 0.15;
+    // ---- Flywheel readiness hysteresis ----
+    /** Flywheel smoothed error (RPM) within which the wheel enters the "at speed" state. */
+    public static double FLYWHEEL_READY_ON_RPM = 85.0;
+    /** Optional continuous dwell (s) within {@link #FLYWHEEL_READY_ON_RPM} before firing (0 = immediate). */
+    public static double FLYWHEEL_SETTLE_DWELL_S = 0.0;
+    /** Flywheel error (RPM) above which an already-ready wheel stops firing (wider to survive ball dips). */
+    public static double FLYWHEEL_READY_OFF_RPM = 175.0;
 
-    // ---- Flywheel readiness band (hysteresis + dwell) ----
-    /**
-     * Enter "at speed" when |actual − target| is within this (RPM).
-     * goBILDA 5203 encoder quantisation is ~42.9 RPM/tick at 20 Hz, so 55 RPM
-     * allows roughly ±1 tick of steady-state error.
-     */
-    public static double FLYWHEEL_READY_ON_RPM = 55.0;
-    /**
-     * Minimum continuous time (seconds) actual RPM must remain inside
-     * {@link #FLYWHEEL_READY_ON_RPM} before the wheel is declared ready.
-     * Prevents firing while the wheel is in a steep transient ramp.
-     */
-    public static double FLYWHEEL_SETTLE_DWELL_S = 0.10;
-    /**
-     * Leave "at speed" only once |actual − target| exceeds this (RPM). Wider
-     * than the enter band on purpose: a shot in progress is not abandoned for
-     * normal ball impact dips (~350-400 RPM drop), preventing rapid transfer chatter.
-     */
-    public static double FLYWHEEL_READY_OFF_RPM = 150.0;//150 seems solid when not double loading.  //250.0; this was ok. //450.0; //450 usually sends balls right through. 250 will pause and unpause. (pre lakeveiw before adding flywheels)
-
-    /**
-     * Aim-alignment hysteresis: once aligned, the turret may drift this many
-     * degrees OUTSIDE the live tolerance before the shot is pulled. Keeps a
-     * settled turret (and a shot in progress) from being cancelled by the
-     * turret PID's own deadband.
-     */
+    /** Extra margin (deg) added to live aim tolerance before an aligned turret drops out of ready state. */
     public static double AIM_HYST_EXIT_MARGIN_DEG = 2.0;
 
-    /** Include the chassis-translation check in {@link #isReadyToShoot()} (FRC always did). */
+    /** Extra margin (deg) added to {@link Hood#TOLERANCE_DEG} before a settled hood drops out of ready state. */
+    public static double HOOD_HYST_EXIT_MARGIN_DEG = 1.5;
+
+    /** Whether chassis translation speed must be below {@link #MAX_TRANSLATION_SPEED_IN_S} to fire. */
     public static boolean REQUIRE_STABLE_TRANSLATION = true;
-    /** Include the chassis-rotation check in {@link #isReadyToShoot()} (FRC always did). */
+    /** Whether chassis yaw rate must be below {@link #MAX_ROTATION_SPEED_DPS} to fire. */
     public static boolean REQUIRE_STABLE_ROTATION = true;
-    /**
-     * SECONDS after an OpMode starts during which the pose-derived motion
-     * checks are skipped, so the first (delta-less) sample can never pin the
-     * fire off. 0 disables the grace.
-     */
+    /** Grace period (s) after OpMode start during which chassis motion checks are skipped. */
     public static double MOTION_WARMUP_S = 0.5;
 
     // =====================================================================
@@ -254,19 +145,16 @@ public class CommandFactory {
     private long lastPeriodicNs = 0L;
     private double warmupRemainingS = MOTION_WARMUP_S;
 
-    /**
-     * Falling-edge debouncers (SolversLib 0.3.6's {@code Trigger} has no
-     * {@code debounce()} and WPILib's {@code Debouncer} is not on the classpath,
-     * so this class carries its own).
-     */
-    /** Falling-edge debounce on the whole readiness AND ({@link #READY_DEBOUNCE_S}). */
-    private final FallingEdgeDebounce readyDebounce = new FallingEdgeDebounce(READY_DEBOUNCE_S);
-
-    /** Hysteresis latches for the two readiness members that were measured to chatter. */
+    /** Hysteresis latches for readiness members that sit near a threshold during SOTM. */
     private final Hysteresis alignHyst = new Hysteresis();
+    private final Hysteresis hoodHyst = new Hysteresis();
     private boolean flywheelBandLatched = false;
     /** Timestamp (ns) when actual RPM first entered FLYWHEEL_READY_ON_RPM continuously. */
     private long flywheelInToleranceSinceNs = 0L;
+
+    private boolean lastManualFlywheelReady = false;
+    private boolean lastManualGateOpen = false;
+    private boolean lastManualReady = false;
 
     /** What the fire half is currently asking the transfer to do (for the dashboard). */
     private FeedState transferState = FeedState.OFF;
@@ -372,7 +260,7 @@ public class CommandFactory {
         // cached here would break the second call. `aim` is passed rather than
         // re-loaded so repeated construction stays free.
         return new AimAtGoal(turret, follower, aim.aimPoints,
-                () -> RobotMain.CurrentAlliance, this::getCommandedRpm);
+                () -> RobotMain.CurrentAlliance, this::getCommandedRpm, aim);
     }
 
     /**
@@ -417,15 +305,10 @@ public class CommandFactory {
     }
 
     /**
-     * The FIRE half of the shot: opens the gate and runs the TRANSFER whenever
-     * {@link #isReadyToShoot()} is true, and closes the gate and stops the
-     * transfer the moment it is not. Runs until cancelled (latched).
-     *
-     * <p>The gate is therefore the hardware interlock and this policy is what
-     * drives it: a ball may only reach the flywheel while the whole shot —
-     * RPM, turret position, turret alignment, gate, drivetrain, no-fire zones —
-     * is good. Holding the transfer is what makes this robot conveyor-driven:
-     * the ball goes from hopper to flywheel only because the transfer runs.
+     * The FIRE half of the shot: opens the gate when shooting starts, keeps it
+     * open throughout the shot session, and closes it when shooting stops.
+     * Moment-to-moment readiness pauses stop/start the TRANSFER rather than
+     * slamming the gate shut mid-motion.
      *
      * <p>Requirements: gate servo + transfer ONLY. The intake is deliberately
      * not required — see {@link #holdManualIntakeOutOfTheWay()}.
@@ -437,20 +320,16 @@ public class CommandFactory {
                     firing = true;
                     fireSuppressedByDriver = false;
                     fireSuppressedForS = 0.0;
-                    // Start the alignment latch from the current alignment
-                    // state, so a first ready tick can fire immediately
-                    // without having to re-prove alignment.
                     alignHyst.reset(aimAlignedHyst());
+                    hoodHyst.reset(hoodAtAngleHyst());
                     flywheelBandLatched = false;
                     flywheelInToleranceSinceNs = 0L;
                     transferState = FeedState.OFF;
+                    openGate();
                 },
                 () -> {
-                    // ONE evaluation pass per loop: the hysteresis members are
-                    // stateful, so evaluating them twice (once for the policy,
-                    // once for the display) would consume two Schmitt steps and
-                    // make the telemetry not match what was decided.
-                    Readiness r = lastReadiness != null ? lastReadiness : evaluateReadiness();
+                    // Evaluate once on this tick using up-to-date subsystem and TrackTarget states.
+                    Readiness r = evaluateReadiness();
                     lastReadiness = r;
                     boolean manualFwd = manualTransferForwardHeld;
                     boolean manualRev = manualTransferReverseHeld;
@@ -465,25 +344,29 @@ public class CommandFactory {
                         holdManualIntakeOutOfTheWay();
                         if (transfer != null) transfer.runForward();
                         setTransferState(FeedState.MANUAL);
-                    } else if (autoReady) {
+                    } else if (!fireSuppressedByDriver && r.shooterReady) {
                         openGate();
-                        holdManualIntakeOutOfTheWay();
-                        // Re-assert runForward every loop: it re-reads
-                        // TRANSFER_RPM, so live Panels retunes apply mid-shot.
-                        if (transfer != null) transfer.runForward();
-                        setTransferState(FeedState.FEEDING);
+                        if (r.gate) {
+                            holdManualIntakeOutOfTheWay();
+                            if (transfer != null) transfer.runForward();
+                            setTransferState(FeedState.FEEDING);
+                        } else {
+                            if (transfer != null && transferState != FeedState.OFF) transfer.stop();
+                            setTransferState(FeedState.OFF);
+                        }
                     } else {
-                        closeGate();
-                        // Stop ONCE on the falling edge, not every loop.
+                        // Leave the gate open during active auto-shooting; pause transfer only.
+                        openGate();
                         if (transfer != null && transferState != FeedState.OFF) transfer.stop();
                         setTransferState(FeedState.OFF);
                     }
-                    // Explain the verdict: WHICH member is holding the shot.
-                    reportReadinessDetails(r, autoReady, manualFwd, manualRev);
+                    if (RobotMain.DASHBOARD) {
+                        reportReadinessDetails(r, autoReady, manualFwd, manualRev);
+                    }
                 },
                 (interrupted) -> {
                     firing = false;
-                    closeGate(); // no-op until the gate exists
+                    closeGate();
                     if (transfer != null) transfer.stop();
                     setTransferState(FeedState.OFF);
                     flywheelBandLatched = false;
@@ -501,10 +384,9 @@ public class CommandFactory {
     }
 
     /**
-     * The FIRE half of the manual shoot mode: feeds via the transfer (and opens gate)
-     * as soon as the flywheel is at {@link #MANUAL_SHOOT_RPM} and gate is ok.
-     * Turret setpoint, aim alignment, chassis motion, and no-fire zones are NOT required,
-     * so this mode remains fully operational if any of those systems fail.
+     * The FIRE half of the manual shoot mode: opens the gate on activation and
+     * feeds via the transfer as soon as the flywheel is at {@link #MANUAL_SHOOT_RPM}
+     * and the gate has finished opening. Closes the gate when manual shoot ends.
      */
     public Command FireManualAtGoal() {
         List<Subsystem> reqList = new ArrayList<>();
@@ -520,9 +402,15 @@ public class CommandFactory {
                     flywheelBandLatched = false;
                     flywheelInToleranceSinceNs = 0L;
                     transferState = FeedState.OFF;
+                    openGate();
                 },
                 () -> {
-                    boolean ready = flywheelReadyHyst() && gateOk();
+                    boolean flywheelReady = flywheelReadyHyst();
+                    boolean gateOpenNow = gateOk();
+                    boolean ready = flywheelReady && gateOpenNow;
+                    lastManualFlywheelReady = flywheelReady;
+                    lastManualGateOpen = gateOpenNow;
+                    lastManualReady = ready;
                     boolean manualFwd = manualTransferForwardHeld;
                     boolean manualRev = manualTransferReverseHeld;
                     boolean autoReady = !fireSuppressedByDriver && ready;
@@ -536,17 +424,24 @@ public class CommandFactory {
                         holdManualIntakeOutOfTheWay();
                         if (transfer != null) transfer.runForward();
                         setTransferState(FeedState.MANUAL);
-                    } else if (autoReady) {
+                    } else if (!fireSuppressedByDriver && flywheelReady) {
                         openGate();
-                        holdManualIntakeOutOfTheWay();
-                        if (transfer != null) transfer.runForward();
-                        setTransferState(FeedState.FEEDING);
+                        if (gateOpenNow) {
+                            holdManualIntakeOutOfTheWay();
+                            if (transfer != null) transfer.runForward();
+                            setTransferState(FeedState.FEEDING);
+                        } else {
+                            if (transfer != null && transferState != FeedState.OFF) transfer.stop();
+                            setTransferState(FeedState.OFF);
+                        }
                     } else {
-                        closeGate();
+                        openGate();
                         if (transfer != null && transferState != FeedState.OFF) transfer.stop();
                         setTransferState(FeedState.OFF);
                     }
-                    reportManualReadinessDetails(ready, autoReady, manualFwd, manualRev);
+                    if (RobotMain.DASHBOARD) {
+                        reportManualReadinessDetails(flywheelReady, gateOpenNow, ready, autoReady, manualFwd, manualRev);
+                    }
                 },
                 (interrupted) -> {
                     firing = false;
@@ -566,11 +461,8 @@ public class CommandFactory {
     }
 
     /**
-     * The whole auto-firing shot: {@link #TrackTarget()} plus
-     * {@link #FireAtGoal()}. This is "auto aim auto-runs the transfer when
-     * ready", i.e. IndianaJoe's
-     * {@code isReadyToShoot().whileTrue(FeedAndKick())} with the aim command
-     * already running — the transfer fires itself, no second button.
+     * Full auto-fire command: runs {@link #TrackTarget()} and {@link #FireAtGoal()} in parallel
+     * so the transfer feeds automatically whenever readiness gates pass.
      *
      * <p>This is a FACTORY: every call returns a NEW, ungrouped command tree.
      * Do not "optimise" it back into {@code return autoShootCmd} — a Command
@@ -616,36 +508,8 @@ public class CommandFactory {
     }
 
     /**
-     * Hold-to-shoot: SPINS THE TURRET to aim at the closest hive target AND
-     * spins the flywheel at an RPM looked up from the distance-to-hive LUT.
-     * The transfer feeds (and the gate opens) only while
-     * {@link #isReadyToShoot()} — the whole shot — is satisfied, and stops the
-     * moment it is not. On release (or any interrupt) the gate closes, the
-     * transfer stops, the flywheel coasts down to {@code IDLE_RPM} (soft FLOAT
-     * slowdown; the PID re-engages to hold idle on arrival, and holds there
-     * until the next shoot), and the aim member returns the turret motor to
-     * NEUTRAL.
-     *
-     * <p>Per loop while held: aim re-picks the closest target, the distance to
-     * it is fed through the linear LUT and SLEW-LIMITED (see
-     * {@link #LUT_MAX_RPM_SLEW}) before reaching the flywheel setpoint - so
-     * aim-lock hops between targets and pose noise glide instead of stepping.
-     * The gate is then driven EVERY loop by the full readiness AND — flywheel
-     * at speed, turret at its setpoint and on target, gate able, chassis
-     * translation/rotation stable, and outside all no-fire zones (ported from
-     * IndianaJoe — {@code Ballistics.NoFireZones}). Entering a no-fire zone
-     * never stops the flywheel - it just closes the gate so no ball leaves
-     * while unsafe.
-     *
-     * <p>KEPT as the historical name; it now returns
-     * {@link #AutoShootAtGoal()}, i.e. the fully readiness-gated auto-fire
-     * (aim + RPM + gate + TRANSFER, feeding only when ready). The gate-only
-     * half alone is {@link #TrackTarget()} plus {@link #FireAtGoal()}.
-     *
-     * <p>Requirements are the union of the halves: turret (aim), flywheel
-     * (RPM manager), gate servo and transfer. A manual turret spin (dpad),
-     * servo toggle (X), nudge or transfer command (bumpers) taken mid-shot
-     * interrupts the whole compound (manual override).
+     * Hold-to-shoot command: aims the turret, tracks the distance LUT for flywheel
+     * and hood, and runs the gate/transfer whenever {@link #isReadyToShoot()} passes.
      */
     public Command ShootAtGoal() {
         return AutoShootAtGoal();
@@ -711,8 +575,10 @@ public class CommandFactory {
                     firing = false;
                     intakeStoppedByFire = false;
                     fireSuppressedByDriver = false; // a deliberate unlock re-arms for next time
-                    RobotMain.DashTelemetry.addData("Shoot latch (LT toggle)", "OFF (LB unlock)");
-                    RobotMain.DashTelemetry.addData("Manual shoot latch (RT toggle)", "OFF (LB unlock)");
+                    if (RobotMain.DASHBOARD) {
+                        RobotMain.DashTelemetry.addData("Shoot latch (LT toggle)", "OFF (LB unlock)");
+                        RobotMain.DashTelemetry.addData("Manual shoot latch (RT toggle)", "OFF (LB unlock)");
+                    }
                 },
                 () -> {},
                 (interrupted) -> {},
@@ -752,34 +618,30 @@ public class CommandFactory {
                     lastCmdRpm = Double.NaN;
                     lastRpmNs = 0L;
                     commandedRpm = Double.NaN;
+                    lastLutDist = Double.NaN;
+                    lutFilteredRpm = Double.NaN;
                 },
                 () -> {
                     double d = currentShotDistanceInches();
                     if (Double.isNaN(d) || d <= 0) {
                         return; // no lock yet: hold the last setpoint
                     }
-                    double raw = lutRpm(d);
-                    // Distance deadband: a sub-inch wobble in the aimed distance
-                    // must not move the setpoint at all. The capture shows the
-                    // LUT target crawling 1827 -> 1805 purely from distance
-                    // noise (45.8..47.6 in) while the robot was still, and every
-                    // step re-opened the wheel's at-speed question.
-                    long nowNs = System.nanoTime();
-                    double dt = lastRpmNs == 0L ? 0.02
-                            : Math.min(Math.max((nowNs - lastRpmNs) / 1.0e9, 0.0), 0.25);
-                    lastRpmNs = nowNs;
                     if (Double.isNaN(lastLutDist)
                             || Math.abs(d - lastLutDist) > LUT_DISTANCE_DEADBAND_IN) {
                         lastLutDist = d;
                     } else {
-                        d = lastLutDist; // hold the previous distance inside the deadband
+                        d = lastLutDist;
                     }
-                    // Low-pass the LUT output too, so a genuine distance change
-                    // still arrives smoothly rather than as LUT interpolation steps.
-                    if (Double.isNaN(lutFilteredRpm)) {
+                    double raw = lutRpm(d);
+                    long nowNs = System.nanoTime();
+                    double dt = lastRpmNs == 0L ? 0.02
+                            : Math.min(Math.max((nowNs - lastRpmNs) / 1.0e9, 0.0), 0.25);
+                    lastRpmNs = nowNs;
+                    // Time-constant low-pass filter on the LUT output.
+                    if (Double.isNaN(lutFilteredRpm) || LUT_FILTER_TAU_S <= 0.0) {
                         lutFilteredRpm = raw;
                     } else {
-                        double a = Math.max(0.0, Math.min(1.0, LUT_RPM_FILTER_ALPHA));
+                        double a = dt / (LUT_FILTER_TAU_S + dt);
                         lutFilteredRpm += a * (raw - lutFilteredRpm);
                     }
                     raw = lutFilteredRpm;
@@ -794,10 +656,11 @@ public class CommandFactory {
                     }
                     commandedRpm = lastCmdRpm;
                     flywheel.setTargetRpm(lastCmdRpm);
-                    // addData only — flushed once per loop by RobotMain.
-                    RobotMain.DashTelemetry.addData("Shoot LUT dist (in)", "%.1f", d);
-                    RobotMain.DashTelemetry.addData("Shoot LUT raw RPM", "%.0f", raw);
-                    RobotMain.DashTelemetry.addData("Shoot LUT cmd RPM", "%.0f", lastCmdRpm);
+                    if (RobotMain.DASHBOARD) {
+                        RobotMain.DashTelemetry.addData("Shoot LUT dist (in)", "%.1f", d);
+                        RobotMain.DashTelemetry.addData("Shoot LUT raw RPM", "%.0f", raw);
+                        RobotMain.DashTelemetry.addData("Shoot LUT cmd RPM", "%.0f", lastCmdRpm);
+                    }
                 },
                 (interrupted) -> {
                     closeGate();                       // no-op until the gate exists
@@ -842,10 +705,10 @@ public class CommandFactory {
                             : Math.min(Math.max((nowNs - lastHoodNs) / 1.0e9, 0.0), 0.25);
                     lastHoodNs = nowNs;
 
-                    if (Double.isNaN(lutFilteredHoodDeg)) {
+                    if (Double.isNaN(lutFilteredHoodDeg) || LUT_FILTER_TAU_S <= 0.0) {
                         lutFilteredHoodDeg = raw;
                     } else {
-                        double a = Math.max(0.0, Math.min(1.0, LUT_RPM_FILTER_ALPHA));
+                        double a = dt / (LUT_FILTER_TAU_S + dt);
                         lutFilteredHoodDeg += a * (raw - lutFilteredHoodDeg);
                     }
                     raw = lutFilteredHoodDeg;
@@ -859,8 +722,10 @@ public class CommandFactory {
                     commandedHoodDeg = lastCmdHoodDeg;
                     hood.setTargetDegrees(lastCmdHoodDeg);
 
-                    RobotMain.DashTelemetry.addData("Shoot LUT raw Hood deg", "%.2f", raw);
-                    RobotMain.DashTelemetry.addData("Shoot LUT cmd Hood deg", "%.2f", lastCmdHoodDeg);
+                    if (RobotMain.DASHBOARD) {
+                        RobotMain.DashTelemetry.addData("Shoot LUT raw Hood deg", "%.2f", raw);
+                        RobotMain.DashTelemetry.addData("Shoot LUT cmd Hood deg", "%.2f", lastCmdHoodDeg);
+                    }
                 },
                 (interrupted) -> {
                     if (hood != null) hood.stow();
@@ -891,7 +756,9 @@ public class CommandFactory {
                     if (Flywheel.TARGET_RPM != MANUAL_SHOOT_RPM) {
                         flywheel.setTargetRpm(MANUAL_SHOOT_RPM);
                     }
-                    RobotMain.DashTelemetry.addData("Manual Shoot cmd RPM", "%.0f", MANUAL_SHOOT_RPM);
+                    if (RobotMain.DASHBOARD) {
+                        RobotMain.DashTelemetry.addData("Manual Shoot cmd RPM", "%.0f", MANUAL_SHOOT_RPM);
+                    }
                 },
                 (interrupted) -> {
                     closeGate();
@@ -908,8 +775,7 @@ public class CommandFactory {
         if (aim == null) {
             return Double.NaN;
         }
-        double locked = aim.getLastDistanceInches();
-        return Double.isNaN(locked) ? aim.liveDistanceInches() : locked;
+        return aim.activeDistanceIn;
     }
 
     // =====================================================================
@@ -924,7 +790,9 @@ public class CommandFactory {
 
     /** True when the TURRET is ALIGNED on the live target within the shot-scaled tolerance. */
     public Trigger isTurretOnTarget() {
-        return new Trigger(() -> aim != null && aim.isLiveOnTarget());
+        return new Trigger(() -> aim != null
+                && !Double.isNaN(aim.activeHeadingErrorDeg)
+                && Math.abs(aim.activeHeadingErrorDeg) <= aim.activeToleranceDeg);
     }
 
     /** True when the TURRET has reached a commanded setpoint (FRC {@code isHoodAtAngle()} slot). */
@@ -932,22 +800,33 @@ public class CommandFactory {
         return new Trigger(this::turretAtSetpoint);
     }
 
-    /** True when the HOOD has reached its commanded launch angle (or hood is not implemented). */
+    /** True when the HOOD has reached its commanded launch angle. */
     public Trigger isHoodAtAngle() {
         return new Trigger(this::hoodAtAngle);
     }
 
     private boolean hoodAtAngle() {
-        if (hood == null || !Hood.IMPLEMENTED) {
+        if (hood == null) {
             return true;
         }
         return hood.isAtTargetDegrees(Hood.TOLERANCE_DEG);
     }
 
     /**
-     * True when the gate is closed (or the gate is not implemented / absent).
-     * NOT "settled" — see {@link #gateOk()} for why a settled test oscillates.
+     * Hood readiness with hysteresis so small single-loop LUT steps during SOTM
+     * do not momentarily drop readiness between Hood.periodic() and hoodManagerCommand().
      */
+    private boolean hoodAtAngleHyst() {
+        if (hood == null) {
+            return true;
+        }
+        double err = Math.abs(hood.getCurrentDegrees() - hood.getTargetDegrees());
+        double on = Hood.TOLERANCE_DEG;
+        double off = on + Math.max(0.0, HOOD_HYST_EXIT_MARGIN_DEG);
+        return hoodHyst.update(err, on, off);
+    }
+
+    /** True when the shoot gate servo is open and finished slewing. */
     public Trigger isGateSettled() {
         return new Trigger(this::gateOk);
     }
@@ -972,29 +851,12 @@ public class CommandFactory {
         return new Trigger(() -> evaluateReadiness().all);
     }
 
-    /**
-     * True when ALL readiness members are simultaneously satisfied — the
-     * FTC port of {@code SystemController.isReadyToShoot()}. Debounced on the
-     * falling edge by {@link #READY_DEBOUNCE_S}.
-     *
-     * <p>NOTE: this re-evaluates the stateful hysteresis members. It is safe to
-     * bind and poll (one evaluation per poll), but the FIRE POLICY does not use
-     * it — {@link #FireAtGoal()} evaluates once and passes that snapshot to the
-     * dashboard, so the two always agree.
-     */
+    /** True when all readiness checks (including gate open) pass in the current loop snapshot. */
     public Trigger isReadyToShoot() {
-        return new Trigger(() -> readyDebounce.update(evaluateReadiness().all));
+        return new Trigger(() -> getLatestReadiness().all);
     }
 
-    /**
-     * One immutable snapshot of every readiness member for THIS loop.
-     *
-     * <p>Introduced because the hint members are STATEFUL (the flywheel band and
-     * the aim latch are Schmitt triggers). Evaluating them once and sharing the
-     * result is what makes the dashboard truthful — the old code called them
-     * separately for the policy and for the display, which both consumed extra
-     * hysteresis steps and could print a state different from the one acted on.
-     */
+    /** One immutable snapshot of every readiness member for THIS loop. */
     public static final class Readiness {
         public final boolean flywheel;
         public final boolean turretPos;
@@ -1004,6 +866,7 @@ public class CommandFactory {
         public final boolean rotation;
         public final boolean clear;
         public final boolean hood;
+        public final boolean shooterReady;
         public final boolean all;
 
         Readiness(boolean flywheel, boolean turretPos, boolean aim, boolean gate,
@@ -1016,7 +879,8 @@ public class CommandFactory {
             this.rotation = rotation;
             this.clear = clear;
             this.hood = hood;
-            this.all = flywheel && turretPos && aim && gate && translation && rotation && clear && hood;
+            this.shooterReady = flywheel && turretPos && aim && translation && rotation && clear && hood;
+            this.all = this.shooterReady && gate;
         }
     }
 
@@ -1030,11 +894,10 @@ public class CommandFactory {
     /** Shoot readiness summary line for driver station / dashboard. */
     public String getShootReadinessSummary() {
         if (isManualShootActive()) {
-            boolean r = flywheelReadyHyst() && gateOk();
-            if (r) {
+            if (lastManualReady) {
                 return "MANUAL READY (FIRE)";
             }
-            return "MANUAL WAIT: " + (flywheelReadyHyst() ? "gate" : "flywheel " + flywheelText());
+            return "MANUAL WAIT: " + (lastManualFlywheelReady ? "gate (opening)" : "flywheel " + flywheelText());
         }
         Readiness r = getLatestReadiness();
         if (r.all) {
@@ -1058,31 +921,12 @@ public class CommandFactory {
                 translationOk(),
                 rotationOk(),
                 shooterIsClear(),
-                hoodAtAngle());
+                hoodAtAngleHyst());
     }
 
-    /**
-     * The gate member of the readiness set.
-     *
-     * <p><b>Not implemented -&gt; always OK.</b> Until the gate is physically
-     * built ({@link ShootGateServo#IMPLEMENTED}) there is nothing to wait for,
-     * and demanding a settled gate would wedge the shot on a mechanism the
-     * robot does not have.
-     *
-     * <p><b>Implemented -&gt; the gate must be CLOSED, not "settled".</b> This
-     * is the fix for the oscillation seen in capture 20261025-010811: the old
-     * test asked {@link ShootGateServo#isAtPosition()} ("has the slew ramp
-     * finished?"), but opening the gate is exactly what the shot does, so
-     * readiness necessarily failed while the gate travelled, which closed it,
-     * which made readiness true again — roughly 5 Hz. "Closed" is stable
-     * across the whole firing sequence because the fire half only opens the
-     * gate AFTER readiness has passed.
-     */
+    /** Gate readiness check: passes once the gate servo is open and finished slewing. */
     private boolean gateOk() {
-        if (PosServ == null || !ShootGateServo.IMPLEMENTED) {
-            return true;
-        }
-        return PosServ.isClosed();
+        return PosServ == null || PosServ.isOpen();
     }
 
     // ---- raw predicates the triggers read ----
@@ -1094,24 +938,9 @@ public class CommandFactory {
     }
 
     /**
-     * Flywheel "at speed" with HYSTERESIS, as a band on the actual-vs-target
-     * RPM error. This is the fix for the measured on/off chatter.
-     *
-     * <p><b>Why a single band was not enough.</b> The flywheel's built-in
-     * encoder is 28 ticks per revolution, so at a ~50 ms loop ONE encoder tick
-     * is ~43 RPM — and the captured samples show exactly that quantisation:
-     * 1671.4 / 1714.3 / 1757.1 / 1800.0 (43 RPM apart). Meanwhile
-     * {@link Flywheel#AT_SPEED_TOLERANCE_RPM} is 75 RPM, i.e. barely two
-     * quantisation steps. The wheel hunting inside its PID deadband therefore
-     * stepped in and out of a single threshold every few loops with almost no
-     * true speed change, and every exit stopped the transfer.
-     *
-     * <p>The band is now split: enter at {@link #FLYWHEEL_READY_ON_RPM} of
-     * error, leave only past {@link #FLYWHEEL_READY_OFF_RPM}. Requiring the
-     * wheel to be genuinely further out to abandon a shot is the same
-     * hysteresis the FRC {@code shootReadyDebounceS} was standing in for.
-     * Below the reference RPM the band is skipped entirely (a slow wheel on the
-     * way up must still be caught by the plain test).
+     * Hysteresis + dwell check on flywheel speed: enters ready after staying within
+     * {@link #FLYWHEEL_READY_ON_RPM} for {@link #FLYWHEEL_SETTLE_DWELL_S}, and stays
+     * ready until error exceeds {@link #FLYWHEEL_READY_OFF_RPM}.
      */
     private boolean flywheelReadyHyst() {
         if (flywheel == null || !flywheel.isHoldingTarget()) {
@@ -1126,7 +955,7 @@ public class CommandFactory {
             flywheelInToleranceSinceNs = 0L;
             return false;
         }
-        double err = Math.abs(flywheel.getActualRpm() - target);
+        double err = Math.abs(flywheel.getSmoothedRpm() - target);
         double bandOn = FLYWHEEL_READY_ON_RPM;
         double bandOff = Math.max(bandOn, FLYWHEEL_READY_OFF_RPM);
 
@@ -1136,20 +965,21 @@ public class CommandFactory {
                 flywheelBandLatched = false;
                 flywheelInToleranceSinceNs = 0L;
             }
-        } else {
-            // Rising edge: must stay inside bandOn continuously for at least FLYWHEEL_SETTLE_DWELL_S
-            long nowNs = System.nanoTime();
-            if (err <= bandOn) {
+        } else if (err <= bandOn) {
+            if (FLYWHEEL_SETTLE_DWELL_S <= 0.0) {
+                flywheelBandLatched = true;
+            } else {
+                long nowNs = System.nanoTime();
                 if (flywheelInToleranceSinceNs == 0L) {
                     flywheelInToleranceSinceNs = nowNs;
                 }
-                long dwellNs = (long) (Math.max(0.0, FLYWHEEL_SETTLE_DWELL_S) * 1.0e9);
+                long dwellNs = (long) (FLYWHEEL_SETTLE_DWELL_S * 1.0e9);
                 if (nowNs - flywheelInToleranceSinceNs >= dwellNs) {
                     flywheelBandLatched = true;
                 }
-            } else {
-                flywheelInToleranceSinceNs = 0L;
             }
+        } else {
+            flywheelInToleranceSinceNs = 0L;
         }
         return flywheelBandLatched;
     }
@@ -1161,12 +991,12 @@ public class CommandFactory {
      * Enter inside the live tolerance, leave only past the exit margin.
      */
     private boolean aimAlignedHyst() {
-        double err = Math.abs(aim == null ? Double.NaN : aim.liveHeadingErrorDeg());
+        double err = Math.abs(aim == null ? Double.NaN : aim.activeHeadingErrorDeg);
         if (Double.isNaN(err)) {
             alignHyst.latch(false);
             return false;
         }
-        double on = aim == null ? Double.NaN : aim.aimToleranceDeg(aim.liveDistanceInches());
+        double on = aim.activeToleranceDeg;
         if (Double.isNaN(on)) {
             alignHyst.latch(false);
             return false;
@@ -1221,17 +1051,7 @@ public class CommandFactory {
         return evaluateReadiness().all;
     }
 
-    /**
-     * Emit the readiness lines EVERY loop the fire half runs, and name the
-     * blocking member.
-     *
-     * <p>This is the "why is it not firing" answer that was missing: the old
-     * {@code Fire policy} line only said ready/not-ready, and the
-     * {@code Ready to shoot} line was computed a tick earlier from
-     * {@code readinessPeriodic()} — so the 20261025-005022 capture shows
-     * {@code FIRE (ready)} next to {@code Ready to shoot: false}. Both now come
-     * from ONE {@link Readiness} snapshot per loop, so they cannot disagree.
-     */
+    /** Emits readiness telemetry lines and names the first blocking check. */
     private void reportReadinessDetails(Readiness r, boolean ready) {
         reportReadinessDetails(r, ready, false, false);
     }
@@ -1265,7 +1085,7 @@ public class CommandFactory {
         RobotMain.DashTelemetry.addData("Fire transfer", transferState);
     }
 
-    private void reportManualReadinessDetails(boolean ready, boolean autoReady, boolean manualFwd, boolean manualRev) {
+    private void reportManualReadinessDetails(boolean flywheelReady, boolean gateOpenNow, boolean ready, boolean autoReady, boolean manualFwd, boolean manualRev) {
         String policy;
         if (manualRev) {
             policy = "REVERSE (manual)";
@@ -1279,9 +1099,9 @@ public class CommandFactory {
         RobotMain.DashTelemetry.addData("Fire policy", policy);
         RobotMain.DashTelemetry.addData("Ready to shoot", ready);
         RobotMain.DashTelemetry.addData("Fire block", (autoReady || manualFwd || manualRev) ? "none"
-                : (fireSuppressedByDriver ? "driver override (manual transfer)" : (ready ? "none" : (flywheelReadyHyst() ? "gate" : "flywheel"))));
-        RobotMain.DashTelemetry.addData("  ok: flywheel", flag(flywheelReadyHyst()) + flywheelText());
-        RobotMain.DashTelemetry.addData("  ok: gate", flag(gateOk()) + gateText());
+                : (fireSuppressedByDriver ? "driver override (manual transfer)" : (ready ? "none" : (flywheelReady ? "gate (opening)" : "flywheel"))));
+        RobotMain.DashTelemetry.addData("  ok: flywheel", flag(flywheelReady) + flywheelText());
+        RobotMain.DashTelemetry.addData("  ok: gate", flag(gateOpenNow) + gateText());
         RobotMain.DashTelemetry.addData("  turret: MANUAL (not moving)", "0");
         RobotMain.DashTelemetry.addData("Fire transfer", transferState);
     }
@@ -1295,24 +1115,21 @@ public class CommandFactory {
         if (hood == null) {
             return " (no hood)";
         }
-        if (!Hood.IMPLEMENTED) {
-            return " (NOT IMPLEMENTED - ignored)";
-        }
         return String.format(java.util.Locale.US, " %.1f/%.1f deg (err %.1f, tol %.1f)",
                 hood.getCurrentDegrees(), hood.getTargetDegrees(),
                 Math.abs(hood.getCurrentDegrees() - hood.getTargetDegrees()),
                 Hood.TOLERANCE_DEG);
     }
 
-    /** Explain the gate member: missing hardware is called out explicitly, not passed off as OK. */
+    /** Explain the gate member status for telemetry. */
     private String gateText() {
         if (PosServ == null) {
             return " (no gate)";
         }
-        if (!ShootGateServo.IMPLEMENTED) {
-            return " (NOT IMPLEMENTED - ignored)";
+        if (PosServ.isOpen()) {
+            return " OPEN";
         }
-        return String.format(java.util.Locale.US, " %s", PosServ.isClosed() ? "closed" : "OPEN");
+        return PosServ.isClosed() ? " closed" : " moving";
     }
 
     private String flywheelText() {
@@ -1320,7 +1137,7 @@ public class CommandFactory {
         if (Double.isNaN(tgt)) {
             return " (no RPM commanded)";
         }
-        double act = flywheel == null ? 0.0 : flywheel.getActualRpm();
+        double act = flywheel == null ? 0.0 : flywheel.getSmoothedRpm();
         return String.format(java.util.Locale.US, " %.0f/%.0f RPM (err %.0f, on<=%.0f off>%.0f, dwell %.2fs)",
                 act, tgt, Math.abs(act - tgt),
                 FLYWHEEL_READY_ON_RPM,
@@ -1341,14 +1158,14 @@ public class CommandFactory {
             return " (no aim model)";
         }
         double err = safeAimErr();
-        double tol = aim.aimToleranceDeg(aim.liveDistanceInches());
+        double tol = aim.activeToleranceDeg;
         return String.format(java.util.Locale.US, " err %.1f / tol %.1f deg", err, tol);
     }
 
     /**
      * The first member (in evaluation order) that is stopping the shot — one
-     * word the driver can read at a glance. Same order as {@link #readyNow()},
-     * read from the snapshot so it names the member that actually blocked.
+     * word the driver can read at a glance. Gate is checked last so upstream
+     * shooter blockers show before "GATE (opening)".
      */
     private String firstBlocker(Readiness r) {
         if (!r.flywheel) {
@@ -1359,9 +1176,6 @@ public class CommandFactory {
         }
         if (!r.aim) {
             return "AIM" + aimText();
-        }
-        if (!r.gate) {
-            return "GATE (moving)";
         }
         if (!r.translation) {
             return String.format(java.util.Locale.US, "DRIVE (%.2f in/s)", measuredSpeedInS);
@@ -1375,11 +1189,14 @@ public class CommandFactory {
         if (!r.hood) {
             return "HOOD" + hoodText();
         }
+        if (!r.gate) {
+            return "GATE (opening)";
+        }
         return "none";
     }
 
     private double safeAimErr() {
-        double e = aim == null ? Double.NaN : aim.liveHeadingErrorDeg();
+        double e = aim == null ? Double.NaN : aim.activeHeadingErrorDeg;
         return Double.isNaN(e) ? 0.0 : e;
     }
 
@@ -1389,19 +1206,15 @@ public class CommandFactory {
                 <= Math.abs(PosServ.getTarget() - ShootGateServo.POS_A);
     }
 
-    /**
-     * Open the gate — ONLY when the mechanism exists. While
-     * {@link ShootGateServo#IMPLEMENTED} is false this is a no-op, so the
-     * unimplemented servo is never written and never sits mid-slew.
-     */
+    /** Open the shoot gate servo. */
     private void openGate() {
-        if (PosServ == null || !ShootGateServo.IMPLEMENTED) return;
+        if (PosServ == null) return;
         if (!gateOpen()) PosServ.goB();
     }
 
-    /** Close the gate — no-op while the gate is unimplemented (see {@link #openGate()}). */
+    /** Close the shoot gate servo. */
     private void closeGate() {
-        if (PosServ == null || !ShootGateServo.IMPLEMENTED) return;
+        if (PosServ == null) return;
         PosServ.goA();
     }
 
@@ -1410,23 +1223,33 @@ public class CommandFactory {
     // =====================================================================
 
     /**
-     * Measure chassis translation speed and yaw rate from the follower pose
-     * (Pedro exposes a pose but no {@code ChassisSpeeds}, so the deltas between
-     * successive poses ARE the velocity), tick the warmup + debounce timers,
-     * and re-arm a driver-suppressed fire after a short pause.
-     *
-     * <p>Call ONCE per loop from the OpMode's teleop tick, BEFORE the scheduler
-     * polls the triggers — {@code KeyBindings.update()} calls it first.
+     * Updates chassis speed/yaw measurements, warmup countdown, idle aim snapshot,
+     * and driver-override timeout. Called from {@link RobotMain#RobotRunPeriodic()}
+     * right after {@code follower.update()} and before {@code CommandScheduler.run()}.
      */
-    public void readinessPeriodic() {
+    public void updateMotionAndTimers() {
         long nowNs = System.nanoTime();
         double dt = lastPeriodicNs == 0L ? 0.0 : (nowNs - lastPeriodicNs) / 1.0e9;
         dt = Math.min(Math.max(dt, 0.0), 0.25);
         lastPeriodicNs = nowNs;
         warmupRemainingS = Math.max(0.0, warmupRemainingS - dt);
 
+        Velocity vel = null;
+        try {
+            vel = follower != null ? follower.velocity() : null;
+        } catch (Exception ignored) {
+        }
         Pose pose = follower != null ? follower.pose() : null;
-        if (pose == null) {
+        if (vel != null && Double.isFinite(vel.vx) && Double.isFinite(vel.vy) && Double.isFinite(vel.omega)) {
+            measuredSpeedInS = Math.hypot(vel.vx, vel.vy);
+            measuredYawDps = Math.toDegrees(vel.omega);
+            if (pose != null) {
+                prevPoseX = pose.x();
+                prevPoseY = pose.y();
+                prevPoseHeading = pose.heading();
+                prevPoseNs = nowNs;
+            }
+        } else if (pose == null) {
             measuredSpeedInS = 0.0;
             measuredYawDps = 0.0;
             prevPoseX = Double.NaN;
@@ -1451,50 +1274,64 @@ public class CommandFactory {
             prevPoseNs = nowNs;
         }
 
-        readyDebounce.advance(dt);
+        if (aim != null && !aim.activeAiming) {
+            aim.updateIdleSnapshot();
+        }
 
-        // A driver override (manual transfer command) holds the fire off for a
-        // moment; without this the next "ready" tick would slam it back on
-        // while the driver is still unjamming by hand.
         if (fireSuppressedByDriver) {
             fireSuppressedForS += dt;
             if (fireSuppressedForS > FIRE_OVERRIDE_HOLD_S) {
                 fireSuppressedByDriver = false;
             }
         }
+    }
 
+    /**
+     * Post-scheduler readiness update: restores manual intake if firing just ended,
+     * refreshes {@code lastReadiness} when no fire command ran this tick, and publishes
+     * dashboard summary telemetry from the exact same-tick snapshot.
+     * Called from {@link RobotMain#RobotRunPeriodic()} right after {@code CommandScheduler.run()}.
+     */
+    public void readinessPeriodic() {
         restoreManualIntakeWhenFree();
 
-        // Evaluate snapshot once per loop: shared across fire policy and dashboard.
-        lastReadiness = evaluateReadiness();
         if (isManualShootActive()) {
-            boolean manualRdy = flywheelReadyHyst() && gateOk();
-            RobotMain.DashTelemetry.addData("Shoot Ready", manualRdy ? "READY (MANUAL)" : "WAIT (MANUAL)");
-            RobotMain.DashTelemetry.addData("Shoot Blocker", manualRdy ? "none" : (flywheelReadyHyst() ? "gate" : "flywheel"));
+            if (!firing) {
+                lastManualFlywheelReady = flywheelReadyHyst();
+                lastManualGateOpen = gateOk();
+                lastManualReady = lastManualFlywheelReady && lastManualGateOpen;
+            }
+            if (RobotMain.DASHBOARD) {
+                RobotMain.DashTelemetry.addData("Shoot Ready", lastManualReady ? "READY (MANUAL)" : "WAIT (MANUAL)");
+                RobotMain.DashTelemetry.addData("Shoot Blocker", lastManualReady ? "none" : (lastManualFlywheelReady ? "gate (opening)" : "flywheel"));
+                RobotMain.DashTelemetry.addData("Flywheel Ready", flag(lastManualFlywheelReady) + flywheelText());
+            }
         } else {
-            RobotMain.DashTelemetry.addData("Shoot Ready", lastReadiness.all ? "READY" : "WAIT");
-            RobotMain.DashTelemetry.addData("Shoot Blocker", lastReadiness.all ? "none" : firstBlocker(lastReadiness));
+            if (!firing) {
+                lastReadiness = evaluateReadiness();
+            }
+            Readiness r = getLatestReadiness();
+            if (RobotMain.DASHBOARD) {
+                RobotMain.DashTelemetry.addData("Shoot Ready", r.all ? "READY" : "WAIT");
+                RobotMain.DashTelemetry.addData("Shoot Blocker", r.all ? "none" : firstBlocker(r));
+                RobotMain.DashTelemetry.addData("Flywheel Ready", flag(r.flywheel) + flywheelText());
+            }
         }
-        RobotMain.DashTelemetry.addData("Flywheel Ready", flag(isManualShootActive() ? flywheelReadyHyst() : lastReadiness.flywheel) + flywheelText());
 
-        if (firing) {
-            RobotMain.DashTelemetry.addData("Chassis speed (in/s)", "%.2f", measuredSpeedInS);
-            RobotMain.DashTelemetry.addData("Chassis yaw (dps)", "%.1f", measuredYawDps);
-        }
-
-        // Live target distance is tracked continuously by the aim model
-        // (even when no aim/shoot command is scheduled).
-        if (aim != null) {
-            double targetDist = aim.liveDistanceInches();
-            if (!Double.isNaN(targetDist)) {
-                RobotMain.DashTelemetry.addData("Target dist (in)", "%.1f", targetDist);
+        if (RobotMain.DASHBOARD) {
+            if (firing) {
+                RobotMain.DashTelemetry.addData("Chassis speed (in/s)", "%.2f", measuredSpeedInS);
+                RobotMain.DashTelemetry.addData("Chassis yaw (dps)", "%.1f", measuredYawDps);
+            }
+            if (aim != null && !Double.isNaN(aim.activeDistanceIn)) {
+                RobotMain.DashTelemetry.addData("Target dist (in)", "%.1f", aim.activeDistanceIn);
             }
         }
     }
 
     /** Live distance (in) to the closest target right now (NaN if no pose/target). */
     public double getLiveTargetDistanceInches() {
-        return aim != null ? aim.liveDistanceInches() : Double.NaN;
+        return aim != null ? aim.activeDistanceIn : Double.NaN;
     }
 
     /** How long a driver's manual transfer overrides the auto-fire (s). */
@@ -1616,47 +1453,6 @@ public class CommandFactory {
     public static boolean restoreIntakeRpmOnRelease = true;
 
     /**
-     * Linear falling-edge debounce: false is reported only after the input has
-     * been false continuously for the full window; true passes through
-     * instantly. Measured in scheduler time (advanced by
-     * {@link #readinessPeriodic()}), not wall-clock, so a paused robot cannot
-     * "catch up" into a spurious edge.
-     */
-    private static final class FallingEdgeDebounce {
-        private final double windowS;
-        private double timeS;
-        private double falseForS = 0.0;
-        private boolean out = false;
-
-        FallingEdgeDebounce(double windowS) {
-            this.windowS = Math.max(0.0, windowS);
-        }
-
-        /** Advance scheduler time. Call once per loop. */
-        void advance(double dt) {
-            timeS += Math.max(0.0, dt);
-        }
-
-        boolean update(boolean in) {
-            if (in) {
-                falseForS = 0.0;
-                out = true;
-                return true;
-            }
-            if (!out) {
-                return false;
-            }
-            if (falseForS == 0.0) {
-                falseForS = timeS;
-            }
-            if (timeS - falseForS >= windowS) {
-                out = false;
-            }
-            return out;
-        }
-    }
-
-    /**
      * Two-threshold (Schmitt-trigger) latch: turns ON when the value drops to
      * or below {@code on}, turns OFF only once it rises above {@code off},
      * where {@code off &gt; on}. Used for the aim-alignment check so a signal
@@ -1694,12 +1490,11 @@ public class CommandFactory {
      * Linear LUT lookup, edge-clamped to the endpoints. Reads the tunable
      * arrays live, so Panels edits apply on the very next lookup (no rebuild).
      */
-    private static double lutRpm(double distIn) {
+    private static double lutInterpolate(double distIn, double[] ys, double fallback) {
         double[] xs = LUT_DISTANCES_IN;
-        double[] ys = LUT_RPMS;
         int n = Math.min(xs.length, ys.length);
         if (n < 2) {
-            return ys.length > 0 ? ys[0] : 0.0;
+            return ys.length > 0 ? ys[0] : fallback;
         }
         if (distIn <= xs[0]) return ys[0];
         if (distIn >= xs[n - 1]) return ys[n - 1];
@@ -1710,6 +1505,10 @@ public class CommandFactory {
             }
         }
         return ys[n - 1];
+    }
+
+    private static double lutRpm(double distIn) {
+        return lutInterpolate(distIn, LUT_RPMS, 0.0);
     }
 
     /** The Hood angle the manager is commanding right now (NaN when idle). */
@@ -1722,20 +1521,14 @@ public class CommandFactory {
      * Reads the tunable arrays live, so Panels edits apply on the very next lookup.
      */
     public static double lutHoodDeg(double distIn) {
-        double[] xs = LUT_DISTANCES_IN;
-        double[] ys = LUT_HOOD_DEGS;
-        int n = Math.min(xs.length, ys.length);
-        if (n < 2) {
-            return ys.length > 0 ? ys[0] : Hood.HOOD_DOWN_DEG;
-        }
-        if (distIn <= xs[0]) return ys[0];
-        if (distIn >= xs[n - 1]) return ys[n - 1];
-        for (int i = 0; i < n - 1; i++) {
-            if (distIn <= xs[i + 1]) {
-                double t = (distIn - xs[i]) / (xs[i + 1] - xs[i]);
-                return ys[i] + t * (ys[i + 1] - ys[i]);
-            }
-        }
-        return ys[n - 1];
+        return lutInterpolate(distIn, LUT_HOOD_DEGS, Hood.HOOD_DOWN_DEG);
+    }
+
+    /**
+     * Linear LUT lookup for ball time-of-flight (seconds), edge-clamped to endpoints.
+     * Reads {@link #LUT_TOF_S} live for shoot-on-the-move lead.
+     */
+    public static double lutTofSec(double distIn) {
+        return lutInterpolate(distIn, LUT_TOF_S, 0.5);
     }
 }

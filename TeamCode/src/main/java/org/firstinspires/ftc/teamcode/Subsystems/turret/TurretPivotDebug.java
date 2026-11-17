@@ -12,64 +12,15 @@ import org.firstinspires.ftc.teamcode.IronConstants;
 import java.util.Locale;
 
 /**
- * Bench bring-up OpMode for {@link TurretPivot} — runs the turret alone (no
- * drivetrain/vision init), so wiring and tuning can be debugged without the
- * rest of the robot.
+ * Standalone bench debug OpMode for {@link TurretPivot} (no drivetrain/vision init).
  *
- * <p>BOOT PROCEDURE (CRT dual-encoder boot solve):
- * <ol>
- *   <li>Wire the TRACKING encoder B's ABS wire (32T pinion) to OctoQuad
- *       channel 6 and encoder A's (31T pinion, CRT partner) to channel 7
- *       (bank2 pulse-width, already configured).</li>
- *   <li>Select this OpMode and press INIT — the CRT solve finds the true
- *       turret angle from the two encoders (no pointing needed once
- *       TurretCrt.CRT_ZERO_CALIBRATED = true).</li>
- *   <li>Still in init: hand-move the turret slightly — the boot check must
- *       flip to VERIFIED (proves the OctoQuad channel is actually counting).</li>
- *   <li>CALIBRATE once (with the turret at forward): read "CRT A raw revs" and
- *       "CRT B raw revs" below, enter them as TurretCrt.CRT_ZERO_OFFSET_A_REV /
- *       CRT_ZERO_OFFSET_B_REV in Panels (Panels -&gt; TurretCrt). These raw
- *       values are PRE-reversal (raw magnet frame), so flipping
- *       OctoQuadAbsoluteSource.ENCODER_REVERSED / TurretCrt.ENCODER_A_REVERSED
- *       later — e.g. because the dashboard rotated the wrong way — NEVER
- *       invalidates them; only the rotation direction changes.</li>
- *   <li>Press PLAY.</li>
- * </ol>
- *
- * <p>WRAP SEAM: encoder B repeats every 360/5.5 ≈ 65.5° of turret travel, so
- * overshoots past +/-180 cross the seam constantly — that's handled (wrapped
- * deltas, wrap-event counter, soft-limit guard). Watch "wrap/glitch events"
- * tick up once per limit excursion; anything frequent means a wiring/CRC
- * problem.
- *
- * <p>Controls (gamepad 1):
+ * <p>Controls (gamepad1):
  * <ul>
- *   <li>Left stick X — jog the setpoint continuously (+ = CCW).</li>
- *   <li>D-pad left/right — nudge setpoint +15 (CCW) / -15 (CW).</li>
- *   <li>A — goto 0 (forward). Y — goto +90 (left). B — goto -90 (right).
- *       X — goto +180 via GotoSafeAngle (soft-limit aware).</li>
- *   <li>Right bumper — BRAKE (0 power; the 5203's BRAKE behavior holds).
- *       Left bumper — re-zero at forward (re-declares "this is 0 deg" — the
- *       recovery for a wrong boot).</li>
- *   <li>Back — clear latched faults. Right stick click — start/stop the
- *       hand-spin gearing verifier.</li>
+ *   <li>Left stick X / D-pad left-right — jog or nudge setpoint (+ = CCW).</li>
+ *   <li>A / Y / B / X — go to 0 / +90 / -90 / +180 deg via GotoSafeAngle.</li>
+ *   <li>RB — neutral/brake; LB — zero current angle as forward; Back — clear faults.</li>
+ *   <li>D-pad up/down — 90-degree raw PWM microsecond delta test.</li>
  * </ul>
- *
- * <p>90-DEGREE ABS PWM BENCH TEST (dpad up + down): discriminates wiring from
- * calibration, on BOTH encoder channels:
- * <ol>
- *   <li>Hold the turret still, press dpad UP — records the raw µs on BOTH
- *       channels.</li>
- *   <li>Rotate the turret EXACTLY 90 degrees (any direction).</li>
- *   <li>Press dpad DOWN — prints the µs delta on both channels. A healthy
- *       path shows ~±473 µs on B and ~±452 µs on A for a 90° turret rotation
- *       (the pulse train is 1024 µs per ENCODER rev), and every reading
- *       inside 1-1024. A delta near 0, wildly different between channels, or
- *       out-of-window values means the channel is NOT receiving the ABS pulse
- *       train — check the cable (the yellow wire must be moved to the ABS
- *       pin-5 position on the 6-pin REV connector end, per the SDK sample)
- *       and the seating.</li>
- * </ol>
  */
 @TeleOp(name = "Turret Debug", group = "Debug")
 @Disabled

@@ -6,65 +6,29 @@ import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.math.Pose;
 
 /**
- * Stage 1 (WIRED IN, ON by default): rest-pose sanity filter for vision poses.
+ * Sanity filter for vision poses off tipping BIOBUZZ hive cells.
  *
- * <p>The hive cells REST at 30deg tipped, and that 30deg lives IN THE MAP (each
- * tag entry is rotated 30deg off straight-down). So a GOOD solve — cell at rest,
- * map matching reality — reports a FLAT botpose: pitch ~= 0, roll ~= 0. A cell
- * knocked off rest mismatches the map and the solver bends the whole botpose to
- * compensate: tilted, underground, or teleported. Those get dropped before the
- * Kalman corrector. This filter sits between {@link Vision#poll} and the
- * corrector and:
- * <ol>
- *   <li>REJECTS impossible solves outright (tilt / height / speed gates below).</li>
- *   <li>PASSES sane solves through untouched (same object, zero math).</li>
- *   <li>Stashes every decision in {@link #lastDecision()} — {@code VisionFusion.report()}
- *       mirrors it to Panels ({@code Tip/*}) once per loop for tuning.</li>
- * </ol>
- *
- * <p>Stage 2 (the compensator) lives in {@link TipCompensator} and is DISABLED
- * until tested — it attempts to rescue tilted solves by projecting them back
- * to the floor instead of dropping them. This class never rescues; it only
- * passes or drops, so its failure mode is "fuse nothing this loop", which the
- * Kalman predictor (Pinpoint) rides through harmlessly.
+ * <p>The hive cells' 30-degree rest angle is stored in the {@code .fmap}, so a good
+ * solve off an undisturbed cell reports flat (pitch ~ 0, roll ~ 0, Z ~ lens height).
+ * Cells knocked off rest bend the solve (tilted, underground, or teleporting), so this
+ * filter rejects solves outside the tilt, height, and speed gates below.
  */
 @Configurable
 public class TipSanityFilter {
 
-    // ================= gates (Panels -> TipSanityFilter) =================
-    // Reference frame, read carefully: the 30deg REST tilt is encoded IN THE MAP
-    // (each tag entry is rotated 30deg off straight-down). When the observed cell
-    // is at rest, map matches reality, so a GOOD solve reports a FLAT botpose:
-    // pitch ~= 0, roll ~= 0, Z ~= lens height. A cell knocked OFF rest mismatches
-    // the map, and the solver bends the whole botpose to compensate — THAT is the
-    // tilted/underground solve we drop. So these gates are ABSOLUTE tilt from flat,
-    // not deviation from 30. If good solves ever show a constant non-zero pitch,
-    // the map's rest direction is mirrored — fix the .fmap block rotation, not this.
-    /**
-     * Reject when |botpose pitch| exceeds this (deg). GOOD ~= 0 (map holds the
-     * 30deg). Knocked cell -> whole solve tilts. 0 disables.
-     */
+    /** Reject solves when |botpose pitch| exceeds this (degrees). 0 disables. */
     public static double MAX_BOT_PITCH_DEG = 12.0;
-    /** Same for |botpose roll|, degrees. 0 disables. */
+    /** Reject solves when |botpose roll| exceeds this (degrees). 0 disables. */
     public static double MAX_BOT_ROLL_DEG = 12.0;
-    /** Enable the camera/botpose Z height gate. True by default. */
+    /** True = reject solves outside [{@link #CAM_Z_MIN_M}, {@link #CAM_Z_MAX_M}]. */
     public static boolean CHECK_HEIGHT = true;
-    /**
-     * Reject when reported camera/robot height (botpose Z, meters) is outside this
-     * band. Set to safe boundaries (-0.15m to 0.70m): a tipped solve shoves
-     * Z toward the floor (underground = the "robot inside the ground" bug, often < -0.2m)
-     * or skyward (> 0.7m).
-     */
+    /** Minimum valid botpose Z height (meters). */
     public static double CAM_Z_MIN_M = -0.15;
+    /** Maximum valid botpose Z height (meters). */
     public static double CAM_Z_MAX_M = 0.70;
-    /**
-     * Reject when the solve moved faster than this since the last ACCEPTED
-     * solve (in/s). Tipped-cell solves teleport as cells rock; the real robot
-     * cannot teleport. 0 disables. Raised to 200.0 in/s to accept larger translations
-     * after gaps or drift without false teleport rejections.
-     */
+    /** Reject solves implying planar speed above this since the last accepted solve (in/s). 0 disables. */
     public static double MAX_SOLVE_SPEED_IPS = 200.0;
-    /** Max time gap in seconds between accepted solves before resetting teleport baseline. */
+    /** Maximum time gap between accepted solves (seconds) before resetting speed-jump checks. */
     public static double MAX_TELEPORT_GAP_S = 1.5;
 
     /** Verdict for one reading. */

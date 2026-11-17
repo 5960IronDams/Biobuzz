@@ -13,6 +13,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import org.firstinspires.ftc.teamcode.RobotMain;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.FunctionalCommand;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
@@ -20,68 +21,17 @@ import com.seattlesolvers.solverslib.command.SubsystemBase;
 import java.util.Locale;
 
 /**
- * Ramp subsystem: TWO positional servos direct-driving a 2-armed crossbar.
+ * Ramp subsystem: two positional servos driving a crossbar to raise and lower the front ramp.
  *
- * <p>The crossbar pivots the front ramp between two states:
+ * <p>Create via {@link #tryCreate(OpMode)} so missing hardware returns {@code null} cleanly.
+ *
+ * <p>Key constants (Panels -&gt; Ramp):
  * <ul>
- *   <li>{@link #POS_UP} — parked, ramp VERTICAL. This is servo position 0 in
- *       the raw output convention ({@code 0.0 = 0 us-cal end}); it is also the
- *       state the horns should be installed in (see "BRING-UP" below).</li>
- *   <li>{@link #POS_DOWN} — ramp lowered for driving up, found by jogging the
- *       servos toward DOWN and copying the commanded value.</li>
+ *   <li>{@link #POS_UP} — parked (vertical) servo position.</li>
+ *   <li>{@link #POS_DOWN} — lowered servo position for driving up.</li>
+ *   <li>{@link #RIGHT_REVERSED} / {@link #LEFT_REVERSED} — mirror servo output in software.</li>
+ *   <li>{@link #SLEW} — max travel speed (units/sec); 0 disables slew smoothing.</li>
  * </ul>
- *
- * <p><b>WHY dpadDown LIVES ON gamepad2 (co-driver):</b> the same dpad_up /
- * dpad_down pair on gamepad1 already holds the shoot-gate servo nudge
- * ({@code KeyBindings}). Binding them twice on one pad would move the gate and
- * the ramp at the same time, so the ramp owns the OPERATOR pad's dpad:
- * <pre>
- *   gamepad2 dpad DOWN   toggle:  up (parked) -> down (lowered)   [tap]
- *   gamepad2 dpad UP     toggle:  any -> up (parked, 0)           [tap]
- *   gamepad2 LB / RB     held:    jog toward DOWN / toward UP (calibration)
- *   gamepad2 BACK        tap:     cycle jog channel LEFT -> RIGHT -> BOTH
- *   gamepad2 Y           tap:     snap BOTH servos to POS_UP (install the horns)
- * </pre>
- * The dpad bindings are TOGGLES, not holds: after a tap nothing is driving
- * the servo, so it holds position on its own (no "release drops the ramp"
- * failure mode, and holding HPU on the servos is avoided).
- *
- * <p><b>BRING-UP (the calibration the driver assumed — it is the intended one):</b>
- * <ol>
- *   <li>Power the robot, let the OpModes init. {@link #POS_UP} is written to
- *       both servos on construction and re-asserted every loop.</li>
- *   <li>WITH THE RAMP HELD VERTICAL (parked), press the horns onto the servo
- *       splines at position 0. Use the servo LEFT / servo RIGHT readouts to
- *       confirm both channels really are at 0.000 — if a channel was reversed
- *       or the horns went on 180 deg out, they will read 0.5/1.0 here.</li>
- *   <li>Jog down (gamepad2 LB): the jog channel steps toward DOWN ({@link
- *       #DOWN_IS_INCREASING} decides which servo-position direction that is;
- *       {@link #RIGHT_REVERSED} makes the mirrored right arm follow). Press
- *       BACK to jog only LEFT or RIGHT if the crossbar binds.</li>
- *   <li>When the ramp sits at its drive-up angle, copy the shown
- *       "Ramp jog" value here (identical for both arms unless one arm needed a
- *       single-servo trim to square the crossbar). Panels -&gt; Ramp applies
- *       live. Set {@link #IMPLEMENTED} = true.</li>
- * </ol>
- *
- * <p><b>Why a single-servo jog exists:</b> two servos on one crossbar can bind
- * if their horns are a spline apart. Cycle {@link #JOG_SELECT} (gamepad2
- * BACK) to LEFT or RIGHT, bring that arm flush with the other, then copy the
- * same position into both via {@link #POS_DOWN}.
- *
- * <p>No position feedback exists (standard servos), so "arrived" is a claim
- * about the software slew ramp only, exactly like {@code ShootGateServo}.
- *
- * <p>Panels-tunable (Panels -&gt; Ramp): POS_UP / POS_DOWN / limits /
- * direction / slew / jog rate / tolerance. Hardware NAME change needs an
- * OpMode restart (looked up once in the constructor); everything else applies
- * live.
- *
- * <p>Construct once in the OpMode via the null-safe factory (never the
- * constructor directly — see {@link #tryCreate} for why):
- * <pre>
- * ramp = Ramp.tryCreate(this);   // null when the servos aren't in the RC config
- * </pre>
  */
 @Configurable
 public class Ramp extends SubsystemBase {
@@ -90,105 +40,53 @@ public class Ramp extends SubsystemBase {
     /** DS failure-board name for this subsystem (HardwareHealth). */
     public static final String HEALTH_NAME = "RAMP";
 
-    // ---- TODO: edit these per mechanism (hardcoded, two servos per subsystem) ----
-    /**
-     * Must match the RC config names. Changing them needs a restart. Both are
-     * resolved in the constructor, so a Ramp whose servos are not in the RC
-     * config throws here (RobotMain turns that into a DS fault + null).
-     */
+    /** RC config servo names (changing these requires an OpMode restart). */
     public String LeftServoName = IronConstants.DriverSideServoName;
     public String RightServoName = IronConstants.PassengerSideServoName;
 
-    /**
-     * IS THE RAMP PHYSICALLY BUILT AND CALIBRATED? Kept for parity with
-     * {@code ShootGateServo.IMPLEMENTED}: anything that sequences the ramp into
-     * a match path should check this before gating on the ramp, and autos that
-     * lower the ramp for driving should be written against {@link #downCmd()}
-     * only once the true POS_DOWN is entered. It does NOT disable the servos —
-     * the driver needs them live to calibrate.
-     */
-    public static boolean IMPLEMENTED = true;
-
-    /** PARKED, ramp vertical. Servo 0 in the raw output convention — install the horns here. */
+    /** Parked (vertical) position in un-mirrored servo units. */
     public static double POS_UP = 0.0;
-    /**
-     * Lowered, ramp on the floor. CALIBRATE: jog down, then copy the shown
-     * "Ramp jog" value here. Placeholder = half travel, NEVER drive on it.
-     */
+    /** Lowered position in un-mirrored servo units (higher moves toward the floor when DOWN_IS_INCREASING is +1). */
     public static double POS_DOWN = 0.405;
 
-    /**
-     * Which way is DOWN in servo units: +1 = a LARGER position lowers the ramp
-     * (servo horn toward the floor on the driver / left side), -1 = a larger
-     * position RAISES it. The right channel is mirrored by
-     * {@link #RIGHT_REVERSED} on top of this, so both arms lower together.
-     */
+    /** Jog direction for lowering: +1 = larger position lowers ramp, -1 = larger position raises ramp. */
     public static double DOWN_IS_INCREASING = 1.0;
 
-    /**
-     * Mirror the passenger / right servo's direction. True when the two
-     * crossbar arms are mounted on opposite sides of the robot: then one
-     * channel must be flipped so a single commanded value lowers BOTH arms.
-     * Verify during bring-up — if the arms fight, flip this (or the servo's
-     * own RC-config direction).
-     */
+    /** Mirror the right servo output (1.0 - pos) so both crossbar arms move together. */
     public static boolean RIGHT_REVERSED = true;
-    /** Mirror the driver / left servo. Rarely needed; here for a swapped-cable rescue. */
+    /** Mirror the left servo output (1.0 - pos). */
     public static boolean LEFT_REVERSED = false;
 
-    /** Software clamp. Keeps the linkage off the hard stops / the floor. */
+    /** Minimum allowed servo position limit. */
     public static double POS_MIN = 0.0;
+    /** Maximum allowed servo position limit. */
     public static double POS_MAX = 1.0;
 
-    /**
-     * Slew limit, position units/sec, applied to the travel between UP and
-     * DOWN. 1.0 = full sweep in ~1s. 0 or negative = snap instantly (only do
-     * that once the mechanism is happy, servos slam otherwise).
-     */
+    /** Max travel speed in servo units/sec (1.0 = full sweep in ~1s; <= 0 moves instantly). */
     public static double SLEW = 1.0;
-    /** Hold-to-jog speed during CALIBRATION (units/sec). Faster than the travel slew. */
+    /** Calibration jog speed while button is held (servo units/sec). */
     public static double JOG_RATE = 0.25;
-    /**
-     * Smallest jog a single scheduler tick may command, so a dpad tap shorter
-     * than one loop still visibly steps the ramp. Deliberately much finer than
-     * {@link #TOLERANCE}: this is a CALIBRATION resolution, not an arrival check.
-     */
+    /** Minimum jog step per tick so short button taps still register. */
     public static double JOG_STEP_MIN = 0.002;
-    /** Which channel the jog moves: 0 = left, 1 = right, 2 = both (BACK cycles it). */
+    /** Channel moved by {@link #jogCmd(boolean)}: 0 = left, 1 = right, 2 = both. */
     public static int JOG_SELECT = 2;
-    /** Within this of target counts as "there" for {@link #isAtPosition}. */
+    /** Position tolerance for {@link #isAtPosition()}. */
     public static double TOLERANCE = 0.01;
 
     private final Servo left;
     private final Servo right;
     private final ElapsedTime timer = new ElapsedTime();
 
-    /** Requested positions, in the SAME (un-mirrored) units as POS_UP/POS_DOWN. */
     private double leftTarget;
     private double rightTarget;
-    /** Last slew-limited positions actually written to hardware. */
     private double leftCommanded;
     private double rightCommanded;
     private double lastLeftOut = Double.NaN;
     private double lastRightOut = Double.NaN;
 
     private double lastTime = Double.NaN;
-    /** Shared dt tracker for the jog commands (rate * dt, loop-time independent). */
     private long lastJogNs = -1L;
 
-    /**
-     * Construction contract: {@link #tryCreate} is THE way to build a Ramp
-     * from an OpMode, because it resolves the hardware BEFORE this constructor
-     * runs. That is not stylistic — {@link SubsystemBase}'s constructor (run
-     * by our implicit {@code super()}) registers this instance with the
-     * CommandScheduler. If this body threw on a missing servo AFTER that point
-     * the scheduler would keep a half-built object and call {@link #periodic()}
-     * on it every loop, NPE-ing on the null servos — exactly the crash in
-     * Match-0-JowBy_TeleOp ("setDirection ... on a null object reference").
-     * {@code SubsystemBase} has no injectable constructor and Java forbids
-     * touching {@code this} before {@code super()}, so the only correct spot
-     * for the lookup is before construction.
-     */
     private Ramp(OpMode opMode, Servo left, Servo right) {
         this.left = left;
         this.right = right;
@@ -197,7 +95,6 @@ public class Ramp extends SubsystemBase {
         rightTarget = leftTarget;
         leftCommanded = leftTarget;
         rightCommanded = rightTarget;
-        // NOTE: no setDirection() call here or anywhere else — see output().
         writeNow();
         timer.reset();
         Log.i("IronLog", "Ramp created (" + LeftServoName + " + " + RightServoName
@@ -205,10 +102,8 @@ public class Ramp extends SubsystemBase {
     }
 
     /**
-     * Null-safe constructor: resolves both servos FIRST, then constructs (and
-     * therefore registers) the subsystem. Returns null when either servo name
-     * is missing from the RC config. See the private constructor for why the
-     * lookup must precede construction.
+     * Null-safe factory: looks up both servos before constructing/registering the subsystem.
+     * Returns null if either servo is missing from the RC config.
      */
     public static Ramp tryCreate(OpMode opMode) {
         final Servo l;
@@ -235,14 +130,8 @@ public class Ramp extends SubsystemBase {
     // ---- Mapping helpers ---------------------------------------------------------
 
     /**
-     * Target (un-mirrored) -> what this channel is actually written with.
-     * Mirrors the target, NOT the output, so a command can still be read back
-     * in POS_UP/POS_DOWN units.
-     *
-     * <p><b>This is the ONLY place servo direction is applied.</b> Do not also
-     * call {@code Servo.setDirection()} — doing both double-negates and the
-     * reversal silently stops working (§13.1), and a per-loop setDirection()
-     * also overrides whatever direction the DS / RC config asked for.
+     * Converts un-mirrored target position to hardware servo output (0..1).
+     * Reversal is handled strictly here rather than calling {@code Servo.setDirection()}.
      */
     private static double output(double target, boolean reversed) {
         return reversed ? 1.0 - target : target;
@@ -498,24 +387,10 @@ public class Ramp extends SubsystemBase {
     public void periodic() {
         double now = timer.seconds();
         double rawDt = Double.isNaN(lastTime) ? 0.02 : Math.max(0, now - lastTime);
-        double dtSec = Math.min(rawDt, 0.25); // Panels pause shouldn't slingshot servos
+        double dtSec = Math.min(rawDt, 0.25);
         lastTime = now;
 
-        // Live-tune support: limits apply without restart.
-        // NOTE: no scaleRange() on purpose -- positions are absolute 0..1,
-        // mirrored for the right channel, and clamped here.
-        //
-        // §13.1: applyDirections() used to be called here EVERY loop. That was
-        // a bug on two counts:
-        //   1. Together with output()'s value mirroring it double-negated the
-        //      reversal, so LEFT_REVERSED / RIGHT_REVERSED had NO physical
-        //      effect no matter what you set (capture 20261029-012050).
-        //   2. Calling setDirection() every loop made this the last word on
-        //      servo direction, so changing direction on the DS / in the RC
-        //      config was immediately overwritten — which is why the dashboard
-        //      showed correct positions while the horn went the wrong way.
-        // Direction is now mirrored in exactly ONE place: output(). Do not
-        // reintroduce setDirection() calls here.
+        // Direction is mirrored solely via output(); never call Servo.setDirection() here.
         double lo = Math.min(POS_MIN, POS_MAX);
         double hi = Math.max(POS_MIN, POS_MAX);
         leftTarget = clamp(leftTarget, lo, hi);
@@ -546,8 +421,9 @@ public class Ramp extends SubsystemBase {
      * partial frames and flickers).
      */
     private void report() {
-        if (IMPLEMENTED) {
-            HardwareHealth.get().ok(HEALTH_NAME);
+        HardwareHealth.get().ok(HEALTH_NAME);
+        if (!RobotMain.DASHBOARD) {
+            return;
         }
         // The numbers a calibrating driver copies into POS_DOWN, in
         // un-mirrored units (identical to the raw servo value on an
@@ -565,11 +441,10 @@ public class Ramp extends SubsystemBase {
                         rightTarget, output(rightCommanded, RIGHT_REVERSED),
                         RIGHT_REVERSED ? " (REV)" : ""));
         telemetry.addData("Ramp presets",
-                String.format(Locale.US, "UP %.3f  DOWN %.3f  span %.3f  travel %.2fs  %s  [%s]",
+                String.format(Locale.US, "UP %.3f  DOWN %.3f  span %.3f  travel %.2fs  %s",
                         POS_UP, POS_DOWN, presetSpan(),
                         (SLEW > 0 ? presetSpan() / SLEW : 0.0),
-                        DOWN_IS_INCREASING >= 0 ? "down=+" : "down=-",
-                        IMPLEMENTED ? "CALIBRATED" : "NOT CALIBRATED"));
+                        DOWN_IS_INCREASING >= 0 ? "down=+" : "down=-"));
         telemetry.addData("Ramp jog <-- POS_DOWN",
                 String.format(Locale.US, "L %.3f  R %.3f  (jog sel %d)",
                         leftTarget, rightTarget, JOG_SELECT));

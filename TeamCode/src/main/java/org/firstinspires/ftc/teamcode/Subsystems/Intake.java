@@ -5,11 +5,11 @@ import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import org.firstinspires.ftc.teamcode.RobotMain;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
 
@@ -33,15 +33,13 @@ public class Intake extends SubsystemBase {
 
     // ---- Panels tuning ----
     public static double INTAKE_RPM = 290; // max measured speed 300 @ 19.2:1
-    /** goBILDA 5203 Yellow Jacket geared 5.2:1 = 28 PPR x 5.2 = 145.6 (IronConstants helper - same motor + ratio as the transfer). */
+    /** goBILDA 5203 Yellow Jacket geared 19.2:1 = 28 PPR x 19.2 = 537.6 (IronConstants helper - same motor + ratio as the transfer). */
     public static double TICKS_PER_REV = IronConstants.gobilda5203TicksPerRev(19.2);
     public static double kP = 20;
     public static double kI = 0;
     public static double kD = 0;
     public static double kF = 13;
     public static boolean MOTOR_REVERSED = true;
-    public static double TRIGGER_THRESHOLD = 0.2;
-
 
     private final DcMotorEx motor;
 
@@ -50,6 +48,7 @@ public class Intake extends SubsystemBase {
     private double lastD = Double.NaN;
     private double lastF = Double.NaN;
     private boolean lastReversed = false;
+    private double lastAppliedTicks = Double.NaN;
 
     public Intake(OpMode opMode) {
         motor = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.IntakeMotorName);
@@ -79,14 +78,22 @@ public class Intake extends SubsystemBase {
     }
 
     public void runIntake() {
-        motor.setVelocity(rpmToTicksPerSec(INTAKE_RPM));
+        runIntake(INTAKE_RPM);
     }
+
     public void runIntake(double atThisRPM) {
-        motor.setVelocity(rpmToTicksPerSec(atThisRPM));
+        double ticks = rpmToTicksPerSec(atThisRPM);
+        if (Double.isNaN(lastAppliedTicks) || Math.abs(ticks - lastAppliedTicks) > 1e-6) {
+            motor.setVelocity(ticks);
+            lastAppliedTicks = ticks;
+        }
     }
 
     public void stop() {
-        motor.setVelocity(0);
+        if (Double.isNaN(lastAppliedTicks) || lastAppliedTicks != 0.0) {
+            motor.setVelocity(0);
+            lastAppliedTicks = 0.0;
+        }
     }
 
     // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----
@@ -109,7 +116,7 @@ public class Intake extends SubsystemBase {
         return run(this::runIntake);
     }
     public Command reverseCmd() {
-        return run(()->this.runIntake(-INTAKE_RPM));
+        return run(() -> this.runIntake(-INTAKE_RPM));
     }
 
     /** PID-brake the intake to zero. */
@@ -131,6 +138,7 @@ public class Intake extends SubsystemBase {
                     ? DcMotor.Direction.REVERSE
                     : DcMotor.Direction.FORWARD);
             lastReversed = MOTOR_REVERSED;
+            lastAppliedTicks = Double.NaN;
         }
     }
 
@@ -138,15 +146,13 @@ public class Intake extends SubsystemBase {
     public void periodic() {
         applyPids(false);
 
-        // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
-        // clears its line buffer on every update(), so >1 update per loop sends
-        // partial frames (flicker) and drops lines. RobotMain.flushTelemetry()
-        // does the single end-of-loop flush.
-        telemetry.addData("Intake target RPM", INTAKE_RPM);
-        telemetry.addData("Intake actual RPM", "%.1f", getActualRpm());
-        telemetry.addData("Intake target tps", "%.1f", rpmToTicksPerSec(INTAKE_RPM));
-        telemetry.addData("Intake actual tps", "%.1f", motor.getVelocity());
+        if (RobotMain.DASHBOARD) {
+            // NOTE: addData only, no update() here. RobotMain.flushTelemetry() does the single flush.
+            double tps = motor.getVelocity();
+            telemetry.addData("Intake target RPM", INTAKE_RPM);
+            telemetry.addData("Intake actual RPM", "%.1f", ticksPerSecToRpm(tps));
+            telemetry.addData("Intake target tps", "%.1f", rpmToTicksPerSec(INTAKE_RPM));
+            telemetry.addData("Intake actual tps", "%.1f", tps);
+        }
     }
-
-
 }

@@ -3,34 +3,12 @@ package org.firstinspires.ftc.teamcode.Subsystems.turret;
 import com.bylazar.configurables.annotations.Configurable;
 
 /**
- * TurretCrt — the CRT (Chinese Remainder Theorem) angle math for the turret's
- * TWO absolute encoders, broken out of {@link TurretPivot} so the tracking
- * subsystem stays readable.
+ * Chinese Remainder Theorem (CRT) dual-encoder math for finding the turret's true
+ * multi-turn angle at boot using two pinions of different tooth counts (31T and 32T
+ * on the 176T turret ring, unique over ~5.64 turns).
  *
- * <p><b>The problem it solves:</b> a single absolute encoder only knows its
- * angle within ONE turn of the ENCODER shaft. Because the encoder pinion
- * turns several times per turret turn, many different turret angles produce
- * the same encoder reading. With a SECOND encoder on a pinion with a
- * DIFFERENT tooth count, only one turret angle makes both readings agree at
- * once — so at boot we can compute the turret's TRUE multi-turn angle from
- * two single-turn readings. (Same trick as sharing a secret between two
- * clocks that repeat at different rates — hence "Chinese Remainder Theorem".)
- *
- * <p><b>This robot's gearing:</b> the 176T turret ring spins a 64T idler, and
- * the idler drives BOTH encoder pinions: 31T (encoder A) and 32T (encoder B).
- * Each pinion turns {@code 176 / pinionTeeth} per turret turn:
- * A = 176/31 ≈ 5.677, B = 176/32 = 5.5. The (A, B) pair is unique over
- * lcm(31, 32)/176 ≈ 5.64 turret turns — far more than the ±180° travel — so
- * the boot solve always has exactly one true answer.
- *
- * <p><b>Frame convention (SESSION 5b):</b> the zero offsets below are RAW
- * magnet-frame values, subtracted from the raw reading BEFORE the direction
- * flips are applied. That ordering makes the calibration immune to flipping
- * {@link #ENCODER_A_REVERSED} (or the tracking encoder's flip): a flip only
- * mirrors the rotation direction, never the zero.
- *
- * <p>Everything here is static and stateless — {@link TurretPivot} calls into
- * it at boot (the solve) and every loop (the encoder-A cross-check).
+ * <p>Zero offsets are calibrated in the raw magnet frame before direction flips, so
+ * toggling {@link #ENCODER_A_REVERSED} does not require re-calibrating the zero offsets.
  */
 @Configurable
 public final class TurretCrt {
@@ -129,11 +107,8 @@ public final class TurretCrt {
     }
 
     /**
-     * Wrap-aware difference of two [0,1) fractions, centered on 0: result in [-0.5, 0.5).
-     * CONVENTION: {@code fracDiff(x, y) = x - y} (shortest path) — "measured minus
-     * predicted". For accumulating MOTION between two readings use
-     * {@link #forwardDiffRevs} instead (its argument-swapped sibling); mixing the
-     * two up silently REVERSES the tracked stream (see TURRET_PORTING_NOTES §12.20).
+     * Shortest signed difference (x - y) wrapped to [-0.5, 0.5) revolutions.
+     * Use {@link #forwardDiffRevs(double, double)} when accumulating motion from {@code from} to {@code to}.
      */
     public static double fracDiff(double x, double y) {
         return mod1(x - y + 0.5) - 0.5;
@@ -210,8 +185,6 @@ public final class TurretCrt {
      */
     public static SolveResult solve(double aRawRevs, double bRawRevs, boolean reversedB,
                                     double revsPerTurretB, double minTurns, double maxTurns) {
-        // SESSION 5b: offsets are RAW-frame — subtract them from the raw
-        // readings BEFORE the direction flips (see solveFrameRevs).
         double b = solveFrameRevs(bRawRevs, CRT_ZERO_OFFSET_B_REV, reversedB);
         double a = solveFrameRevs(aRawRevs, CRT_ZERO_OFFSET_A_REV, ENCODER_A_REVERSED);
 

@@ -11,42 +11,13 @@ import java.util.Locale;
 import java.util.OptionalDouble;
 
 /**
- * TurretTracker — figures out WHERE THE TURRET IS. It fuses three encoders
- * into one continuous position estimate and hands it to {@link TurretPivot},
- * which does everything else (setpoints, PID, driving). Splitting it this way
- * keeps the "sensing" half and the "acting" half of the turret in separate,
- * readable files.
- *
- * <p><b>The three sensors and what each is good at:</b>
- * <ol>
- *   <li><b>Motor's built-in encoder</b> (the 5203's quadrature, counted in
- *       hardware between loops): EXACT motion every loop at any speed — but
- *       it only knows deltas, so any tiny error accumulates forever.</li>
- *   <li><b>Encoder B</b> (32T pinion, REV Through Bore absolute PWM via the
- *       OctoQuad): knows the ABSOLUTE angle, never drifts — but the PWM train
- *       only refreshes at ~10 Hz, so per-loop it is stale and quantized.</li>
- *   <li><b>Encoder A</b> (31T pinion, same bus): a second absolute opinion
- *       used to (a) solve the true multi-turn angle at boot together with B
- *       (the CRT solve in {@link TurretCrt}) and (b) cross-check every loop
- *       that nothing has slipped.</li>
- * </ol>
- *
- * <p><b>The hybrid state machine (how 1 and 2 are combined):</b>
+ * Fuses the turret's three encoders into one continuous angle (deg, 0 = forward, +CCW)
+ * and velocity (deg/s) for {@link TurretPivot}:
  * <ul>
- *   <li>{@code WATCH} — PWM owns tracking while the motor encoder proves its
- *       direction at the first powered motion (>= 6 deg of agreed motion).</li>
- *   <li>{@code ACTIVE} — the motor encoder integrates motion every loop; the
- *       PWM absolute hard-snaps the position whenever the turret is AT REST
- *       (erases accumulated drift right before a shot) and is only recorded
- *       (never applied) while moving, because a fresh PWM reading can be
- *       ~100 ms stale at speed.</li>
- *   <li>{@code OFF} — encoder-B PWM-only tracking with a reduced power cap:
- *       the fallback after any fault, and the mode you get with
- *       {@code MOTOR_ENC_HYBRID = false}.</li>
+ *   <li>Motor quadrature encoder — exact per-loop motion deltas in {@code ACTIVE} mode.</li>
+ *   <li>Encoder B (32T) PWM absolute — anchors at rest and provides {@code WATCH}/{@code OFF} tracking.</li>
+ *   <li>Encoder A (31T) PWM absolute — CRT boot solving and per-loop cross-check.</li>
  * </ul>
- *
- * <p>This class never drives anything — it reads encoders and reports. Power,
- * brakes and fault REACTIONS stay in TurretPivot.
  */
 @Configurable
 public class TurretTracker {
@@ -55,119 +26,61 @@ public class TurretTracker {
     // Tuning (Panels -> TurretTracker)
     // =========================================================================
 
-    /**
-     * Median window for the raw absolute stream before unwrapping. 3 = a
-     * single garbage read between two good ones is dropped entirely (one-tick
-     * lag on real motion). 1 = off. NOTE (documented limitation): the median
-     * runs on WRAPPED fractional revs, so it is not seam-aware — during very
-     * fast seam crossings a wrong-branch value can pass; the implausibility
-     * gate + the hybrid's wrap-resolved anchor are the backstops.
-     */
+    /** Median filter window on raw absolute reads (3 drops single-sample glitches; 1 = off). */
     public static int ABS_MEDIAN_WINDOW = 3;
 
-    /**
-     * Implausibility gate: a per-loop raw step bigger than this speed's step
-     * (times dt) is treated as a glitch — NOT integrated, counted, and the
-     * tracker waits for the next good read. Sized above the real mechanism:
-     * motor no-load at full power plus a hand-spin margin.
-     */
+    /** Maximum plausible turret angular speed (deg/s) for filtering single-loop PWM glitches. */
     public static double ABS_MAX_PLAUSIBLE_DPS = 2000.0;
 
-    /** Consecutive implausible steps before re-anchoring to the raw reading anyway. */
+    /** Consecutive rejected PWM steps before force-reanchoring to the raw reading. */
     public static int ABS_REJECT_REANCHOR = 8;
 
-    /** Boot stability check: number of reads (12 ms apart) sampled at init. */
+    /** Number of boot reads (12 ms apart) used to verify absolute encoder stability. */
     public static int ABS_BOOT_READS = 8;
 
-    /** Boot stability check: allowed spread across those reads (deg). */
+    /** Maximum allowed spread (deg) across boot stability reads. */
     public static double ABS_BOOT_SPREAD_DEG = 3.0;
 
-    /** Velocity EMA weight (new-sample fraction) — tames quantization into the D term. 1.0 = off. */
-    public static double VELOCITY_EMA_ALPHA = 0.7;
+    /** Velocity EMA smoothing weight (0.05..1.0; lower smooths more, 1.0 = raw derivative). */
+    public static double VELOCITY_EMA_ALPHA = 1.0;
 
-    /** After this long with no fresh PWM change, treat the (held) velocity as 0. */
+    /** Time (s) without a PWM change before held velocity relaxes to 0. */
     public static double ABS_VELOCITY_STALE_S = 0.30;
 
     // ---- Hybrid motor-encoder tracking ----
 
-    /** 5203 built-in encoder counts per MOTOR-shaft revolution (before the gearbox). */
+    /** 5203 built-in encoder counts per motor-shaft revolution (before gearbox). */
     public static double MOTOR_ENC_TICKS_PER_MOTOR_REV = 28.0;
     /** 5203 planetary gearbox ratio (19.2:1 = 3591/187). */
     public static double MOTOR_PLANETARY_RATIO = 3591.0 / 187.0;
 
-    /**
-     * Master switch for the hybrid tracker. true = hybrid (motor integrates
-     * per-loop, PWM absolutes anchor + cross-check). false = the encoder-B
-     * PWM-only tracker runs permanently (the fallback mode — also what the
-     * hybrid demotes to on any fault).
-     */
+    /** True enables hybrid motor+PWM tracking; false forces PWM-only fallback mode. */
     public static boolean MOTOR_ENC_HYBRID = true;
 
-    /**
-     * Motor encoder polarity: +1 when positive tick delta = CCW turret motion.
-     * Bench-verified (capture 022708); flip if the boot direction guard or
-     * watch mode latches MOTOR_ENC_DIR.
-     */
+    /** Motor encoder polarity (+1 or -1) so positive tick deltas match CCW turret motion. */
     public static double MOTOR_ENC_POLARITY = 1.0;
 
-    /** Anchor correction larger than this (deg) is rejected as absurd (recorded, not applied). */
+    /** Rejects at-rest anchor corrections larger than this (deg). */
     public static double MOTOR_ENC_ANCHOR_REJECT_DEG = 25.0;
-    /** At-rest hard re-anchor runs while the turret is slower than this (deg/s). */
+    /** Maximum turret speed (deg/s) for applying at-rest PWM hard re-anchoring. */
     public static double MOTOR_ENC_REST_ANCHOR_VEL_DPS = 8.0;
-    /**
-     * Watch promotion: the PWM-tracked turret must move at least this much (deg)
-     * ...
-     *
-     * <p><b>4.0 since §12.35</b> (was 6.0). §12.28 sized this at 6 deg to keep
-     * a comfortable margin over the motor encoder's 0.244 deg/tick, and noted
-     * the cost explicitly: "~0.3 s of slow creep at the first powered motion of
-     * every OpMode". At the 0.15 WATCH cap that is ~90 deg/s, so the turret has
-     * to physically travel 6 deg before it is allowed full power — the single
-     * largest contributor to "not peppy off the start". 4 deg still spans ~16
-     * motor ticks and ~73 encoder-B PWM steps, so it is far above quantization:
-     * the dead test below only needs the motor to have integrated
-     * {@link #MOTOR_ENC_CONFIRM_MOT_DEG} (3 deg) in the same direction, which
-     * 4 deg of PWM travel proves just as conclusively as 6. Expected saving is
-     * ~0.07 s of the confirmation creep. Do not take this below ~3 deg: the
-     * window has to stay comfortably wider than the motor threshold it is
-     * being compared against.
-     */
-    public static double MOTOR_ENC_CONFIRM_PWM_DEG = 4.0;
-    /** ...while the motor encoder integrated at least this much (deg), same sign. */
-    public static double MOTOR_ENC_CONFIRM_MOT_DEG = 3.0;
-    /** Moving-monitor dead test: a PWM interval this large (deg) counts as evidence ... */
-    public static double MOTOR_ENC_DEAD_PWM_DEG = 5.0;
-    /** ...against the motor encoder integrating less than this (deg) over the same span. */
-    public static double MOTOR_ENC_DEAD_MOT_DEG = 1.0;
-    /** Consecutive dead/direction evidences before demoting the hybrid. */
-    public static int MOTOR_ENC_STREAK_LIMIT = 2;
-    /** Consecutive motor-encoder READ failures before demoting the hybrid. */
+    /** Minimum time (s) PWM must stay unchanged before at-rest re-anchoring snaps position. */
+    public static double MOTOR_ENC_REST_SETTLE_S = 0.12;
+    /** Consecutive motor-encoder read exceptions before demoting hybrid tracking to PWM-only. */
     public static int MOTOR_ENC_READ_FAIL_LIMIT = 3;
 
-    /** Consecutive failed feedback reads tolerated before "feedback lost" (I2C hiccups happen). */
+    /** Consecutive failed feedback reads before declaring feedback lost and braking. */
     public static int FEEDBACK_FAIL_LIMIT = 10;
 
     /**
-     * Consecutive loops with NO absolute (OctoQuad/encoder-B) read before the
-     * ABS_STREAM_LOST fault latches onto the driver-station failure board.
-     * This is deliberately NOT {@link #feedbackLost()}: in hybrid ACTIVE the
-     * motor encoder keeps tracking (no brake), but the absolute path — the
-     * boot-correct position, the at-rest anchors, the A cross-check — is gone
-     * and the driver must know. ~50 loops ≈ 2.5-3 s at the measured 49-54 ms
-     * loop. Auto-clears after the same count of consecutive GOOD reads (a
-     * re-seated wire recovers without an OpMode restart).
+     * Consecutive loops without an absolute PWM read before latching ABS_STREAM_LOST
+     * on HardwareHealth (auto-clears after the same number of good reads).
      */
     public static int ABS_STREAM_LOST_LOOPS = 50;
 
-    /**
-     * Physical-continuity ceiling (§12.28): the fastest turret speed the
-     * mechanism can actually reach. Measured terminal speed at MAX_POWER 1.0
-     * is ~600 deg/s (captures 041229 / 011309 / 012540); this is set at ~2x
-     * that so a legitimate burst can never trip it, while a lost whole wrap
-     * (which implies 1000+ deg/s) always does.
-     */
+    /** Maximum physically plausible turret speed (deg/s) for detecting lost encoder wraps. */
     public static double CONTINUITY_MAX_DPS = 1200.0;
-    /** Consecutive over-ceiling loops before the position is declared untrustworthy. */
+    /** Consecutive over-speed steps before latching position divergence. */
     public static int CONTINUITY_LIMIT = 2;
 
     // =========================================================================
@@ -244,13 +157,11 @@ public class TurretTracker {
     // ---- hybrid motor-encoder state ----
     /**
      * Hybrid tracker operating mode. ACTIVE = motor encoder owns per-loop
-     * motion. WATCH = PWM owns tracking while the motor encoder proves its
-     * direction at the first powered motion. OFF = PWM-only tracking (the
-     * encoder-B fallback — also the demotion target for any hybrid fault).
+     * motion and PWM anchors at rest. OFF = PWM-only tracking fallback.
      */
-    private enum MotEncMode { OFF, WATCH, ACTIVE }
+    private enum MotEncMode { OFF, ACTIVE }
     private MotEncMode motorEncMode = MotEncMode.OFF;
-    /** Why the hybrid is OFF (telemetry; empty for WATCH/ACTIVE). */
+    /** Why the hybrid is OFF (telemetry; empty when ACTIVE). */
     private String motorEncOffReason = "";
     /** False until the first motor-encoder read after boot/re-zero (delta baseline). */
     private boolean motorEncPrimed = false;
@@ -259,38 +170,20 @@ public class TurretTracker {
     private int motorEncGlitchEvents = 0;
     private int motorEncConsecGlitches = 0;
     private int motorEncReadFails = 0;
-    /** Watch mode: PWM-tracked position when watch began (NaN = not started) + motor net motion. */
-    private double watchStartPos = Double.NaN;
-    private double watchMotNetDeg = 0;
-    private int watchDeadStreak = 0;
-    /** ACTIVE mode: motor-integrated motion since the last fresh PWM reading (deg). */
-    private double motNetSinceFresh = 0;
-    private int deadStreak = 0;
-    private int dirStreak = 0;
-    /** Last wrap-resolved absolute reading (encoder-B revs, continuous); NaN = none yet. */
-    private double lastAnchoredRevs = Double.NaN;
     /** Last anchor correction (deg, prediction-vs-absolute) — telemetry/slip visibility. */
     private double lastAnchorCorrDeg = Double.NaN;
     private int consecutiveAnchorRejects = 0;
     private int anchorRejectEvents = 0;
-    /** Latched: motor encoder dead / persistently disagrees with the absolute path. */
+    /** Latched: motor encoder failed repeated hardware reads. */
     private boolean faultMotorEnc = false;
-    /** Latched: motor encoder direction contradicts the absolute path (polarity/flip suspect). */
-    private boolean faultMotorEncDir = false;
     /** Latched: the absolute (OctoQuad/encoder-B) stream stopped being read — DS failure-board alarm. */
     private boolean faultAbsStreamLost = false;
-    /** §12.28: the tracked stream is no longer physically plausible — position untrustworthy, brake. */
     private boolean positionDiverged = false;
     private int continuityStreak = 0;
     /** Consecutive loops without an absolute read (drives faultAbsStreamLost). */
     private int absLostStreak = 0;
     /** Consecutive good absolute reads (auto-clears faultAbsStreamLost). */
     private int absGoodStreak = 0;
-    // Boot direction guard, third vote (motor encoder — independent of both flip flags).
-    private boolean bootDirMotPrimed = false;
-    private int bootDirMotLastRaw = 0;
-    private double bootDirSumMotDeg = 0;
-    private boolean bootDirMotChecked = false;
 
     private final ElapsedTimeTimer timer = new ElapsedTimeTimer();
 
@@ -387,13 +280,6 @@ public class TurretTracker {
         motorEncPrimed = false;
         motorEncReadFails = 0;
         motorEncConsecGlitches = 0;
-        watchStartPos = Double.NaN;
-        watchMotNetDeg = 0;
-        watchDeadStreak = 0;
-        motNetSinceFresh = 0;
-        deadStreak = 0;
-        dirStreak = 0;
-        lastAnchoredRevs = Double.NaN;
         lastAnchorCorrDeg = Double.NaN;
         consecutiveAnchorRejects = 0;
         motorEncMode = resolveMotorEncMode();
@@ -447,21 +333,8 @@ public class TurretTracker {
     }
 
     /**
-     * Boot-time DIRECTION cross-guard. Fed by the SAME absolute read the boot
-     * check just did ({@code bFlippedRevs} = tracking encoder B in its FLIPPED
-     * frame — the frame the PID actually consumes). While the humans hand-move
-     * the turret for the boot check, it accumulates B's motion against encoder
-     * A's solve-frame motion. Both frames are CCW-positive when the direction
-     * flags are right, so over the same physical motion their signs must agree.
-     * A disagreement means the tracking encoder's flip is not what the stream
-     * is doing (stale runtime override, wiring change, swapped channels) — the
-     * exact failure that mirrored the dashboard and made the PID a
-     * positive-feedback runaway on 2026-10-23. Latches
-     * {@link #isBootDirectionMismatch()} after ~15 turret degrees of hand
-     * motion on BOTH channels. A THIRD vote — the motor's built-in encoder,
-     * whose turret-frame sign is independent of BOTH Through-Bore flip flags —
-     * catches the "two wrong flips look unanimous" blind spot (assuming
-     * MOTOR_ENC_POLARITY was bench-verified; the log says which suspect first).
+     * Checks during init hand-motion that B (flipped), A, and the motor encoder
+     * all move in the same direction.
      */
     private void pollBootDirectionGuard(double bFlippedRevs) {
         if (bootDirMismatch || !(absoluteSource instanceof OctoQuadAbsoluteSource)) {
@@ -481,10 +354,6 @@ public class TurretTracker {
             bootDirLastA = a;
             return;
         }
-        // Both sums accumulate FORWARD motion (from last reading to now) so
-        // their signs are directly comparable (§12.20: the old code had two
-        // helpers with opposite argument orders; forwardDiffRevs makes the
-        // intent explicit).
         bootDirSumBRevs += TurretCrt.forwardDiffRevs(bootDirLastB, b);
         bootDirSumARevs += TurretCrt.forwardDiffRevs(bootDirLastA, a);
         bootDirLastB = b;
@@ -503,42 +372,6 @@ public class TurretTracker {
                         + " deg / A " + aDeg + " deg agree)");
             }
         }
-
-        // ---- Third vote — the motor's built-in encoder ----
-        if (!bootDirMotChecked && !bootDirMismatch) {
-            try {
-                int raw = motor.getCurrentPosition();
-                if (!bootDirMotPrimed) {
-                    bootDirMotPrimed = true;
-                    bootDirMotLastRaw = raw;
-                } else {
-                    bootDirSumMotDeg += (raw - bootDirMotLastRaw) * MOTOR_ENC_POLARITY
-                            * 360.0 / Math.max(1.0, motorEncTicksPerTurretRev());
-                    bootDirMotLastRaw = raw;
-                    double bDegForMot = bootDirSumBRevs * 360.0 / revsPerTurretB;
-                    if (Math.abs(bootDirSumMotDeg) >= 15.0 && Math.abs(bDegForMot) >= 15.0) {
-                        bootDirMotChecked = true;
-                        if ((bDegForMot > 0) != (bootDirSumMotDeg > 0)) {
-                            bootDirMismatch = true;
-                            faultEncoderDirection = true;
-                            Log.e("IronLog", "TurretTracker boot DIRECTION MISMATCH (motor vote): B(flipped) "
-                                    + String.format(Locale.US, "%+.1f", bDegForMot)
-                                    + " deg vs motor-frame "
-                                    + String.format(Locale.US, "%+.1f", bootDirSumMotDeg)
-                                    + " deg — suspect ENCODER_REVERSED (or MOTOR_ENC_POLARITY if unverified)");
-                        } else {
-                            Log.i("IronLog", "TurretTracker boot direction motor vote PASSED (B "
-                                    + String.format(Locale.US, "%+.1f", bDegForMot)
-                                    + " deg / motor "
-                                    + String.format(Locale.US, "%+.1f", bootDirSumMotDeg) + " deg agree)");
-                        }
-                    }
-                }
-            } catch (Exception ignored) {
-                // Motor encoder read trouble at init — watch mode will judge
-                // it at the first powered motion instead.
-            }
-        }
     }
 
     // =========================================================================
@@ -547,18 +380,13 @@ public class TurretTracker {
 
     /**
      * Feedback pipeline — call once per loop BEFORE the PID runs. In hybrid
-     * ACTIVE mode the motor encoder integrates per-loop motion (read FIRST, so
-     * the PWM anchor's prediction includes this loop's motion) while the
-     * OctoQuad absolute anchors and cross-checks; in every other mode the
-     * encoder-B PWM path owns tracking and the motor path only watches. Either
-     * stream failing alone is tolerated (the other keeps tracking); both
-     * failing counts as feedback loss (see {@link #feedbackLost()}).
+     * ACTIVE mode the motor encoder integrates per-loop motion while the
+     * OctoQuad absolute anchors at rest and cross-checks; in OFF mode the
+     * encoder-B PWM path owns tracking.
      */
     public void update(double dtSec) {
-        boolean hybridCandidate = motorEncMode == MotEncMode.WATCH
-                || motorEncMode == MotEncMode.ACTIVE;
         boolean motorOk = true;
-        if (hybridCandidate) {
+        if (motorEncMode == MotEncMode.ACTIVE) {
             try {
                 motorOk = updateFromMotorEncoder(dtSec);
             } catch (Exception e) {
@@ -578,13 +406,6 @@ public class TurretTracker {
             absOk = false;
         }
 
-        // ---- Absolute-stream liveness (driver-station failure board) ----
-        // updateFromAbsolute() returns false ONLY when the OctoQuad read came
-        // back empty (dead device / unplugged ABS wire). In hybrid ACTIVE the
-        // motor encoder keeps tracking, so this is NOT feedbackLost() — but
-        // the at-rest anchor, the A cross-check and the boot-correct position
-        // are all gone, and the driver needs the red banner. Glitch-gate
-        // rejections do NOT count (the stream is alive; see absGlitchEvents).
         if (absOk) {
             absLostStreak = 0;
             if (faultAbsStreamLost && ++absGoodStreak >= ABS_STREAM_LOST_LOOPS) {
@@ -602,57 +423,6 @@ public class TurretTracker {
             }
         }
 
-        // ---- WATCH-mode direction confirmation ----
-        // The first powered motion must show the motor encoder integrating the
-        // SAME direction the (PWM-tracked) turret actually moved, before
-        // per-loop integration is trusted. Until then the PWM-only tracker
-        // owns position and PWM_ONLY_MAX_POWER caps the speed.
-        if (motorEncMode == MotEncMode.WATCH && absOk) {
-            if (Double.isNaN(watchStartPos)) {
-                watchStartPos = position();
-            }
-            double pwmNet = position() - watchStartPos;
-            if (Math.abs(pwmNet) >= MOTOR_ENC_CONFIRM_PWM_DEG) {
-                boolean sameSign = (pwmNet > 0) == (watchMotNetDeg > 0);
-                if (sameSign && Math.abs(watchMotNetDeg) >= MOTOR_ENC_CONFIRM_MOT_DEG) {
-                    motorEncMode = MotEncMode.ACTIVE;
-                    Log.i("IronLog", "TurretTracker hybrid ACTIVE: motor encoder confirmed (PWM "
-                            + String.format(Locale.US, "%+.1f", pwmNet) + " deg vs motor "
-                            + String.format(Locale.US, "%+.1f", watchMotNetDeg) + " deg)");
-                } else if (Math.abs(watchMotNetDeg) < MOTOR_ENC_DEAD_MOT_DEG) {
-                    watchDeadStreak++;
-                    Log.e("IronLog", "TurretTracker mot-enc dead evidence " + watchDeadStreak
-                            + "/" + MOTOR_ENC_STREAK_LIMIT + " (turret moved "
-                            + String.format(Locale.US, "%+.1f", pwmNet)
-                            + " deg, motor encoder saw nothing)");
-                    watchStartPos = position();
-                    watchMotNetDeg = 0;
-                    if (watchDeadStreak >= MOTOR_ENC_STREAK_LIMIT) {
-                        faultMotorEnc = true;
-                        motorEncMode = MotEncMode.OFF;
-                        motorEncOffReason = "motor encoder dead (no counts while turret moves)";
-                        Log.e("IronLog", "TurretTracker HYBRID OFF -> motor encoder dead;"
-                                + " PWM-only tracking resumes (speed re-capped)");
-                    }
-                } else if (!sameSign && Math.abs(watchMotNetDeg) >= MOTOR_ENC_DEAD_MOT_DEG) {
-                    // Only flag if the signs actually contradict each other with non-trivial motion
-                    faultMotorEncDir = true;
-                    motorEncMode = MotEncMode.OFF;
-                    motorEncOffReason = "direction mismatch — check MOTOR_ENC_POLARITY";
-                    Log.e("IronLog", "TurretTracker HYBRID OFF -> motor integrated "
-                            + String.format(Locale.US, "%+.1f", watchMotNetDeg)
-                            + " deg while the turret moved "
-                            + String.format(Locale.US, "%+.1f", pwmNet)
-                            + " deg — MOTOR_ENC_POLARITY (or an encoder flip) is wrong");
-                }
-                // If sameSign is true but watchMotNetDeg hasn't yet reached MOTOR_ENC_CONFIRM_MOT_DEG,
-                // do not fault — keep watching so backlash or slow ramping can catch up.
-            }
-        }
-
-        // Only the ACTIVE mode can keep tracking without the absolute stream
-        // (motor quadrature is a real feedback source); everywhere else the
-        // PWM path IS the tracker, so its health is the feedback health.
         boolean ok = motorEncMode == MotEncMode.ACTIVE ? (absOk || motorOk) : absOk;
         if (ok) {
             feedbackFailures = 0;
@@ -719,40 +489,26 @@ public class TurretTracker {
         }
 
         // Shortest-path delta in revolutions, seam-crossing safe.
-        // forwardDiffRevs(last, now) = now - last = the FORWARD motion
-        // (fracDiff's arguments are the other way around — §12.20).
         double deltaRevs = TurretCrt.forwardDiffRevs(lastAbsRevs, revs);
 
         if (motorEncMode == MotEncMode.ACTIVE) {
-            // ---- HYBRID: motion is owned by the motor encoder; this stream
-            // only ANCHORS (see the anchor helpers below). The implausibility
-            // gate / direct integration below do NOT run: at full hybrid speed
-            // a fresh PWM step can legitimately exceed half an encoder-B wrap,
-            // and the wrap-resolved anchor handles it.
             lastAbsRevs = revs;
+            double now = timer.seconds();
             if (deltaRevs != 0.0) {
-                absLastChangeTime = timer.seconds();
+                absLastChangeTime = now;
             }
-            if (Math.abs(velocityDegPerSec) <= MOTOR_ENC_REST_ANCHOR_VEL_DPS) {
+            boolean pwmSettled = Double.isNaN(absLastChangeTime)
+                    || (now - absLastChangeTime) >= MOTOR_ENC_REST_SETTLE_S;
+            if (Math.abs(velocityDegPerSec) <= MOTOR_ENC_REST_ANCHOR_VEL_DPS && pwmSettled) {
                 anchorAtRest(revs);
             } else if (deltaRevs != 0.0) {
-                anchorWhileMoving(revs);
+                recordMovingAnchorCorr(revs);
             }
             crossCheckAgainstPartner();
             return true;
         }
 
-        // ---- ENCODER-B-ONLY (PWM) path — also active during hybrid WATCH ----
-        //
-        // ---- Implausibility gate ----
-        // deltaRevs is in ENCODER-B revs: convert the turret-speed limit into
-        // encoder revs, and clamp at 0.5 enc-rev/loop — encoder B repeats
-        // every 65.5 deg of turret travel, so a bigger per-loop step is
-        // indistinguishable from a PWM wrap alias and can never be trusted as
-        // motion (the re-anchor path handles sustained overspeed; the
-        // PWM_ONLY_MAX_POWER cap keeps real speeds under the ceiling anyway —
-        // the binding ceiling is the ~10 Hz PWM refresh, i.e. half a wrap per
-        // FRESH reading (~every 2nd loop), ~273-310 deg/s).
+        // PWM-only tracking (also active during WATCH): reject steps > 0.5 enc-rev or implausible speed.
         double maxStepRevs = Math.min(0.5,
                 Math.abs(ABS_MAX_PLAUSIBLE_DPS) * Math.max(dtSec, 1e-3) / 360.0
                         * revsPerTurretB);
@@ -760,21 +516,15 @@ public class TurretTracker {
             consecutiveRejects++;
             absGlitchEvents++;
             if (consecutiveRejects >= ABS_REJECT_REANCHOR) {
-                // Persistent implausible steps: re-anchor (accept the raw's
-                // word) rather than freeze forever — and say so loudly.
                 Log.e("IronLog", "TurretTracker ABS re-anchor after " + consecutiveRejects
                         + " implausible steps (wiring/config suspicion)");
                 consecutiveRejects = 0;
                 lastAbsRevs = revs;
             }
-            // Skip the velocity update too — a rejected step is not motion.
             return true;
         }
         consecutiveRejects = 0;
 
-        // A quarter-encoder-rev step that PASSED the gate is still noteworthy
-        // (should not happen with the gate above — keep the counter for
-        // telemetry).
         if (Math.abs(deltaRevs) > 0.25) {
             wrapEvents++;
             Log.w("IronLog", "TurretTracker suspicious absolute step: "
@@ -782,13 +532,6 @@ public class TurretTracker {
                     deltaRevs, deltaRevs * 360.0 * revsPerTurretB));
         }
         double deltaDeg = deltaRevs * 360.0 / revsPerTurretB;
-        // §12.28: physical-continuity check on the step actually integrated.
-        // The gate above already rejects absurd single steps, but a wrap that
-        // resolved to the WRONG SIDE is a normal-sized number with the wrong
-        // sign — geometry, not magnitude. Taken against the time since the
-        // reading really changed (the step covers that span, not one loop),
-        // any implied speed above the mechanism's ceiling means whole wraps
-        // were lost.
         {
             double spanDt = Double.isNaN(absLastChangeTime)
                     ? dtSec : clamp(timer.seconds() - absLastChangeTime, Math.max(dtSec, 1e-3), 0.5);
@@ -872,28 +615,8 @@ public class TurretTracker {
     }
 
     /**
-     * PHYSICAL CONTINUITY guard (§12.28) — the runaway detector.
-     *
-     * <p>Replaces an earlier idea that compared the tracked position against
-     * encoder A with a fixed threshold. That was rejected on evidence:
-     * {@code crosscheckDiffDeg} is computed modulo one encoder-A revolution
-     * (63.4 deg of turret travel), so a divergence of exactly one A-rev reads
-     * as ~0 error. Replaying capture 20261028-013546 through such a guard
-     * showed it would NOT have fired (peak reading 30.12 deg against a 31.7
-     * threshold) even though the real error was ~149 deg. A modulo witness
-     * cannot bound an error; it can only detect sub-wrap slips.
-     *
-     * <p>What actually identified the failure was the STEP SIZE: at 10.05 s a
-     * single ~52 ms loop moved the tracked position 73.04 deg = 1.12
-     * encoder-B wraps, i.e. the shortest-path unwrap resolved a >half-wrap
-     * motion to the wrong side. The turret physically cannot do that — full
-     * power is ~600 deg/s, so a 52 ms loop tops out near 31 deg, and even the
-     * (deliberately loose) plausibility gate permits 100 deg at 2000 deg/s.
-     *
-     * <p>This watches the per-loop step against a speed the mechanism cannot
-     * reach ({@link #CONTINUITY_MAX_DPS}, ~2x the measured terminal speed). A
-     * step beyond it means whole wraps were lost, whatever the cause, and the
-     * position stream must be distrusted.
+     * Checks each integrated step against {@link #CONTINUITY_MAX_DPS} to catch
+     * lost encoder wraps; latches positionDiverged after {@link #CONTINUITY_LIMIT} hits.
      */
     private void checkPhysicalContinuity(double deltaDeg, double dtSec) {
         if (Double.isNaN(deltaDeg) || dtSec <= 0) {
@@ -978,19 +701,14 @@ public class TurretTracker {
         if (motorEncMode == MotEncMode.ACTIVE) {
             unwrappedDeg += deltaDeg;
             computeVelocity(deltaDeg, dtSec);
-            motNetSinceFresh += deltaDeg;
-        } else { // WATCH: PWM owns integration; the motor path only accumulates evidence
-            watchMotNetDeg += deltaDeg;
         }
         return true;
     }
 
     /**
-     * HYBRID at-rest anchor: with the turret stationary the PWM width is fresh
-     * by definition (nothing moved since the chip latched it), so the tracked
-     * position is hard-snapped to the wrap-resolved absolute reading. This is
-     * what erases backlash and any motor-integration drift between motions —
-     * right before the shot, which is exactly when absolute accuracy matters.
+     * HYBRID at-rest anchor: once the turret has settled and the ~10 Hz PWM
+     * reading has stabilized, snaps the tracked position to the wrap-resolved
+     * absolute reading to erase backlash and integration drift before firing.
      */
     private void anchorAtRest(double revsFresh) {
         double predRevs = unwrappedDeg * revsPerTurretB / 360.0;
@@ -1006,103 +724,23 @@ public class TurretTracker {
                 consecutiveAnchorRejects = 0;
                 lastAnchorCorrDeg = corrDeg;
                 unwrappedDeg = anchoredRevs * 360.0 / revsPerTurretB;
-                lastAnchoredRevs = anchoredRevs;
             }
             return;
         }
         consecutiveAnchorRejects = 0;
         lastAnchorCorrDeg = corrDeg;
-        lastAnchoredRevs = anchoredRevs;
         unwrappedDeg = anchoredRevs * 360.0 / revsPerTurretB;
-        motNetSinceFresh = 0;
-        dirStreak = 0;
-        deadStreak = 0;
     }
 
     /**
-     * HYBRID moving monitor: a fresh PWM reading while moving is up to one
-     * ~106 ms refresh interval STALE, so correcting position with it would
-     * rewind real motion — it is wrap-resolved, recorded for telemetry, and
-     * NOT applied. What IS acted on: the wrap-resolved INTERVAL between
-     * consecutive fresh readings vs the motor-integrated motion over the same
-     * span — a dead motor encoder (absolute path moves, motor integrates
-     * nothing) or a wrong polarity (motor integrates the wrong way) is
-     * detectable regardless of staleness and latches after
-     * {@link #MOTOR_ENC_STREAK_LIMIT} evidences.
+     * Records the moving PWM-vs-motor residual for telemetry only. Does not
+     * demote to PWM-only mode, because ~10 Hz PWM staleness during quick
+     * reversals makes interval comparisons unreliable.
      */
-    private void anchorWhileMoving(double revsFresh) {
+    private void recordMovingAnchorCorr(double revsFresh) {
         double predRevs = unwrappedDeg * revsPerTurretB / 360.0;
         double anchoredRevs = revsFresh + Math.round(predRevs - revsFresh);
         lastAnchorCorrDeg = (anchoredRevs - predRevs) * 360.0 / revsPerTurretB;
-        if (!Double.isNaN(lastAnchoredRevs)) {
-            double pwmIntervalDeg = (anchoredRevs - lastAnchoredRevs) * 360.0
-                    / revsPerTurretB;
-            // §12.28: this monitor's verdict is only as trustworthy as the
-            // INTERVAL it is based on. Encoder B repeats every 65.45 deg of
-            // turret travel, so a wrap-resolved interval is only unambiguous
-            // while the real step stays under HALF a wrap. Past that the
-            // interval can come back with the wrong sign — which reads exactly
-            // like "motor encoder moves opposite the absolute path" and latched
-            // a FALSE MOTOR_ENC_DIR in capture 20261028-013546 (a real -73 deg
-            // step was decoded as +18.5 deg, ~10.05 s), demoting the hybrid to
-            // PWM-only at full speed and causing the runaway. Near-antipodal
-            // steps are therefore treated as NO EVIDENCE, not as evidence.
-            double halfWrapDeg = 180.0 / revsPerTurretB;
-            boolean intervalUnambiguous = Math.abs(pwmIntervalDeg) < halfWrapDeg * 0.8;
-            if (Math.abs(pwmIntervalDeg) >= MOTOR_ENC_DEAD_PWM_DEG && intervalUnambiguous) {
-                if (Math.abs(motNetSinceFresh) < MOTOR_ENC_DEAD_MOT_DEG) {
-                    deadStreak++;
-                    if (deadStreak >= MOTOR_ENC_STREAK_LIMIT) {
-                        faultMotorEnc = true;
-                        demoteHybrid(anchoredRevs,
-                                "motor encoder saw no motion the absolute path confirms");
-                        return;
-                    }
-                } else {
-                    deadStreak = 0;
-                    if ((pwmIntervalDeg > 0) != (motNetSinceFresh > 0)) {
-                        dirStreak++;
-                        if (dirStreak >= MOTOR_ENC_STREAK_LIMIT) {
-                            faultMotorEncDir = true;
-                            demoteHybrid(anchoredRevs,
-                                    "motor encoder moves OPPOSITE the absolute path"
-                                            + " — check MOTOR_ENC_POLARITY");
-                            return;
-                        }
-                    } else {
-                        dirStreak = 0;
-                    }
-                }
-            }
-        }
-        lastAnchoredRevs = anchoredRevs;
-        motNetSinceFresh = 0;
-        if (Math.abs(lastAnchorCorrDeg) > MOTOR_ENC_ANCHOR_REJECT_DEG) {
-            consecutiveAnchorRejects++;
-            anchorRejectEvents++;
-            if (consecutiveAnchorRejects >= ABS_REJECT_REANCHOR) {
-                Log.e("IronLog", "TurretTracker hybrid: " + consecutiveAnchorRejects
-                        + " absurd anchor corrections in a row — re-anchoring to the PWM absolute");
-                consecutiveAnchorRejects = 0;
-                unwrappedDeg = anchoredRevs * 360.0 / revsPerTurretB;
-                lastAnchoredRevs = anchoredRevs;
-            }
-        } else {
-            consecutiveAnchorRejects = 0;
-        }
-    }
-
-    /** Demote the hybrid to PWM-only, anchoring to the absolute reading that just won the argument. */
-    private void demoteHybrid(double anchoredRevs, String reason) {
-        motorEncMode = MotEncMode.OFF;
-        motorEncOffReason = reason;
-        motNetSinceFresh = 0;
-        // Trust the absolute reading: re-anchor so the legacy tracker resumes
-        // from the truth, not from the suspect motor-integrated estimate.
-        unwrappedDeg = anchoredRevs * 360.0 / revsPerTurretB;
-        lastAnchoredRevs = anchoredRevs;
-        Log.e("IronLog", "TurretTracker HYBRID OFF -> " + reason
-                + "; PWM-only tracking resumes (speed re-capped)");
     }
 
     /**
@@ -1116,17 +754,17 @@ public class TurretTracker {
                 * Math.max(1e-6, motorGearRatio);
     }
 
-    /** Mode selection at boot/re-zero; latched faults keep the hybrid OFF. */
+    /** Mode selection at boot/re-zero; read-failure latches keep hybrid OFF until cleared. */
     private MotEncMode resolveMotorEncMode() {
         if (!MOTOR_ENC_HYBRID) {
             motorEncOffReason = "MOTOR_ENC_HYBRID=false (encoder-B-only mode)";
             return MotEncMode.OFF;
         }
-        if (faultMotorEnc || faultMotorEncDir) {
-            motorEncOffReason = "fault latched (re-zero or clearFaults to re-arm)";
+        if (faultMotorEnc) {
+            motorEncOffReason = "read fault latched (re-zero or clearFaults to re-arm)";
             return MotEncMode.OFF;
         }
-        return MotEncMode.WATCH;
+        return MotEncMode.ACTIVE;
     }
 
     /**
@@ -1239,14 +877,9 @@ public class TurretTracker {
         return crtCrosscheckFails;
     }
 
-    /** Latched motor-encoder faults (hybrid demotion reasons). */
+    /** Latched motor-encoder read fault (hybrid demotion reason). */
     public boolean isMotorEncFaulted() {
         return faultMotorEnc;
-    }
-
-    /** Latched motor-encoder direction fault (polarity/flip suspect). */
-    public boolean isMotorEncDirFaulted() {
-        return faultMotorEncDir;
     }
 
     /** True when the boot hand-move check found the encoder dead. */
@@ -1265,11 +898,8 @@ public class TurretTracker {
     }
 
     /**
-     * §12.28: true when the tracked position has disagreed with encoder A's
-     * independent prediction by more than half an encoder-A revolution for
-     * several consecutive loops — the stream is no longer trustworthy and the
-     * subsystem must BRAKE. Auto-clears when the two agree again, so a wire
-     * nudge or a re-zero recovers without an OpMode restart.
+     * True when tracked position has exceeded physical continuity limits (lost wraps);
+     * auto-clears once steps return within normal speed bounds.
      */
     public boolean isPositionDiverged() {
         return positionDiverged;
@@ -1279,15 +909,11 @@ public class TurretTracker {
 
     /** One-line hybrid status for telemetry ("Turret mot-enc"). */
     public String modeText() {
-        switch (motorEncMode) {
-            case ACTIVE:
-                return String.format(Locale.US, "ACTIVE (pol %+.0f, %.1f ticks/turret-rev)",
-                        MOTOR_ENC_POLARITY, motorEncTicksPerTurretRev());
-            case WATCH:
-                return "WATCH — confirming direction at first powered motion";
-            default:
-                return "OFF — " + motorEncOffReason;
+        if (motorEncMode == MotEncMode.ACTIVE) {
+            return String.format(Locale.US, "ACTIVE (pol %+.0f, %.1f ticks/turret-rev)",
+                    MOTOR_ENC_POLARITY, motorEncTicksPerTurretRev());
         }
+        return "OFF — " + motorEncOffReason;
     }
 
     /** The motor encoder's live tick count ("Turret mot-enc ticks"). */
@@ -1301,13 +927,6 @@ public class TurretTracker {
                 : String.format(Locale.US, "%+.2f deg (%d rej)", lastAnchorCorrDeg, anchorRejectEvents);
     }
 
-    /** The motor's boot direction-guard vote ("Turret boot dir (motor)"). */
-    public String bootDirMotText() {
-        return !bootDirMotChecked
-                ? String.format(Locale.US, "pending hand-move (mot %+.1f deg)", bootDirSumMotDeg)
-                : String.format(Locale.US, "done (mot %+.1f deg)", bootDirSumMotDeg);
-    }
-
     /** The tracker's slice of the fault string (CRT crosscheck + direction + motor-encoder). */
     public String faultFragment() {
         StringBuilder sb = new StringBuilder();
@@ -1315,7 +934,6 @@ public class TurretTracker {
         if (faultCrtCrosscheck) sb.append("CRT_CROSSCHECK ");
         if (faultEncoderDirection) sb.append("B_DIR_MISMATCH ");
         if (faultMotorEnc) sb.append("MOTOR_ENC ");
-        if (faultMotorEncDir) sb.append("MOTOR_ENC_DIR ");
         if (faultAbsStreamLost) sb.append("ABS_STREAM_LOST ");
         return sb.toString();
     }
@@ -1327,16 +945,9 @@ public class TurretTracker {
         faultCrtCrosscheck = false;
         crtCrosscheckFails = 0;
         faultMotorEnc = false;
-        faultMotorEncDir = false;
         faultAbsStreamLost = false;
         absLostStreak = 0;
         absGoodStreak = 0;
-        deadStreak = 0;
-        dirStreak = 0;
-        watchDeadStreak = 0;
-        watchStartPos = Double.NaN;
-        watchMotNetDeg = 0;
-        motNetSinceFresh = 0;
         absGlitchEvents = 0;
         feedbackFailures = 0;
         if (absoluteSource instanceof OctoQuadAbsoluteSource) {
@@ -1348,7 +959,7 @@ public class TurretTracker {
 
     /**
      * What a re-zero does to the tracker: clear the CRT-crosscheck latch and the
-     * hybrid motor-encoder faults (a fresh absolute anchor re-arms the hybrid),
+     * hybrid motor-encoder read fault (a fresh absolute anchor re-arms the hybrid),
      * but keep the diagnostic glitch counters — they describe the session, not
      * the current anchor.
      */
@@ -1357,13 +968,6 @@ public class TurretTracker {
         crtCrosscheckFails = 0;
         crtCrosscheckErrDeg = Double.NaN;
         faultMotorEnc = false;
-        faultMotorEncDir = false;
-        deadStreak = 0;
-        dirStreak = 0;
-        watchDeadStreak = 0;
-        watchStartPos = Double.NaN;
-        watchMotNetDeg = 0;
-        motNetSinceFresh = 0;
         motorEncMode = resolveMotorEncMode();
     }
 

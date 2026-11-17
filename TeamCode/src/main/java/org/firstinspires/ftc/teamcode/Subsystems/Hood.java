@@ -5,12 +5,9 @@ import static org.firstinspires.ftc.teamcode.WattageLib.lib.killaUtils.clamp;
 import android.util.Log;
 
 import com.bylazar.configurables.annotations.Configurable;
-import com.bylazar.telemetry.PanelsTelemetry;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Servo;
 
-import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.IronConstants;
 import org.firstinspires.ftc.teamcode.RobotMain;
 import com.seattlesolvers.solverslib.command.Command;
@@ -36,16 +33,8 @@ import com.seattlesolvers.solverslib.command.SubsystemBase;
  */
 @Configurable
 public class Hood extends SubsystemBase {
-    Telemetry telemetry = PanelsTelemetry.INSTANCE.getFtcTelemetry();
-
     /** DS failure-board name for this subsystem (HardwareHealth). */
     public static final String HEALTH_NAME = "HOOD";
-
-    /**
-     * IS THE HOOD PHYSICALLY MOUNTED AND WIRED?
-     * True enables active servo control and readiness gating during matches.
-     */
-    public static boolean IMPLEMENTED = true;
 
     // ---- Kinematic constants ----
     public static final int PINION_TEETH = 25;
@@ -58,21 +47,13 @@ public class Hood extends SubsystemBase {
     /** Measured launch angle at physical UP stop. */
     public static double HOOD_UP_DEG = 46.852;
 
-    /**
-     * Calibrated servo position at HOOD_DOWN_DEG (16.831 deg).
-     * Measured on the robot at lowest hood setting: ~0.94.
-     */
+    /** Calibrated servo position (0..1) corresponding to {@link #HOOD_DOWN_DEG}. */
     public static double POS_DOWN = 0.17;
 
-    /**
-     * Calibrated servo position at HOOD_UP_DEG (46.852 deg).
-     * Meshed calibration position: 0.0.
-     */
+    /** Calibrated servo position (0..1) corresponding to {@link #HOOD_UP_DEG}. */
     public static double POS_UP = 1.0;
 
-    /**
-     * Servo zero position used when meshing gears at the physical stop.
-     */
+    /** Servo position used by {@link #zeroCmd()} when meshing gears at the physical stop. */
     public static double ZERO_SERVO_POS = 1.0;
 
     /** Invert servo command direction if hardware linkage requires it. */
@@ -117,7 +98,7 @@ public class Hood extends SubsystemBase {
         this.targetDeg = STOWED_DEG;
         this.currentDeg = STOWED_DEG;
         this.lastTimeNs = System.nanoTime();
-        if (servo != null && IMPLEMENTED) {
+        if (servo != null) {
             double initPos = degreesToServoPosition(currentDeg);
             servo.setPosition(initPos);
             this.lastWrittenPos = initPos;
@@ -156,11 +137,9 @@ public class Hood extends SubsystemBase {
     }
 
     /**
-     * True if the current slewed angle is within tolerance of the target,
-     * or if the hood is marked as NOT IMPLEMENTED.
+     * True if the current slewed angle is within tolerance of the target.
      */
     public boolean isAtTargetDegrees(double tolDeg) {
-        if (!IMPLEMENTED) return true;
         return Math.abs(currentDeg - targetDeg) <= tolDeg;
     }
 
@@ -190,7 +169,7 @@ public class Hood extends SubsystemBase {
         }
 
         double pos = degreesToServoPosition(currentDeg);
-        if (servo != null && IMPLEMENTED) {
+        if (servo != null) {
             if (Double.isNaN(lastWrittenPos) || Math.abs(pos - lastWrittenPos) > 1e-4) {
                 servo.setPosition(pos);
                 lastWrittenPos = pos;
@@ -199,8 +178,7 @@ public class Hood extends SubsystemBase {
             lastWrittenPos = Double.NaN;
         }
 
-        if (RobotMain.DashTelemetry != null) {
-            RobotMain.DashTelemetry.addData("Hood implemented", IMPLEMENTED);
+        if (RobotMain.DASHBOARD && RobotMain.DashTelemetry != null) {
             RobotMain.DashTelemetry.addData("Hood target deg", "%.2f", targetDeg);
             RobotMain.DashTelemetry.addData("Hood cur deg", "%.2f", currentDeg);
             RobotMain.DashTelemetry.addData("Hood servo pos", "%.4f", pos);

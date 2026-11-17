@@ -44,15 +44,7 @@ public class IronConstants {
 
 
 
-    // Alliance reset poses for extreme localization loss, should be in a known location.
+    // Alliance reset poses for re-localizing from a known corner.
     public static final Pose RED_RESET_POSE = new Pose(8.0, 8.0, Math.toRadians(0));
     public static final Pose BLUE_RESET_POSE = new Pose(133.0, 133.0, Math.toRadians(180));
-
-
-    //TODO: Test todo.
-    //TODO: panels custom to make website open fast also make 1.0.7 biobuzz version work.
-    //todo: try ftclib/Dairy/solverslib
-    //todo: commandgamepad? triggers? linear-interpolation table.
-    //todo: real Limelight OS and fmaps.
-    //todo LL draw onto dashboard map our estimated Pose.
 }

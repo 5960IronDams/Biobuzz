@@ -17,239 +17,109 @@ import java.lang.reflect.Field;
 import java.util.Locale;
 
 /**
- * Vision corrector: feeds Limelight MegaTag solves into Pedro's
- * {@link FusionLocalizer} Kalman filter via {@code addMeasurement()}.
+ * Feeds Limelight MegaTag solves into Pedro's {@link FusionLocalizer} Kalman filter.
  *
- * <p>Call order per loop (see {@link RobotMain#RobotRunPeriodic}):
- * <pre>
- * follower.update();      // predict step (Pinpoint) + fuse owner
- * visionFusion.correct(); // zero or one axis-masked addMeasurement
- * </pre>
- * TeleOp corrects twice per loop ({@code RobotRunPeriodic} + the trailing
- * drive update); the second call re-polls the same ~10Hz Limelight packet and
- * is a same-frame no-op via fingerprint dedup, so each frame fuses once.
- * Telemetry is NEVER emitted here — {@link #report()} runs once per loop from
- * {@link RobotMain#flushTelemetry()}, which is why Panels shows one set of
- * {@code Fusion/*} + {@code Tip/*} lines.
- * The follower owns the prediction; this class owns the correction. Nothing
- * here calls {@code setPose()}, so Foresight's velocity estimate is never
- * teleported — corrections blend with gain K = P/(P+R) and re-propagate
- * through the timestamp history.
+ * <p>Call {@link #correct()} once per loop after {@code follower.update()}, and
+ * {@link #report()} from {@link RobotMain#flushTelemetry()} to publish {@code Fusion/*}
+ * and {@code Tip/*} telemetry to Panels.
  *
- * <p><b>Soft gating, not hard gating.</b> Almost every reading is fused; bad
- * conditions inflate the per-measurement R (measurement-noise variance passed
- * as the 3rd {@code addMeasurement} arg) so the filter trusts vision less
- * instead of dropping it — including big XY residuals ("teleports"), which
- * grow R quadratically past the knee instead of rejecting. Only garbage is
- * skipped outright: no solve, NaNs, off-field poses, stale frames. This
- * keeps corrections flowing through tag deserts instead of going blind.
- *
- * <p><b>Split solver: MT2 owns XY, MT1 owns yaw, never MT2 yaw.</b> MT2 yaw is
- * seed echo (~90% the gyro value fed back through the Limelight), so fusing it
- * double-counts the gyro in a feedback loop — the rotation warping seen on
- * down-facing tag geometry, where yaw is weakly observed. MT2's XY is fused
- * every accepted frame; MT1's independent 6DOF yaw fuses under strict gates
- * (multi-tag, slow, small residual) with a long time constant, so it drags gyro
- * drift out without ever snapping the heading. {@code FusionLocalizer} skips
- * NaN components per axis, so each fuse() call masks the axis it doesn't own.
- *
- * <p>All tunables are Panels-live ({@code Panels -> VisionFusion}).
+ * <p>Uses soft R-scaling for most conditions (trusts vision less rather than dropping
+ * frames) and a split solver: XY from the selected MegaTag source, and independent
+ * yaw from MT1 under strict gates (MT2 yaw is seed-echo and never fused).
  */
 @Configurable
 public class VisionFusion {
 
-    // ================= master switch =================
-    /** Set false (Panels) to run Pinpoint-only, e.g. while debugging vision. */
+    // ================= Master Switches =================
+    /** False = Pinpoint-only (disables vision fusion). */
     public static boolean ENABLED = true;
-    /**
-     * Fuses MT1's independent yaw into the heading under the strict gates below
-     * (multi-tag, slow, small residual, |innov| <= 90deg). Pedro's heading-handling
-     * bug was fixed upstream (2026-09-30: the Pose.log() 2pi-wrap hole), so this
-     * is safe again. The gate stack + innovation guard stay as corruption armor:
-     * a flipped single-tag solve can never snap the heading.
-     */
+    /** True = fuse MT1 independent yaw when tag/speed/turn/innovation gates pass. */
     public static boolean MT1_YAW_FUSING = true;
-    /**
-     * Kill switch for the vision correction itself. False = Pinpoint-only
-     * (predict runs, the LL still connects, all Fusion/* logging stays live).
-     */
+    /** False = run all vision polling and telemetry, but skip calling {@code addMeasurement()}. */
     public static boolean FUSE_XY = true;
-    // ================= absolute reject gates (garbage only) =================
-    /** Reject frames older than this (LL poll + USB + loop delay), ms. */
-    public static double MAX_STALENESS_MS = 350.0;
-    /** Reject poses outside the field plus this margin, inches. */
-    public static double FIELD_MARGIN_IN = 24.0;
-    /**
-     * Big-residual flag threshold, inches — SOFT, not a reject. When dxy exceeds
-     * this the frame STILL fuses (R grows quadratically, clamped by
-     * MAX_TOTAL_SCALE) and the status gains a {@code -bigjump} suffix so Panels
-     * shows it. XY source is MT2 when present, else MT1-position fallback — see
-     * {@code Fusion/xySrc}. Raised from 36.0 to 72.0 for wider acceptance.
-     */
-    public static double MAX_JUMP_XY_IN = 72.0;
-    /**
-     * Stationary-residual gate (see the ADAPTIVE RESIDUAL GATE in {@code correct()}):
-     * when Pinpoint speed is below {@link #STATIONARY_SPEED_IN_PER_SEC}, an XY
-     * residual above {@link #STATIONARY_RESIDUAL_REJECT_IN} rejects the frame.
-     * Raised from 36.0 to 120.0 to accept readings even when odometry has significantly
-     * drifted during traverse through no-vision zones or when arriving at a shooting position.
-     */
-    public static double STATIONARY_SPEED_IN_PER_SEC = 10.0;
-    public static double STATIONARY_RESIDUAL_REJECT_IN = 120.0;
-    /**
-     * Bench-test bypass for the stationary-residual gate: frames that would
-     * reject are accepted and marked {@code accept-bench} so it is obvious when
-     * left ON. Turn OFF for matches — it exists so an arbitrary bench pose can
-     * converge. (Corrections may still be gentle at huge residuals: the R ramp
-     * de-weights them up to {@link #MAX_TOTAL_SCALE}; raise that too for a
-     * snappier bench snap.)
-     */
-    public static boolean BENCH_ACCEPT_STATIONARY = false;
-    /** Clamp on total pipeline latency used for back-dating, ms. */
-    public static double MAX_LATENCY_MS = 250.0;
-    /**
-     * XY source override: true = use MT1's independent per-tag-averaged solve
-     * as the measurement instead of MT2's yaw-seeded one. Added after the
-     * 02-47 runs: the per-tag PnP ranges were correct (~58in ≈ true 3D) while
-     * MT2's yaw-seeded botpose collapsed the depth to ~0.4x truth — if MT1's
-     * XY proves sane vs Pinpoint, this is the working source.
-     */
-    public static boolean USE_MT1_XY = true;
-    // NOTE: code-side camera lever-arm compensation (former CAM_OFFSET_FWD/LEFT_IN)
-    // REMOVED — the Limelight's mount geometry (forward/side/up/pitch) is now
-    // configured in the LL web UI / LL init method, so botpose already reports
-    // the ROBOT CENTER. Compensating here as well would double-apply the offset.
-    // Regression check: heading-sweep residual test must stay flat.
 
-    // ================= moving-cluster / attitude gates (BIOBUZZ) =================
-    // BIOBUZZ localizes off the 4 hive-cell clusters (IDs 30-45), whose REST pose
-    // is 30deg tipped. Stage 1 (TipSanityFilter, always on) drops solves far from
-    // the rest signature: off-rest cells, underground/floating height, teleports.
-    // Stage 2 (TipCompensator, DISABLED until field-tested) tries to rescue
-    // off-rest solves by rest projection; see that class for the validation plan.
-    // REJECT_CLUSTER_ONLY stays as a big red switch: true = Pinpoint-only whenever
-    // ONLY cluster tags are visible (conservative). False = let cluster solves
-    // through the sanity filter like any other solve (your call: you WILL localize
-    // off them — leave false once the fmap + compensator check out on-field).
-    /**
-     * Only-cluster-visible switch (default false = FUSE cluster solves, filtered).
-     * True = reject cluster-only solves outright (Pinpoint-only fallback).
-     * You asked to localize off the clusters, so this ships false; Stage 1
-     * still drops the tipped ones, Stage 2 (disabled) will rescue them later.
-     */
+    // ================= Hard Reject Gates =================
+    /** Reject Limelight frames older than this (ms). */
+    public static double MAX_STALENESS_MS = 350.0;
+    /** Reject poses outside the 0..144 field by more than this margin (inches). */
+    public static double FIELD_MARGIN_IN = 24.0;
+    /** Residual above this (inches) adds a "-bigjump" tag to Fusion/status (soft R scaling still applies). */
+    public static double MAX_JUMP_XY_IN = 72.0;
+    /** Speed threshold (in/s) below which the robot is considered stationary for {@link #STATIONARY_RESIDUAL_REJECT_IN}. */
+    public static double STATIONARY_SPEED_IN_PER_SEC = 10.0;
+    /** Reject XY jumps larger than this (inches) when moving slower than {@link #STATIONARY_SPEED_IN_PER_SEC}. */
+    public static double STATIONARY_RESIDUAL_REJECT_IN = 120.0;
+    /** Bench-test override: true = bypass {@link #STATIONARY_RESIDUAL_REJECT_IN} so large initial errors converge. Keep false for matches. */
+    public static boolean BENCH_ACCEPT_STATIONARY = false;
+    /** Maximum pipeline latency used when back-dating measurement timestamps (ms). */
+    public static double MAX_LATENCY_MS = 250.0;
+    /** True = prefer MT1 XY when available; false = prefer gyro-seeded MT2 XY. */
+    public static boolean USE_MT1_XY = true;
+
+    // ================= Hive Cluster & Attitude Gates =================
+    /** True = ignore vision whenever only hive-cluster tags (30-45) are visible. */
     public static boolean REJECT_CLUSTER_ONLY = false;
-    /**
-     * Backstop: |botpose pitch/roll| beyond this (deg) means off-rest.
-     * GOOD (cell at rest, map matching) reports flat ~= 0 — the 30deg lives in
-     * the .fmap entries, not in the solve. Mirrors TipSanityFilter (the real
-     * gate); kept here so Panels shows one story. 0 disables.
-     * NOTE: pitch/roll come from MT1 when present ({@link Vision#ATTITUDE_FROM_MT1});
-     * MT2 always reports 0/0/0 so it cannot be used for this gate.
-     */
+    /** Reject when |botpose pitch| exceeds this (degrees). 0 disables. */
     public static double MAX_BOT_PITCH_DEG = 12.0;
-    /** Same for |botpose roll|, degrees. 0 disables. */
+    /** Reject when |botpose roll| exceeds this (degrees). 0 disables. */
     public static double MAX_BOT_ROLL_DEG = 12.0;
-    /** Reject when reported camera height is outside [min, max], meters. */
-    public static double BOT_Z_MIN_M = 0.05;
-    public static double BOT_Z_MAX_M = 0.60;
-    // ================= MT2-XY health (seed agreement repurposed) =================
-    // The seed-vs-return yaw comparison used to penalize MT2 heading. Heading no
-    // longer fuses from MT2 at all (NaN-masked — see fuse()), so the agreement
-    // is now an MT2-XY TRUST signal: large disagreement means the gyro seed the
-    // XY solve was conditioned on was wrong, so the XY is suspect. It scales sXY
-    // (not sH). A healthy loop reads seedAgrDeg small (< ~10). Pinned near 180 =
-    // seed frame mirrored — fix LL_YAW_OFFSET_DEG.
-    /**
-     * Extra XY R x when |seed − returned| yaw exceeds YAW_AGR_FULL_DEG.
-     * Ramps 1x below FULL to this at YAW_AGR_MAX_DEG. 0/1 = gate off.
-     */
+
+    // ================= MT2 Seed Agreement =================
+    /** XY variance multiplier applied when |seed - returned MT2 yaw| reaches {@link #YAW_AGR_MAX_DEG}. 0 or 1 disables. */
     public static double YAW_DISAGREE_PENALTY = 2.5;
-    /** Agreement below this (deg) = healthy, no penalty. */
+    /** Seed-vs-MT2 yaw difference below this (degrees) applies no penalty. */
     public static double YAW_AGR_FULL_DEG = 15.0;
-    /** Agreement at/above this (deg) = full penalty. */
+    /** Seed-vs-MT2 yaw difference at or above this (degrees) applies full {@link #YAW_DISAGREE_PENALTY}. */
     public static double YAW_AGR_MAX_DEG = 60.0;
-    /** Hard-reject the frame when disagreement exceeds this (deg). 0 disables. */
+    /** Hard-reject frame if seed-vs-MT2 yaw difference exceeds this (degrees). 0 disables. */
     public static double YAW_AGR_REJECT_DEG = 45.0;
 
-    // ================= base trust (variances, NOT stddevs) =================
-    // R is digested as Matrix.diag(x, y, heading). These match
-    // Constants.fusionDefaultMeasurementNoise(); the per-reading scaler below
-    // multiplies them. Heading is rad^2: 6deg stddev -> 0.011 var.
-    /** Base XY measurement variance, in^2. Lower value = higher trust in vision measurements (0.56 ~= 30% more trusting than 0.80). */
+    // ================= Base Measurement Variances (R) =================
+    /** Base XY measurement variance (in^2). Lower = higher trust in vision XY. */
     public static double BASE_R_XY = 0.46;
-    /**
-     * MT1 yaw measurement variance, rad^2. Ships at 18deg stddev (~0.10): slow
-     * drift correction, never a snap. Shrink toward ~10deg (0.03) once the
-     * split proves out on-field; grow if heading ever warps again.
-     */
-    public static double BASE_R_HEADING = 0.05; //0.10;
+    /** Base MT1 heading measurement variance (rad^2). Lower = faster heading pull. */
+    public static double BASE_R_HEADING = 0.05;
 
-    // ================= soft de-weight knobs =================
-    // Each factor is multiplicative on R, i.e. trust /= factor. sXY feeds the
-    // MT2-XY fuse; sH feeds the MT1-yaw fuse. They are computed independently.
-    /** MT1-ABSENT: no MT2 either is impossible (poll returns null); this covers MT1-XY fallback. */
+    // ================= Soft R Scaling & MT1 Yaw Gates =================
+    /** XY R multiplier when MT2 is absent and MT1 XY is used as fallback. */
     public static double MT1_XY_PENALTY = 4.0;
-    /**
-     * MT1 yaw variance floor, rad^2 (~30deg stddev). Single-tag MT1 yaw is
-     * flip-ambiguous on down-facing tags — the strict YAW_* gates below are the
-     * real protection; this floor keeps even a passing solve honest.
-     */
+    /** Minimum variance floor for MT1 yaw fusion (rad^2). */
     public static double MT1_HEADING_R = 0.27;
-    // ---- MT1-yaw gates (tags/speed/turn/dist skip YAW only; residual is soft R) ----
-    // COORDINATE FRAME FLOW FOR MT1 YAW FUSION:
-    // Forward (measurement):
-    //   1. LL reports MT1 yaw in Limelight frame
-    //   2. toPedroPose() converts: ll_yaw * LL_YAW_SIGN + LL_YAW_OFFSET_DEG -> field_yaw
-    //   3. fieldHeadingToPedro(): field_yaw + 90deg -> pedro_yaw (in Pedro frame)
-    //   4. Fused into Kalman filter
-    // Backward (seeding):
-    //   1. Get fused heading (Pedro frame)
-    //   2. pedroHeadingToField(): pedro_yaw - 90deg -> field_yaw
-    //   3. seedYaw(): (field_yaw - LL_YAW_OFFSET_DEG) * LL_YAW_SIGN -> ll_yaw
-    //   4. Send ll_yaw to Limelight via updateRobotOrientation()
-    // MT1 yaw only fuses when BOTH the measurement is valid AND all gates pass.
-    // If yaw is skipped, check these gates first:
-    /** Fuse MT1 yaw only with >= this many tags (flip ambiguity). */
+    /** Minimum tag count required to fuse MT1 yaw. */
     public static int YAW_MIN_TAGS = 2;
-    /** Fuse MT1 yaw only below this planar speed (in/s). */
+    /** Maximum planar robot speed to allow MT1 yaw fusion (in/s). */
     public static double YAW_MAX_SPEED_IPS = 20.0;
-    /** Fuse MT1 yaw only below this turn rate (rad/s). */
+    /** Maximum robot angular velocity to allow MT1 yaw fusion (rad/s). */
     public static double YAW_MAX_OMEGA_RPS = 0.5;
-    /** Fuse MT1 yaw only below this mean tag distance (m). */
+    /** Maximum mean tag distance to allow MT1 yaw fusion (meters). */
     public static double YAW_MAX_DIST_M = 2.5;
-    /** Fuse MT1 yaw with residual-scaled R; this is the knee of the ramp (deg). Soft. */
+    /** Knee of the soft R ramp for yaw residuals (degrees). */
     public static double YAW_MAX_RESIDUAL_DEG = 20.0;
-    /** Hard innovation gate: skip MT1 yaw if |MT1 - fused| exceeds this (deg). Raised to 35.0 deg to tolerate drift after blind traverses. */
+    /** Skip MT1 yaw fusion if |MT1 - fused| exceeds this (degrees). */
     public static double YAW_MAX_INNOV_DEG = 35.0;
-    /** Extra R x per tag below 2. Lowered to 1.8 to increase trust in fewer readings. */
+    /** XY R multiplier when fewer than 2 tags are visible. */
     public static double SINGLE_TAG_PENALTY = 1.8;
-    /** R x per meter of mean tag distance past CLOSE_DIST_M. */
+    /** XY R slope per meter past {@link #CLOSE_DIST_M}. */
     public static double DIST_SLOPE_PER_M = 0.4;
-    /** Distance (m) inside which no distance penalty applies. */
+    /** Mean tag distance (meters) inside which no distance penalty applies. */
     public static double CLOSE_DIST_M = 2.0;
-    /**
-     * Limelight self-reported stddev below this (inches) is trusted 1:1 as a
-     * variance (std^2 replaces base); above it the reading is treated as
-     * "LL is unsure" and R is scaled up instead of down. 0 disables.
-     */
+    /** Limelight stddev below this (inches) is used directly as variance; above this scales R up. 0 disables. */
     public static double STDDEV_TRUST_CAP_IN = 6.0;
-    /** R x per (in/s of planar speed / SPEED_REF_IPS), quadratic. XY path. */
+    /** Reference planar speed (in/s) for quadratic motion de-weighting. */
     public static double SPEED_REF_IPS = 40.0;
-    /** R x per (rad/s of turn rate / TURN_REF_RPS), quadratic, XY path. */
+    /** Reference turn rate (rad/s) for quadratic rotation de-weighting. */
     public static double TURN_REF_RPS = 2.0;
-    /** R x when tag area is tiny (far/small in frame), ramps below AREA_REF_PCT. XY path. */
+    /** Tag area (%) below which R scales up for small/far tags. */
     public static double AREA_REF_PCT = 0.5;
-    /** R x when the tag baseline is narrow (poor triangulation), ramps below SPAN_REF_M. XY path. */
+    /** Multi-tag baseline span (meters) below which R scales up for narrow triangulation. */
     public static double SPAN_REF_M = 1.0;
-    // Innovation (XY residual) de-weight: smooth, never a cliff. Yaw residual
-    // has its own ramp in the MT1-yaw path (same shape, deg units).
-    /** Residual below this fuses at full weight, inches. Raised to 18.0 in to trust initial drifted offsets. */
+    /** XY residual below this (inches) fuses with no residual penalty. */
     public static double RESIDUAL_FULL_IN = 18.0;
-    /** Knee of the residual ramp, inches — raised to 60.0 in so large translations don't prematurely de-weight. */
+    /** Knee of the XY residual penalty ramp (inches). */
     public static double RESIDUAL_MAX_IN = 60.0;
-    /** R scale reached AT the knee. Lowered to 3.0 so Kalman gain stays high and moves quickly to align. */
+    /** XY R multiplier reached at {@link #RESIDUAL_MAX_IN}. */
     public static double RESIDUAL_MAX_PENALTY = 3.0;
-    /** Global clamp: no single reading may scale R beyond this. Lowered to 12.0 so large translations converge fast. */
+    /** Maximum combined R multiplier allowed on any single reading. */
     public static double MAX_TOTAL_SCALE = 12.0;
 
     // ================= Init-screen heading gathering tunables =================
@@ -363,6 +233,12 @@ public class VisionFusion {
     /** True when corrections can flow (enabled + Limelight present + follower on Fusion). */
     public boolean isActive() {
         return ENABLED && vision != null && follower.localizer instanceof FusionLocalizer;
+    }
+
+    /** Returns Pedro's underlying dead-reckoning localizer (Pinpoint), or null if unavailable. */
+    @Nullable
+    public Localizer getDeadReckoning() {
+        return deadReckoning;
     }
 
     /**
@@ -505,12 +381,7 @@ public class VisionFusion {
             lastMt2Mt1Dy = Double.NaN;
         }
 
-        // ---- MT2 seed agreement (computed BEFORE any reject return) ----
-        // The old location (after the residual gates) left Fusion/seedAgrDeg
-        // "n/a" in exactly the high-residual stationary regime where the
-        // MT2-XY trust signal matters most — every frame returned at
-        // reject-residual-stationary before reaching it. Compute + log first;
-        // the reject/penalty decisions below keep their old thresholds.
+        // Compute MT2 seed agreement early so telemetry and reject gates always have it.
         double seedAgrDeg = Double.NaN;
         double seedPenalty = 1.0;
         if (rd.hasMt2 && Double.isFinite(rd.llYawDeg)) {
@@ -563,10 +434,7 @@ public class VisionFusion {
             lastStatus = "reject-no-vision-zone";
             return;
         }
-        // ---- Stage 1: rest-signature sanity (TipSanityFilter, always on) ----
-        // Drops off-rest / underground / teleporting solves BEFORE the old inline
-        // gates. The inline gates below stay as a backstop (same thresholds, so
-        // Panels shows one consistent story either way).
+        // Stage 1: rest-signature tilt/height/teleport filter.
         TipSanityFilter.Decision sanity;
         try {
             sanity = tipFilter.filter(rd, measPose);
@@ -579,36 +447,6 @@ public class VisionFusion {
             lastStatus = sanity == null ? "reject-sanity"
                     : "reject-" + sanity.verdict.name().toLowerCase().replace("reject_", "");
 
-            return;
-        }
-        // ---- Stage 2 (DISABLED): rest-projection rescue ----
-        // TipCompensator.ENABLED ships false. When you enable it after the
-        // validation plan in that class, accepted-but-deviated solves get
-        // projected back to rest here and fused with inflated R.
-        // (No code-side camera lever-arm compensation: the Limelight mount
-        // geometry lives in the LL web UI / LL init method, so botpose is
-        // already robot-center — see the note at USE_MT1_XY.)
-        double compRScale = 1.0;
-        if (TipCompensator.ENABLED) {
-            try {
-                TipCompensator.Result comp = TipCompensator.compensate(
-                        measPose, rd.botPitchDeg, rd.botRollDeg, rd.botZMeters);
-                if (comp == null) {
-                    lastStatus = "reject-uncompensatable";
-        
-                    return;
-                }
-                measPose = comp.pose;
-                compRScale = Math.max(comp.rScale, 1.0);
-                lastStatus = "compensated";
-            } catch (Exception e) {
-                lastStatus = "compensate-exception";
-    
-                return;
-            }
-        }
-        if (NoVisionZones.isInNoVisionZone(measPose)) {
-            lastStatus = "reject-no-vision-zone";
             return;
         }
         // BIOBUZZ cluster-only switch: conservative Pinpoint-only fallback.
@@ -631,12 +469,6 @@ public class VisionFusion {
 
             return;
         }
-        //filters out tags not at the height they should be (untipped)
-//        if (!(rd.botZMeters >= BOT_Z_MIN_M && rd.botZMeters <= BOT_Z_MAX_M)) {
-//            lastStatus = "reject-height";
-//
-//            return;
-//        }
         if (measPose.x() < -FIELD_MARGIN_IN || measPose.x() > 144.0 + FIELD_MARGIN_IN
                 || measPose.y() < -FIELD_MARGIN_IN || measPose.y() > 144.0 + FIELD_MARGIN_IN) {
             lastStatus = "reject-off-field";
@@ -800,13 +632,9 @@ public class VisionFusion {
         double rH = Double.NaN;
         if (fuseYaw) {
             if (isInit) {
-                // High-trust heading fusion during init: direct pull to MT1 heading
                 rH = INIT_BASE_R_HEADING;
             } else {
-                // Slow pull only: base 18deg stddev + floor + residual ramp.
-                // NOTE: sH starts at 1.0 here — the old motion-blur/turn terms applied
-                // to MT2-echo yaw and must NOT touch independent MT1 yaw. MT1 yaw at
-                // speed is handled by the YAW_MAX_* hard gates above, not soft scaling.
+                // Slow drift correction only; motion/turn filtering uses the hard YAW_MAX_* gates above.
                 double sH = 1.0;
                 if (Double.isFinite(yawResidDeg) && yawResidDeg > RESIDUAL_FULL_IN) {
                     double t = yawResidDeg / Math.max(YAW_MAX_RESIDUAL_DEG, 1e-6);
@@ -814,7 +642,6 @@ public class VisionFusion {
                 }
                 rH = BASE_R_HEADING * Math.min(sH, MAX_TOTAL_SCALE);
                 rH = Math.max(rH, MT1_HEADING_R);
-                rH = Math.min(rH * compRScale, BASE_R_HEADING * MAX_TOTAL_SCALE);
             }
         }
         lastYawR = rH;
@@ -831,8 +658,6 @@ public class VisionFusion {
                 rXY = Math.min(rXY, BASE_R_XY * MAX_TOTAL_SCALE);
             }
         }
-        // Stage 2 rescue inflates XY R for its residual pivot-arc error (1.0 when off).
-        rXY = Math.min(rXY * compRScale, BASE_R_XY * MAX_TOTAL_SCALE);
 
         lastScale = rXY / BASE_R_XY;
         lastRx = rXY;
@@ -1042,41 +867,19 @@ public class VisionFusion {
     }
 
     /**
-     * Axis-masked fuse. MT2 yaw is NEVER fused (NaN-masked): it is seed echo,
-     * not measurement — fusing it double-counts the gyro in a feedback loop.
-     * XY always fuses from measPose; yaw fuses from the independent MT1 solve
-     * only when fuseYaw passed the gates. FusionLocalizer skips NaN components
-     * per axis (verified in 3.0.1 bytecode). Single addMeasurement call carries
-     * both axes; the yaw component is NaN when yaw is skipped.
-     *
-     * <p><b>Angle wrap:</b> the MT1 yaw is wrapped to ±π of the CURRENT fused
-     * heading before fusing. The Kalman innovation is angular — feeding an
-     * unwrapped measurement (e.g. fused at 179deg, vision mapped at −179deg)
-     * would look like a ~358deg jump instead of a 2deg correction. Wrapping
-     * here makes the innovation the true shortest-arc error; the residual R
-     * ramp downstream already saw the wrapped |residual|.
+     * Feeds one axis-masked measurement to {@link FusionLocalizer}:
+     * XY always fuses from {@code xyPose}, and yaw fuses from MT1 only when {@code fuseYaw} is true
+     * (otherwise NaN-masked). Wraps MT1 yaw to ±π around {@code fusedHeadingRad} so 180/-180 wrap
+     * points produce shortest-arc corrections.
      */
     private void fuse(FusionLocalizer fusion, Pose xyPose, double mt1HeadingRad,
                       double fusedHeadingRad,
                       boolean fuseYaw, long stampNs, double rXY, double rH) {
-        // Yaw-skipped frames pass NaN. Pedro's FusionLocalizer masks NaN axes
-        // per-axis (the innovation is zeroed AND the gain's H-row is zeroed),
-        // so a masked fuse cannot move the heading. Keep it NaN — a finite
-        // "neutral" yaw would make the heading fuse from a non-measurement.
         double yaw = Double.NaN;
         if (fuseYaw && Double.isFinite(mt1HeadingRad)) {
             yaw = fusedHeadingRad + Angle.normalizeSigned(mt1HeadingRad - fusedHeadingRad);
         }
-        // R MUST stay finite on ALL axes, even the NaN-masked yaw. Verified in
-        // FusionLocalizer 3.0.1 bytecode: a NaN in the R diagonal poisons the
-        // whole correction — S = P + R gets NaN at [2,2], S.invert() returns
-        // all-NaN, K = P * S^-1 goes all-NaN, and the XY rows pick up NaN via
-        // the yaw column (NaN * 0 = NaN). One yaw-skipped fuse (the COMMON
-        // case: single tag, moving, far — i.e. the FIRST tag you ever see)
-        // NaNs the fused pose forever, freezing the field at its last good
-        // frame. The yaw R value is irrelevant when yaw is masked (H mask
-        // zeroes the yaw row), so use a finite placeholder; only a finite yaw
-        // measurement ever fuses.
+        // Keep all R entries finite even when yaw is NaN-masked, so matrix inversion (P + R)^-1 never propagates NaNs.
         double yawR;
         if (fuseYaw && Double.isFinite(rH)) {
             yawR = rH;

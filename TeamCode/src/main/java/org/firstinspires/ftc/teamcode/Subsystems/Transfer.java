@@ -9,6 +9,7 @@ import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import org.firstinspires.ftc.teamcode.RobotMain;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.SubsystemBase;
 
@@ -53,6 +54,7 @@ public class Transfer extends SubsystemBase {
     private double lastD = Double.NaN;
     private double lastF = Double.NaN;
     private boolean lastReversed = false;
+    private double lastAppliedTicks = Double.NaN;
 
     public Transfer(OpMode opMode) {
         motor = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.TransferMotorName);
@@ -84,16 +86,27 @@ public class Transfer extends SubsystemBase {
 
     /** Spin FORWARD (toward the flywheel) at TRANSFER_RPM via velocity PID. */
     public void runForward() {
-        motor.setVelocity(rpmToTicksPerSec(TRANSFER_RPM));
+        double ticks = rpmToTicksPerSec(TRANSFER_RPM);
+        if (Double.isNaN(lastAppliedTicks) || Math.abs(ticks - lastAppliedTicks) > 1e-6) {
+            motor.setVelocity(ticks);
+            lastAppliedTicks = ticks;
+        }
     }
 
     /** Spin REVERSE (back toward the intake / jam-clear) at TRANSFER_RPM via velocity PID. */
     public void runReverse() {
-        motor.setVelocity(-rpmToTicksPerSec(TRANSFER_RPM));
+        double ticks = -rpmToTicksPerSec(TRANSFER_RPM);
+        if (Double.isNaN(lastAppliedTicks) || Math.abs(ticks - lastAppliedTicks) > 1e-6) {
+            motor.setVelocity(ticks);
+            lastAppliedTicks = ticks;
+        }
     }
 
     public void stop() {
-        motor.setVelocity(0);
+        if (Double.isNaN(lastAppliedTicks) || lastAppliedTicks != 0.0) {
+            motor.setVelocity(0);
+            lastAppliedTicks = 0.0;
+        }
     }
 
     // ---- Commands (single-subsystem; multi-subsystem sequences live in CommandFactory) ----
@@ -153,6 +166,7 @@ public class Transfer extends SubsystemBase {
                     ? DcMotor.Direction.REVERSE
                     : DcMotor.Direction.FORWARD);
             lastReversed = MOTOR_REVERSED;
+            lastAppliedTicks = Double.NaN;
         }
     }
 
@@ -160,13 +174,13 @@ public class Transfer extends SubsystemBase {
     public void periodic() {
         applyPids(false);
 
-        // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
-        // clears its line buffer on every update(), so >1 update per loop sends
-        // partial frames (flicker) and drops lines. RobotMain.flushTelemetry()
-        // does the single end-of-loop flush.
-        telemetry.addData("Transfer target RPM", TRANSFER_RPM);
-        telemetry.addData("Transfer actual RPM", "%.1f", getActualRpm());
-        telemetry.addData("Transfer target tps", "%.1f", rpmToTicksPerSec(TRANSFER_RPM));
-        telemetry.addData("Transfer actual tps", "%.1f", motor.getVelocity());
+        if (RobotMain.DASHBOARD) {
+            // NOTE: addData only, no update() here. RobotMain.flushTelemetry() does the single flush.
+            double tps = motor.getVelocity();
+            telemetry.addData("Transfer target RPM", TRANSFER_RPM);
+            telemetry.addData("Transfer actual RPM", "%.1f", ticksPerSecToRpm(tps));
+            telemetry.addData("Transfer target tps", "%.1f", rpmToTicksPerSec(TRANSFER_RPM));
+            telemetry.addData("Transfer actual tps", "%.1f", tps);
+        }
     }
 }

@@ -8,30 +8,8 @@ import com.qualcomm.hardware.digitalchickenlabs.OctoQuad;
 import java.util.OptionalDouble;
 
 /**
- * OctoQuadAbsoluteSource — the turret's production absolute angle source: an
- * OctoQuad reading a REV Through Bore encoder's absolute PWM output
- * (1–1024 us = 0–360 deg) on a pulse-width channel.
- *
- * <p>This robot reads TWO Through Bore encoders on one chip: the TRACKING
- * encoder (encoder B, 32T pinion) and the CRT partner (encoder A, 31T pinion).
- * ONE bulk read per loop serves both channels — the primary value is returned
- * by {@link #readRevs()}, the partner's raw fraction is cached and served by
- * {@link #readCrossRevs()} with zero extra I2C traffic.
- *
- * <p><b>Hardening (session 4, the "wild heading" capture):</b> the raw value
- * is RANGE-VALIDATED against the configured pulse window BEFORE it leaves this
- * class — an out-of-window reading (wrong wiring, unseated cable, wrong
- * encoder) returns empty and counts in {@link #oorEvents} instead of being
- * mod-1'd into a plausible-looking angle. The raw microseconds are exposed via
- * {@link #getLastRawUs()} / {@link #getCrossRawUs()} and the applied chip
- * configuration is echoed via {@link #getConfigEcho()} so bench bring-up can
- * prove the chip is in the intended mode.
- *
- * <p><b>Channel banking:</b> the OctoQuad only banks channels as
- * ALL-quadrature, ALL-pulse-width, or bank1(0-3)-quadrature /
- * bank2(4-7)-pulse-width. The two ABS wires sit on channels 6 and 7, so the
- * chip is banked BANK1_QUADRATURE_BANK2_PULSE_WIDTH via
- * {@link #OCTOQUAD_BANK_CONFIG} — change both together if you rewire.
+ * Reads two REV Through Bore absolute PWM encoders on an OctoQuad in a single I2C bulk read:
+ * primary tracking encoder B (32T) via {@link #readRevs()} and CRT partner A (31T) via {@link #readCrossRevs()}.
  */
 @Configurable
 public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
@@ -90,16 +68,7 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
     private volatile int crossRawUs = Integer.MIN_VALUE;
     private volatile boolean crossReadValid = false;
 
-    /**
-     * Freshness diagnostics (§12.27): the local-loop time (seconds, this
-     * source's own clock) at which each channel's raw pulse width last
-     * CHANGED. The OctoQuad's PWM measurement only refreshes at roughly
-     * 10 Hz, so a loop reading that repeats the previous value is carrying no
-     * new information. The crosscheck latches on the difference between the
-     * per-loop motor-encoded stream and this (slower) channel, so when it
-     * disagrees the FIRST question is "was A actually fresh?" — if A had not
-     * changed for 100 ms, the disagreement is staleness, not slip.
-     */
+    /** Time (s) at which each PWM channel's raw pulse width last changed (~10 Hz refresh). */
     private volatile double lastChangeTimeB = Double.NaN;
     private volatile double lastChangeTimeA = Double.NaN;
     private volatile double lastAgeB = Double.NaN;
@@ -121,19 +90,42 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
             v = "unknown";
         }
         fw = v;
-        // Clean slate + production config, persisted through power glitches
-        // (same pattern as the SDK OctoQuad sample). NOTE: resetEverything()
-        // wipes settings for ALL channels — this must stay the only user of
-        // this OctoQuad, or the other users must re-apply their config too.
-        octoquad.resetEverything();
-        octoquad.setChannelBankConfig(OCTOQUAD_BANK_CONFIG);
-        octoquad.setSingleChannelPulseWidthParams(channel,
-                new OctoQuad.ChannelPulseWidthParams(ABS_PWM_MIN_US, ABS_PWM_MAX_US));
-        if (crossCh >= 0 && crossCh != channel) {
-            octoquad.setSingleChannelPulseWidthParams(crossCh,
-                    new OctoQuad.ChannelPulseWidthParams(ABS_PWM_MIN_US, ABS_PWM_MAX_US));
+        // Only reset & write flash when the chip's stored config differs from what we want.
+        // Avoids unnecessary EEPROM wear across OpMode restarts.
+        boolean needsFlash;
+        try {
+            OctoQuad.ChannelBankConfig bank = octoquad.getChannelBankConfig();
+            OctoQuad.ChannelPulseWidthParams chParams = octoquad.getSingleChannelPulseWidthParams(channel);
+            boolean chWrap = octoquad.getSingleChannelPulseWidthTracksWrap(channel);
+            boolean ok = bank == OCTOQUAD_BANK_CONFIG
+                    && chParams != null
+                    && chParams.min_length_us == ABS_PWM_MIN_US
+                    && chParams.max_length_us == ABS_PWM_MAX_US
+                    && !chWrap;
+            if (ok && crossCh >= 0 && crossCh != channel) {
+                OctoQuad.ChannelPulseWidthParams crossParams =
+                        octoquad.getSingleChannelPulseWidthParams(crossCh);
+                boolean crossWrap = octoquad.getSingleChannelPulseWidthTracksWrap(crossCh);
+                ok = crossParams != null
+                        && crossParams.min_length_us == ABS_PWM_MIN_US
+                        && crossParams.max_length_us == ABS_PWM_MAX_US
+                        && !crossWrap;
+            }
+            needsFlash = !ok;
+        } catch (Exception ignored) {
+            needsFlash = true;
         }
-        octoquad.saveParametersToFlash();
+        if (needsFlash) {
+            octoquad.resetEverything();
+            octoquad.setChannelBankConfig(OCTOQUAD_BANK_CONFIG);
+            octoquad.setSingleChannelPulseWidthParams(channel,
+                    new OctoQuad.ChannelPulseWidthParams(ABS_PWM_MIN_US, ABS_PWM_MAX_US));
+            if (crossCh >= 0 && crossCh != channel) {
+                octoquad.setSingleChannelPulseWidthParams(crossCh,
+                        new OctoQuad.ChannelPulseWidthParams(ABS_PWM_MIN_US, ABS_PWM_MAX_US));
+            }
+            octoquad.saveParametersToFlash();
+        }
 
         // Echo back what the chip ACTUALLY has (flash/config could have
         // failed silently) — a mismatch here explains "wild readings".
@@ -182,9 +174,7 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
             }
             lastRawUs = us;
             lastAgeB = Double.isNaN(lastChangeTimeB) ? Double.NaN : nowS - lastChangeTimeB;
-            // RANGE VALIDATION — the mod1() that used to sit here masked
-            // garbage into plausible angles. A real Through Bore PWM read
-            // lives in [min, max]; anything else is a wiring/config fault.
+            // Range check: reject pulse widths outside [MIN - SLACK, MAX + SLACK] as glitches.
             if (us < ABS_PWM_MIN_US - ABS_PWM_OOR_SLACK_US || us > ABS_PWM_MAX_US + ABS_PWM_OOR_SLACK_US) {
                 oorEvents++;
                 return OptionalDouble.empty();
@@ -260,11 +250,8 @@ public class OctoQuadAbsoluteSource implements AbsoluteAngleSource {
     }
 
     /**
-     * Seconds since encoder A's raw pulse width last CHANGED (§12.27
-     * diagnostic). The crosscheck compares the per-loop motor-encoded stream
-     * against this channel, and A's PWM only refreshes at ~10 Hz — so when the
-     * two disagree, a large age here means the disagreement is STALENESS, not
-     * a slipped magnet. NaN before A has ever changed.
+     * Seconds since encoder A's raw pulse width last changed (NaN until first change).
+     * Because PWM refreshes at ~10 Hz, an age >= 100 ms indicates normal refresh staleness.
      */
     public double getCrossFreshnessAgeSec() {
         return lastAgeA;

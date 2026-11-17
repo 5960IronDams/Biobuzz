@@ -16,106 +16,49 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsGamepadDebug;
 
 /**
- * Single home for every gamepad binding in TeleOp.
+ * TeleOp gamepad bindings for Driver (gamepad1) and Operator (gamepad2).
  *
- * <p>Declarative SolversLib bindings set up once in the constructor:
- * <ol>
- *   <li>Drive: field-centric sticks on gamepad1, read through
- *       {@link CommandGamepad} (the LOGITECH pad — plain SDK axes, no remap).
- *       Live raw axes on Panels via {@link PanelsGamepadDebug}. The chassis is
- *       ALWAYS driver-controlled — aiming never touches it. Right stick X =
- *       chassis turn.</li>
- *   <li><b>Aim / auto-fire: LEFT TRIGGER is a TOGGLE</b> (press to start,
- *       press again to stop) — {@code toggleWhenActive} on the latched
- *       auto-shoot compound. While ON the turret tracks the closest alliance
- *       target, the flywheel holds the LUT RPM, and the TRANSFER fires itself
- *       the moment {@code isReadyToShoot()} says the shot is good. This
- *       replaces the old hold-to-aim push-to-talk, which needed a second
- *       button to unlock; <b>LEFT BUMPER is now the unlock/panic</b> (latch
- *       off + gate closed + transfer stopped + shooter parked).</li>
- *   <li>Turret: normally FULLY AUTO while the latch is ON. Dpad LEFT/RIGHT is
- *       the manual/debug jog for when the latch is OFF (via
- *       {@code TurretPivot.NudgeDeg} so soft limits + PID safety stay
- *       active).</li>
- *   <li>Intake: right trigger press/release schedules
- *       {@code intake.holdCmd()} / {@code intake.stopCmd()}. While the shot
- *       is firing the transfer parks the intake itself and hands it back
- *       afterwards (see {@code CommandFactory.FireAtGoal}).</li>
- *   <li>Transfer: LEFT BUMPER moved to the panic/unlock, so both manual test
- *       directions are on the right cluster — hold RIGHT BUMPER to run
- *       forward, hold RIGHT STICK CLICK (R3) to run reverse; either release
- *       PID-brakes to zero.</li>
- *   <li>Servo: X toggles presets via {@code PosServ.toggleCmd},
- *       dpad up/down nudges while held.</li>
- *   <li>Ramp (OPERATOR pad, gamepad2): dpad DOWN lowers the ramp to
- *       {@code Ramp.POS_DOWN}, dpad UP parks it at {@code POS_UP} (0). Taps,
- *       not holds — see {@code bindRamp()} for why the co-driver pad owns the
- *       dpad and how the gamepad1-Y calibration jog works.</li>
- *   <li>Localize: BACK resets the Pedro pose to the alliance start and
- *       re-anchors the Pinpoint to it.</li>
- *   <li><b>Manual Shoot (OPERATOR pad, gamepad2): RIGHT TRIGGER is a TOGGLE</b>
- *       (press to start, press again to stop) — {@code toggleWhenActive} on the
- *       backup manual shoot compound. The turret does not move, the flywheel
- *       spins to a fixed set RPM ({@code CommandFactory.MANUAL_SHOOT_RPM}),
- *       and the TRANSFER auto-feeds once the flywheel is at speed. Allows the driver
- *       to manually align the chassis and shoot if vision, odometry, or turret
- *       systems fail.</li>
- * </ol>
+ * <p>Driver (gamepad1):
+ * <ul>
+ *   <li>Sticks: field-centric drive (left = translate, right X = turn).</li>
+ *   <li>Left Trigger (toggle): auto-aim turret + LUT flywheel + auto-fire when ready.</li>
+ *   <li>Left Bumper: stop shooting / panic reset.</li>
+ *   <li>Dpad Left/Right: manual turret jog (when auto-aim is off).</li>
+ *   <li>Right Trigger (hold): intake forward; A (hold): intake reverse.</li>
+ *   <li>Right Bumper (hold): transfer forward; B (hold): transfer reverse.</li>
+ *   <li>Y: toggle gate servo; X + Dpad Left/Right: nudge gate servo.</li>
+ *   <li>Dpad Down: lower ramp.</li>
+ *   <li>Back: reset robot pose to alliance start.</li>
+ * </ul>
  *
- * <p>Usage (see {@code JowByTeleOp}):
- * <pre>
- * keys = new KeyBindings(this, robot);   // init(), after RobotMain
- * robot.RobotRunPeriodic();              // loop(), runs CommandScheduler
- * keys.update();                         // loop(), right after
- * </pre>
- * {@code update()} reports the intake trigger intent, ticks the shoot-readiness
- * motion bookkeeping ({@code CommandFactory.readinessPeriodic()}) and applies
- * the follower powers. The field draw happens once per loop in
- * {@code flushTelemetry()}, after this returns.
+ * <p>Operator (gamepad2):
+ * <ul>
+ *   <li>Right Trigger (toggle): manual shoot at fixed RPM (no turret movement).</li>
+ *   <li>Dpad Down: lower ramp; LB/RB: jog ramp; Y: zero ramp; Back: cycle jog servo.</li>
+ *   <li>B/X: flywheel kF +/-; Dpad Right/Left: flywheel kP +/- (hold LT for fine step); Dpad Up: test spin.</li>
+ * </ul>
  */
 public class KeyBindings {
 
     private final RobotMain robot;
-    /** Fluent bindings facade over gamepad1 — see bindCommands(). */
     private final CommandGamepad DriveController;
-    /**
-     * Fluent bindings facade over gamepad2 (the OPERATOR pad). Every rig has
-     * two, so it is always constructed; the ramp owns its dpad (see bindRamp()).
-     */
     private final CommandGamepad OperatorController;
-    /** Example-style Panels gamepad dump (Panels > Configurables > PanelsGamepadDebug). */
     private final PanelsGamepadDebug gamepadDebug;
 
-    // ---- Manual turret jog (dpad left/right) ----
-    /**
-     * Jog step per loop while a dpad direction is held (deg). NudgeDeg
-     * re-targets the PID every loop, and the subsystem's edge slow zone still
-     * protects the soft limits.
-     */
+    /** Degrees per loop to jog the turret while holding Dpad Left/Right. */
     public static final double MANUAL_JOG_STEP_DEG = 4.0;
 
-    /** Right-trigger threshold that starts/stops the manual intake (binding + intent read use it). */
+    /** Right-trigger threshold for running the intake. */
     public static final double INTAKE_TRIGGER_THRESHOLD = 0.1;
 
-    // Manual rising-edge latch for the back-button relocalize (kept as a simple
-    // poll; no dependency on SDK *WasPressed APIs).
     private boolean prevBackPressed = false;
-
-    // Rising-edge tracking for operator flywheel dial controls (gamepad2)
     private boolean prevOpB = false;
     private boolean prevOpX = false;
     private boolean prevOpDpadRight = false;
     private boolean prevOpDpadLeft = false;
-    private boolean prevOpA = false;
     private boolean prevOpDpadUp = false;
 
-    // The left-trigger toggle's latched state is owned by the COMMAND itself:
-    // toggleWhenActive() schedules/cancels the same instance, so "is it on" is
-    // simply isScheduled(). That keeps the button and the robot in lockstep
-    // even if something else (an auto, the panic button) ends the command.
     private final Command autoShoot;
-
-    /** Operator (gamepad2) manual shoot toggle: fixed RPM, no turret movement, auto-feeds when ready. */
     private final Command manualShoot;
 
     public KeyBindings(OpMode opMode, RobotMain robot) {
@@ -126,24 +69,13 @@ public class KeyBindings {
         this.DriveController = new CommandGamepad(opMode.gamepad1);
         this.OperatorController = new CommandGamepad(opMode.gamepad2);
         this.gamepadDebug = new PanelsGamepadDebug(opMode.gamepad1, "GP1");
-        // One instance, reused by the toggle below: its scheduled state IS the latch.
         this.autoShoot = robot.CommandF.getAutoShootCommand();
         this.manualShoot = robot.CommandF.getManualShootCommand();
         bindCommands();
     }
 
-    /**
-     * All gamepad bindings, declared once at init. SolversLib bindings are polled
-     * by {@code CommandScheduler.run()} (called from RobotMain.RobotRunPeriodic()).
-     */
     private void bindCommands() {
-        // ---- Manual turret jog: dpad LEFT / dpad RIGHT ----
-        // Normally the turret is AUTO-aimed. The dpad is the manual/debug
-        // path: hold dpad-left to jog CCW (+), dpad-right for CW (−), through
-        // NudgeDeg so the subsystem's soft limits + PID + watchdogs stay in
-        // the loop. GATED ON !isAutoAimOn(): while the auto-shoot latch is on
-        // the aim is fully automatic and the dpad does nothing to the turret.
-        // Guarded: turret is optional hardware (tryCreate may return null).
+        // Manual turret jog (only active when auto-aim is off)
         if (robot.turret != null) {
             new Trigger(() -> DriveController.dpadLeft().get() && !isAutoAimOn())
                     .whileActiveOnce(
@@ -157,44 +89,22 @@ public class KeyBindings {
                             true);
         }
 
-        // ---- SHOOT: LEFT TRIGGER = TOGGLE (press on, press again off) ----
-        // toggleWhenActive schedules the latched auto-shoot compound on the
-        // first press and cancels it on the next. One button owns the whole
-        // shot cycle: aim + flywheel RPM + gate + TRANSFER, the transfer
-        // feeding automatically whenever CommandFactory.isReadyToShoot() is
-        // true. No second "unlock" press is needed to keep shooting — press
-        // once to shoot, press once to stop. interruptible=true.
+        // Auto-shoot toggle (Driver LT)
         if (robot.turret != null && autoShoot != null) {
             DriveController.leftTrigger(AimAtGoal.TRIGGER_THRESHOLD)
                     .toggleWhenActive(autoShoot, true);
         }
 
-        // ---- MANUAL SHOOT: OPERATOR (gamepad2) RIGHT TRIGGER = TOGGLE ----
-        // Backup manual shoot mode: spins the flywheel to MANUAL_SHOOT_RPM and feeds
-        // automatically when at speed, without moving the turret.
-        // Used when vision, odometry, or turret systems have issues so the driver
-        // can manually align the chassis and shoot.
+        // Manual fixed-RPM shoot toggle (Operator RT)
         if (manualShoot != null) {
             OperatorController.rightTrigger(AimAtGoal.TRIGGER_THRESHOLD)
                     .toggleWhenActive(manualShoot, true);
         }
 
-        // ---- PANIC / UNLOCK: LEFT BUMPER ----
-        // The old "one extra button to unlock" job, now the ONE dedicated safe
-        // control: turn the latch OFF and re-park the shooter (gate closed,
-        // transfer stopped, flywheel coasts to idle, turret released).
-        // getStopShootCommand() is idempotent, so hitting it when already off
-        // just re-asserts the parked state. This is also what stops the
-        // auto-transfer mid-shot.
+        // Stop shoot / panic reset (Driver LB)
         DriveController.leftBumper().whenActive(robot.CommandF.getStopShootCommand());
 
-        // ---- Intake: right trigger press->run, release->stop ----
-        // holdCmd is a RunCommand: INTAKE_RPM is re-read every loop, so
-        // live Panels retunes apply immediately while the trigger is held.
-        // While the shot is firing the transfer parks the intake itself
-        // (see CommandFactory.FireAtGoal) and hands it back when it is done —
-        // setManualIntakeHeld() below is what tells it whether the driver
-        // still wants it running.
+        // Intake (Driver RT = forward, A = reverse)
         DriveController.rightTrigger(INTAKE_TRIGGER_THRESHOLD)
                 .whenActive(robot.intake.holdCmd())
                 .whenInactive(robot.intake.stopCmd());
@@ -202,11 +112,7 @@ public class KeyBindings {
                 .whenActive(robot.intake.reverseCmd())
                 .whenInactive(robot.intake.stopCmd());
 
-        // ---- Transfer: RB = forward, B = reverse ----
-        // Gated on !isShooting(): when auto-shoot or manual-shoot is active, holding RB or B
-        // directly drives the transfer via CommandFactory without cancelling
-        // the shoot compound (turret continues tracking or stays fixed, flywheel stays at speed).
-        // When shooting is OFF, these schedule transfer.holdCmd() / stopCmd().
+        // Transfer / reservoir (Driver RB = forward, B = reverse; integrates with active shoot)
         new Trigger(() -> DriveController.rightBumper().get() && !isShooting())
                 .whenActive(robot.transfer.holdCmd())
                 .whenInactive(robot.transfer.stopCmd());
@@ -214,42 +120,14 @@ public class KeyBindings {
                 .whenActive(robot.transfer.reverseHoldCmd())
                 .whenInactive(robot.transfer.stopCmd());
 
-        // ---- Servo toggle: X, edge-triggered (persistent instance; reusable) ----
+        // Gate servo (Driver Y = toggle, X + Dpad Left/Right = nudge)
         DriveController.y().whenActive(robot.PosServ.toggleCmd());
-
-        // ---- Servo nudge: dpad_up/dpad_down, run-while-held ----
-        // Each command computes its own dt so nudging rate is loop-time
-        // independent; the slew + hardware write still happen in
-        // ShootGateServo.periodic(). Requires PosServ so dpad nudges cancel
-        // any servo preset command still running.
         DriveController.dpadLeft().and(DriveController.x()).whileActiveOnce(robot.PosServ.nudgeCmd(true), true);
         DriveController.dpadRight().and(DriveController.x()).whileActiveOnce(robot.PosServ.nudgeCmd(false), true);
 
-        // ---- Ramp: OPERATOR (gamepad2) dpad = park / lower, gamepad2 bumper = fine jog ----
         bindRamp();
     }
 
-    /**
-     * Ramp bindings. Two rules drove every choice here:
-     *
-     * <p><b>Why gamepad2:</b> gamepad1's dpad_up/dpad_down are already the
-     * shoot-gate servo nudge on the lines above. Binding the ramp's own dpad
-     * bindings to the same pair would move the gate and the ramp together, so
-     * the ramp's park/lower taps live on the CO-DRIVER pad, where the operator
-     * (who watches the ramp) has them. Single-subsystem commands only — the
-     * compositions stay in CommandFactory.
-     *
-     * <p><b>Why taps, not holds:</b> these are {@code whenActive} (edge,
-     * fire-once) on toggle commands. Nothing is driving the servo after the
-     * press, so the horn simply holds — a released button can never drop the
-     * ramp, and no command holds High Power on the servo while idle.
-     *
-     * <p><b>Calibration jog (before POS_DOWN is known):</b> hold LB to jog
-     * toward DOWN and RB toward UP while watching the Panels "Ramp jog" line.
-     * {@code Ramp.JOG_SELECT} (gamepad2 BACK) chooses LEFT servo, RIGHT servo
-     * or BOTH, so one arm can be trimmed to square the crossbar. gamepad2 Y
-     * snaps both servos back to POS_UP (0) to install the horns against.
-     */
     private void bindRamp() {
         if (robot.ramp == null) {
             return; // ramp servos not in the RC config — every binding skipped
@@ -270,29 +148,20 @@ public class KeyBindings {
         OperatorController.back().whenActive(robot.ramp.cycleJogSelectCmd());
     }
 
-    /** Poll every binding once. Call once per loop, after {@code robot.RobotRunPeriodic()}. */
+    /** Updates manual driver intent, relocalize, operator PIDF nudges, and drive powers each loop. */
     public void update() {
-        // Tell the shoot factory whether the driver wants the intake or transfer,
-        // so auto-shoot can incorporate manual intent without cancelling the compound.
         robot.CommandF.setManualIntakeHeld(robot.intake != null
                 && DriveController.rightTrigger(INTAKE_TRIGGER_THRESHOLD).get());
         robot.CommandF.setManualTransferForwardHeld(robot.transfer != null
                 && DriveController.rightBumper().get());
         robot.CommandF.setManualTransferReverseHeld(robot.transfer != null
                 && DriveController.b().get());
-        // Shoot-readiness sensing: advances the debounce/warmup timers and
-        // samples the chassis motion from the follower pose. Home for both is
-        // one call — the scheduler already polled this loop's triggers, so this
-        // tick's sample is what the NEXT tick's isReadyToShoot()/FireAtGoal()
-        // sees (the pose has already advanced by applyDrive() below).
-        robot.CommandF.readinessPeriodic();
         handleRelocalize();
         handleOperator();
         applyDrive();
-        reportTelemetry();
     }
 
-    /** Cancel any latched shot (call from the OpMode's stop()). Safe when not shooting. */
+    /** Cancels any active shoot mode (call in OpMode.stop()). */
     public void stop() {
         if (autoShoot != null && autoShoot.isScheduled()) {
             autoShoot.cancel();
@@ -302,28 +171,21 @@ public class KeyBindings {
         }
     }
 
-    /** True while the latched auto-shoot (aim + transfer) is ON. */
+    /** True while auto-shoot is toggled ON. */
     public boolean isAutoAimOn() {
         return autoShoot != null && autoShoot.isScheduled();
     }
 
-    /** True while the latched manual-shoot (fixed RPM + transfer, no turret aim) is ON. */
+    /** True while manual-shoot is toggled ON. */
     public boolean isManualShootOn() {
         return manualShoot != null && manualShoot.isScheduled();
     }
 
-    /** True while either shoot mode (auto-aim or manual align) is active. */
+    /** True while either auto-shoot or manual-shoot is active. */
     public boolean isShooting() {
         return isAutoAimOn() || isManualShootOn();
     }
 
-    // ------------------------------------------------------------------ drive
-
-    /**
-     * The chassis is ALWAYS manual field-centric: aiming spins the turret and
-     * never touches the follower, so the driver keeps translation AND turn
-     * even while the shot cycle runs.
-     */
     private void applyDrive() {
         if (robot.follower == null || robot.follower.pose() == null) {
             return;
@@ -333,55 +195,35 @@ public class KeyBindings {
                 driveStrafe(),
                 driveTurn(),
                 robot.follower.pose().heading());
-        // Apply field-centric powers to the follower. RobotRunPeriodic() performs
-        // the single follower.update() and visionFusion.correct() at the top of the
-        // loop, ensuring clean delta-time and eliminating redundant I2C Pinpoint reads.
         robot.follower.manual(powers);
     }
 
-    // Alliance-aware stick mapping (preserved from JowByTeleOp).
     private boolean isRed() {
         return RobotMain.CurrentAlliance != ALLIANCE_COLOR.ALLIANCE_BLUE;
     }
 
-    /** Forward stick (+ = forward). Also fed to AimAtGoal so translation survives aiming. */
+    /** Forward stick input (+ = forward). */
     public double driveForward() {
         return isRed() ? -DriveController.getLeftY() : DriveController.getLeftY();
     }
 
-    /** Strafe stick (+ = right). Also fed to AimAtGoal so translation survives aiming. */
+    /** Strafe stick input (+ = right). */
     public double driveStrafe() {
         return isRed() ? -DriveController.getLeftX() : DriveController.getLeftX();
     }
 
-    /**
-     * Chassis turn stick (+ = CCW). The right stick is chassis turning
-     * (standard drive layout); the turret's manual jog lives on dpad
-     * LEFT/RIGHT instead. Normally the turret is auto-aimed and the stick is
-     * just driving.
-     */
+    /** Chassis turn stick input (+ = CCW). */
     public double driveTurn() {
         return -DriveController.getRightX();
     }
 
-    // ------------------------------------------------------------------ subsystems
-
-    /**
-     * Back button: teleport the Pedro pose to the alliance start
-     * (edge-triggered). Kept as a manual poll — simple edge detection is fine
-     * here.
-     */
+    /** Resets the robot pose and Pinpoint to the alliance start pose on Back button press. */
     private void handleRelocalize() {
         boolean pressed = DriveController.back().get();
         if (pressed && !prevBackPressed && robot.follower != null) {
             Pose resetPose = RobotMain.CurrentAlliance == ALLIANCE_COLOR.ALLIANCE_BLUE
                     ? IronConstants.BLUE_RESET_POSE : IronConstants.RED_RESET_POSE;
             robot.follower.setPose(resetPose);
-            // Re-anchor the raw Pinpoint to the same pose. Without this the
-            // dead reckoning keeps its old frame: the fusion history and the
-            // next OpMode's Pinpoint seed would disagree with the pose this
-            // button just set. (One-tick velocity transient is acceptable for
-            // an emergency re-zero.)
             robot.writePoseToPinpoint(resetPose);
         }
         prevBackPressed = pressed;
@@ -429,16 +271,6 @@ public class KeyBindings {
         }
         prevOpDpadLeft = dpadLeft;
 
-//        boolean a = OperatorController.a().get();
-//        if (a && !prevOpA) {
-//            if (robot.flywheel.isAutotuning()) {
-//                robot.flywheel.stopAutotune();
-//            } else {
-//                robot.flywheel.startAutotune();
-//            }
-//        }
-//        prevOpA = a;
-
         boolean dpadUp = OperatorController.dpadUp().get();
         if (dpadUp && !prevOpDpadUp) {
             robot.flywheel.toggleTestSpin();
@@ -448,7 +280,11 @@ public class KeyBindings {
 
     // ------------------------------------------------------------------ telemetry
 
-    private void reportTelemetry() {
+    /** Publishes TeleOp latch/pose telemetry (call after {@code RobotRunPeriodic()} so states match this loop). */
+    public void reportTelemetry() {
+        if (!RobotMain.DASHBOARD) {
+            return;
+        }
         // addData only — flushed once via robot.flushTelemetry() at end of loop().
         gamepadDebug.report(); // raw-vs-mapped gamepad axes (toggle in Panels > Configurables)
         RobotMain.DashTelemetry.addData("Shoot latch (LT toggle)", isAutoAimOn() ? "ON" : "OFF");
@@ -462,9 +298,6 @@ public class KeyBindings {
         }
         if (robot.flywheel != null) {
             RobotMain.DashTelemetry.addData("Flywheel Tune", robot.flywheel.getStatusLine());
-            if (robot.flywheel.isAutotuning()) {
-                RobotMain.DashTelemetry.addData("Autotune", robot.flywheel.getAutotuneStatus());
-            }
         }
 
         if (robot.turret != null) {

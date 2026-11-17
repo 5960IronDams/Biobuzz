@@ -88,12 +88,20 @@ public class PanelsFieldRenderer {
     public static String MT2_STROKE = "green";
     public static String MT2_FILL = "rgba(0,255,0,0.25)";
 
-    // ---- Turret overlay (session 2: TurretPivot heading ray) ----
+    // ---- Turret overlay ----
     /** Draw the turret heading ray in drawFusedAndVision()/drawTurretRay(). */
     public static boolean DRAW_TURRET_RAY = true;
     public static String TURRET_STROKE = "orange";
     /** Turret ray length, inches (longer than the body tick so it reads past the robot circle). */
     public static double TURRET_RAY_IN = 11.0;
+
+    // ---- Aim target overlay (SOTM virtual target) ----
+    /** Draw the live effective aim target dot (purple) on the Panels Field widget. */
+    public static boolean DRAW_AIM_TARGET = true;
+    public static String AIM_TARGET_STROKE = "purple";
+    public static String AIM_TARGET_FILL = "rgba(160,32,240,0.85)";
+    /** Radius of the aim target dot in inches. */
+    public static double AIM_TARGET_RADIUS_IN = 2.5;
 
     private final FieldManager field = PanelsField.INSTANCE.getField();
 
@@ -245,22 +253,9 @@ public class PanelsFieldRenderer {
     }
 
     /**
-     * Pedro-native draw: queue body circle + heading tick into the canvas and
-     * flush immediately (single-shape loop call: robot only). Heading hp is
-     * CCW+ measured from +X, so robot forward = (cos hp, sin hp). At hp=0 the
-     * nose points +X (Pedro's convention). The old code used the field-frame
-     * tick (-sin rh, cos rh) (0 = +Y) here, which is exactly +90deg CCW off in
-     * this preset — the bug being fixed. The canvas transform (rotation /
-     * flip in the Field widget) applies to both circle + tick endpoints, so
-     * computing the nose in Pedro space is sufficient; do NOT pre-rotate.
-     *
-     * <p>Batching: FieldManager.update() only sends when 100ms elapsed since
-     * the last send (field:1.0.6 default), then ALWAYS resets the canvas. So
-     * N draw calls in one loop MUST be followed by exactly ONE update() —
-     * separate draw-then-update per shape would drop all but the last shape
-     * on most loops. Multi-shape callers: queue each shape with
-     * {@link #queuePoseShape} and finish with one {@link #flush()} (see
-     * {@link #drawFusedAndVision}).
+     * Queues the robot body circle and heading tick in Pedro coordinates (0..144, heading 0 = +X, CCW+)
+     * and flushes once. Multi-shape callers should use {@link #queuePoseShape} and {@link #flush()}
+     * because {@code FieldManager.update()} resets the canvas after sending.
      */
     private void sendPedroPacket(double xPedroIn, double yPedroIn, double headingPedroRad,
                                  String stroke, String fill) {
@@ -316,6 +311,25 @@ public class PanelsFieldRenderer {
             field.moveCursor(sx, sy);
             field.setOutline(TURRET_STROKE, OUTLINE_WIDTH);
             field.line(tx, ty);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * Queue the effective aim target dot (purple) on the field; NO canvas send.
+     * Call BEFORE {@link #drawFusedAndVision} so it lands in the same single-canvas frame.
+     *
+     * @param aimTargetPedro effective aim target in Pedro field coordinates (inches)
+     */
+    public void drawAimTargetDot(Pose aimTargetPedro) {
+        if (!DRAW_AIM_TARGET || !isDrawablePose(aimTargetPedro)) return;
+        try {
+            double ax = aimTargetPedro.x() + ORIGIN_OFFSET_X;
+            double ay = aimTargetPedro.y() + ORIGIN_OFFSET_Y;
+            field.moveCursor(ax, ay);
+            field.setFill(AIM_TARGET_FILL);
+            field.setOutline(AIM_TARGET_STROKE, OUTLINE_WIDTH);
+            field.circle(AIM_TARGET_RADIUS_IN);
         } catch (Exception ignored) {
         }
     }

@@ -16,6 +16,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.IronConstants;
+import org.firstinspires.ftc.teamcode.RobotMain;
 import com.seattlesolvers.solverslib.command.Command;
 import com.seattlesolvers.solverslib.command.FunctionalCommand;
 import com.seattlesolvers.solverslib.command.InstantCommand;
@@ -25,55 +26,13 @@ import java.util.Locale;
 import java.util.OptionalDouble;
 
 /**
- * TurretPivot — the turret rotation subsystem, ported from the 2026-IndianaJoe
- * FRC {@code TurretPivot} (TalonFX + dual-CANcoder EasyCRT) to the FTC REV
- * Control Hub. Full porting history lives in TURRET_PORTING_NOTES.md.
+ * Turret rotation subsystem (goBILDA 5203 drive + dual-encoder OctoQuad feedback).
  *
- * <p><b>THE SPLIT:</b> the turret is two halves. This class is the ACTING half
- * — setpoint selection, the PID, the power stage, watchdogs, telemetry. The
- * SENSING half (where the turret actually is, fused from three encoders)
- * lives in {@link TurretTracker}; the pure CRT math lives in
- * {@link TurretCrt}; the OctoQuad PWM reads live in
- * {@link OctoQuadAbsoluteSource}. Ask the tracker for a position, ask this
- * class to move.
+ * <p>Create with {@link #tryCreate(OpMode)} so rigs without turret hardware return {@code null}.
+ * Sensor fusion lives in {@link TurretTracker} and CRT boot math lives in {@link TurretCrt}.
  *
- * <p><b>HARDWARE (what this class talks to):</b>
- * <ul>
- *   <li><b>Drive:</b> one goBILDA 5203 motor (312 RPM, 19.2:1) whose output
- *       carries a 64T gear meshing the 176T turret ring — 2.75:1 overall.
- *       Positive power rotates the turret CCW (looking down).</li>
- *   <li><b>Feedback:</b> an OctoQuad (I2C) reading TWO REV Through Bore
- *       absolute encoders: encoder B (32T pinion, the tracking encoder) and
- *       encoder A (31T pinion, the CRT partner) — see
- *       {@link OctoQuadAbsoluteSource}. The 5203's built-in encoder supplies
- *       per-loop motion for the hybrid tracker.</li>
- * </ul>
- *
- * <p><b>HOW THE TURRET KNOWS WHERE IT IS:</b> summarized in the
- * {@link TurretTracker} javadoc — motor encoder integrates motion every loop
- * (hybrid ACTIVE), PWM absolutes anchor at rest / cross-check / boot-solve
- * (CRT), and any fault drops back to PWM-only encoder-B tracking at a reduced
- * power cap. This class only consumes the tracker's answers.
- *
- * <p><b>SAFETY NETS (this class):</b> software soft limits ±180° (the cable
- * routing is built for one revolution — this is INTENTIONAL, and a setpoint on
- * the far side of the ±180 seam is reached the long way around by design),
- * wrap-aware setpoint choice, an edge slow zone near the limits, a stuck
- * watchdog, a motor over-current alert, brake-on-feedback-loss, and latched
- * fault flags surfaced on the dashboard.
- *
- * <p>Hardware + its own single-subsystem commands ({@code C_GotoPositon} /
- * {@code C_Stop}, FRC names kept for the humans) — gamepad bindings live in
- * {@code KeyBindings}, multi-subsystem compositions in {@code CommandFactory},
- * and the bench bring-up OpMode is {@code TurretPivotDebug}.
- *
- * <p>Panels-tunable (Panels -&gt; TurretPivot): gains, limits, gearing, caps.
- * Hardware NAME changes need an OpMode restart; everything else applies live.
- *
- * <p>Construct once in the OpMode (auto-registers with SubsystemBase):
- * <pre>
- * turret = TurretPivot.tryCreate(this);   // null when not in the RC config
- * </pre>
+ * <p>Panels-tunable (Panels -&gt; TurretPivot): gains, soft limits, and power caps apply live.
+ * Hardware name changes require an OpMode restart.
  */
 @Configurable
 public class TurretPivot extends SubsystemBase {
@@ -90,351 +49,112 @@ public class TurretPivot extends SubsystemBase {
     // Geometry
     // =========================================================================
 
-    /** Teeth on the turret RING gear (the big gear the pinions/gear mesh). */
+    /** Teeth on the turret ring gear. */
     public static final double TURRET_GEAR_TEETH = 176.0;
-    /** Teeth on the gear mounted on the 5203 motor's output shaft. */
+    /** Teeth on the 5203 motor gear. */
     public static final double MOTOR_GEAR_TEETH = 64.0;
-    /** Teeth on the TRACKING encoder's (encoder B) pinion. */
+    /** Teeth on tracking encoder B's pinion. */
     public static final double ENCODER_GEAR_TEETH = 32.0;
 
-    /**
-     * Encoder-B revolutions per ONE turret revolution (176/32 = 5.5 exactly).
-     * The CRT partner ratio (176/31) lives in {@link TurretCrt}.
-     */
+    /** Encoder-B revolutions per one turret revolution (176 / 32 = 5.5). */
     public static final double ENCODER_REVS_PER_TURRET_REV = TURRET_GEAR_TEETH / ENCODER_GEAR_TEETH;
 
     // =========================================================================
-    // Drive: the goBILDA 5203 motor
+    // Drive: goBILDA 5203 motor
     // =========================================================================
 
-    /** 5203 motor gearbox: 19.2:1 planetary (3591/187) x external 2.75:1 (64T:176T). */
+    /** External gear ratio from motor output shaft to turret ring (176 / 64 = 2.75). */
     public static double MOTOR_GEAR_RATIO = TURRET_GEAR_TEETH / MOTOR_GEAR_TEETH;
-    /** 5203 no-load speed at 12 V (RPM) — only used for the "est max speed" sanity number. */
+    /** Motor no-load speed at 12 V (RPM), used for estimated max turret speed telemetry. */
     public static double MOTOR_NO_LOAD_RPM = 312.0;
     /**
-     * Software sign flip for the MOTOR: positive POWER must rotate the turret
-     * CCW. The motor encoder's own polarity is
-     * {@link TurretTracker#MOTOR_ENC_POLARITY}.
+     * Flips motor drive direction. Positive power must rotate the turret CCW (+deg);
+     * toggle if the turret drives away from its target.
      */
     public static boolean MOTOR_REVERSED = false;
-    /** Lynx current alert threshold for the 5203 channel (amps). */
+    /** Motor channel over-current alert threshold (amps). */
     public static double CURRENT_ALERT_AMPS = 20.0;
 
     // =========================================================================
     // Motion limits + power caps
     // =========================================================================
 
-    /**
-     * Power cap in hybrid ACTIVE mode. BAKED to 1.0 as the compiled default
-     * (§12.25): validated in captures 041229 / 20261028-011309 — 576-601 deg/s
-     * slews, zero faults, mesh holds full power without over-current. The
-     * staged bring-up (§12.11) is finished; do not reintroduce a lower default
-     * (a flash would silently halve the turret's speed).
-     */
+    /** Maximum motor power (0..1) when hybrid motor-encoder tracking is active. */
     public static double MAX_POWER = 1.0;
 
     /**
-     * Power cap whenever the hybrid is NOT active (WATCH, OFF, or demoted).
-     *
-     * <p><b>REDUCED 0.40 â†’ 0.15 in §12.28 after a runaway.</b> The old value
-     * was justified by "the PWM-only tracker cannot unwrap faster than
-     * ~273-310 deg/s", which was itself too optimistic. Measured on the
-     * capture 20261028-013546 hardware, encoder B's PWM refreshes at
-     * <b>7.9 Hz</b>, and one encoder-B revolution spans 360/(176/32) =
-     * <b>65.45 deg of turret travel</b>. The shortest-path unwrap can only
-     * resolve a step under HALF a wrap (32.7 deg) per fresh reading, so the
-     * true ceiling is 32.7 deg / 126.6 ms â‰ˆ <b>259 deg/s</b> — and that
-     * assumes a reading every refresh. At 0.40 power the turret runs ~240
-     * deg/s, i.e. right at the edge, and ANY extra latency folds the angle.
-     *
-     * <p>What that folding caused (capture 20261028-013546): a single loop
-     * stepped the tracked position 73 deg (1.12 wraps) the WRONG WAY at
-     * ~10.05 s, which latched a FALSE MOTOR_ENC_DIR, which demoted the hybrid
-     * to PWM-only, after which the estimate oscillated while power stayed at
-     * +0.400 and the turret physically ran away past the ±180 soft limits
-     * while `currentPosition` never left [-91, +4]. 0.15 (~90 deg/s) keeps the
-     * per-refresh step near 11 deg — a 3x margin under the half-wrap limit.
-     * The encoder-B-only fallback is a degraded mode; it must be slow to be
-     * safe. Full speed remains available in hybrid ACTIVE, where the motor
-     * encoder carries per-loop motion.
+     * Maximum motor power (0..1) when running in PWM-only fallback mode (WATCH / OFF).
+     * Keep low (~0.15) so motion stays well within the ~7.9 Hz PWM unwrap ceiling (~259 deg/s).
      */
     public static double PWM_ONLY_MAX_POWER = 0.15;
 
-    /** Soft limits (deg). The ±180 window is INTENTIONAL — one cable-safe revolution. */
+    /** Maximum CCW soft limit (deg, 0 = straight forward). Protects turret cabling. */
     public static double MAX_ANGLE_DEG = 45.0;//180.0;
+    /** Maximum CW soft limit (deg, 0 = straight forward). Protects turret cabling. */
     public static double MIN_ANGLE_DEG = -90.0;//-180.0;
 
-    /**
-     * "At target" tolerance (deg) for the state machine and the settled-hold.
-     *
-     * <p><b>REVERTED to 2.0 in §12.26.</b> §12.25 tightened this to 0.8 to
-     * close a measured 1.68 deg resting error. That was correct as a diagnosis
-     * but wrong as a treatment: the resting error was not caused by the
-     * tolerance, it was caused by the loop having no authority to close the
-     * gap (see {@link #kP}). Shrinking the band only demanded accuracy the
-     * controller could not deliver, and in capture 20261028-012540 the turret
-     * never reached INPOSITION at all (3 samples out of 564 — it cycled
-     * outside the band forever at 4 Hz). With the floor restored, 2.0 is
-     * again a sane band; tighten it ONLY after the loop can actually hold
-     * inside 1 deg without oscillating.
-     */
+    /** Tolerance band (deg) within which the turret counts as at its setpoint. */
     public static double POSITION_TOLERANCE_DEG = 3.5;
 
-    /**
-     * Continuous dwell time (seconds) required inside {@link #POSITION_TOLERANCE_DEG}
-     * before declaring the turret at setpoint / ready to fire.
-     * Prevents firing mid-sweep while being immune to sensor derivative/quantization spikes.
-     */
-    public static double POSITION_DWELL_S = 0.10;
+    /** Extra margin (deg) added to {@link #POSITION_TOLERANCE_DEG} before a settled turret leaves INPOSITION. */
+    public static double POSITION_HYST_EXIT_MARGIN_DEG = 2.0;
 
-    /**
-     * Edge slow zone: within this many degrees of a soft limit, cap power
-     * (MotionMagic analog).
-     *
-     * <p><b>40 since §12.30</b> (was 20). The zone has to be wide enough that
-     * the turret can actually shed speed before the limit: at ~300 deg/s with
-     * a ~50 ms loop the turret covers ~15 deg per loop, so a 20 deg zone left
-     * about one loop to react and the turret overshot to ±186.2 in capture
-     * 20261028-021810. 40 deg gives ~2-3 loops of capped power to scrub
-     * speed first.
-     *
-     * <p><b>30 deg since §12.35 — NARROWED at the user's request</b> (was 40).
-     * 40 was set to stop a 6.2 deg kiss past the limit at ~300 deg/s, but it
-     * also throttled every move that merely ENDED near a limit, over a third
-     * of the travel, which is most of the aiming range. 30 still leaves ~2
-     * loops of capped power at 300 deg/s (15 deg/loop at a 50 ms loop) while
-     * giving back 10 deg of full-authority travel at each end. Combined with
-     * the raised {@link #EDGE_MAX_POWER} below, the zone is now a brake, not
-     * a crawl.
-     */
-    public static double EDGE_SLOW_ZONE_DEG = 30.0;
-    /**
-     * Power cap while inside the slow zone.
-     *
-     * <p><b>0.60 since §12.35</b> (was 0.35). 0.35 was sized as "enough to
-     * scrub speed", but at ~680 deg/s per unit power it also means a turret
-     * entering the zone at speed cannot be brought back by the edge cap
-     * alone — kD has to do all the braking. The user accepts a slightly
-     * firmer stop near the wrap points in exchange for responsiveness, so
-     * the zone cap is raised to 0.60: still a real reduction (60 % of
-     * MAX_POWER) and still the thing that catches a runaway toward the
-     * cable, but no longer a hard crawl. The soft-limit output guard and
-     * OUT_OF_SCOPE are unchanged and remain the actual stop.
-     */
+    /** Continuous time (seconds) the turret must stay within {@link #POSITION_TOLERANCE_DEG} to report ready. */
+    public static double POSITION_DWELL_S = 0.045;
+
+    /** Distance (deg) from either soft limit where power is capped to {@link #EDGE_MAX_POWER}. */
+    public static double EDGE_SLOW_ZONE_DEG = 12.0;
+    /** Maximum motor power allowed while moving toward a soft limit inside {@link #EDGE_SLOW_ZONE_DEG}. */
     public static double EDGE_MAX_POWER = 0.60;
 
     // =========================================================================
-    // PID (input: degrees + deg/s, output: servo power) — FRC Slot0 analog
+    // PID + Feedforward (input: deg and deg/s, output: motor power -1..1)
     // =========================================================================
 
-    /**
-     * Power per degree of error.
-     *
-     * <p><b>REVERTED to 0.020 in §12.26.</b> §12.25 raised this to 0.120 on the
-     * argument that the profile cap binds beyond ~1.8 deg so kP could not
-     * affect the fast moves. That reasoning was backwards: because the cap
-     * binds, a large kP does not "not participate" — it drives the output into
-     * saturation, and a saturated controller ignores error entirely, so the
-     * loop becomes relay (bang-bang) control. Capture 20261028-012540 shows the
-     * result: at 2.29 deg of error kP*err = 0.275 against a 0.220 cap (1.09x,
-     * peaking at 1.64x at 3 deg), so the turret got FULL floor power both ways
-     * and oscillated +-5.5 deg (10.96 deg p-p) at 4.0 Hz with power pinned at
-     * +-0.220, for 3.4 s until the capture ended.
-     *
-     * <p>The stability requirement is {@code kP*|err| < cap(err)} across the
-     * whole approach. With the 0.050 profile gain that holds up to 3 deg at
-     * 0.40x for kP = 0.020 (worst case), versus 1.64x at 0.120.
-     */
-    public static double kP = 0.022;
-    /** Power per (deg*second) of accumulated error, inside I_ZONE only. */
+    /** Proportional gain (power per deg of error). Raising too high causes overshoot or oscillation. */
+    public static double kP = 0.042;
+    /** Integral gain (power per deg*s of error, active only inside {@link #I_ZONE_DEG}). */
     public static double kI = 0.000;
-    /** Power per deg/s of measured motion (derivative on measurement — no setpoint-step kick). */
-    public static double kD = 0.0009;
-    /** Static-friction feedforward (power), added in the sign of the PID output. FRC analog: kS. */
+    /** Derivative damping (power per deg/s of measured velocity). Higher values brake faster. */
+    public static double kD = 0.0019;
+    /** Static-friction feedforward (power) to overcome drivetrain stiction. */
     public static double kS = 0.060;
-    /**
-     * kS taper — full static-friction feedforward beyond this many degrees of
-     * error, fading linearly to 0 at the target. A full-size kS kick at EVERY
-     * output sign reversal around the setpoint is a sustained limit cycle.
-     *
-     * <p><b>REVERTED to 4.0 in §12.26.</b> §12.25 shortened this to 1.5 to
-     * give the last degree breakaway torque. That added +-0.060 of
-     * uncontrolled drive right at the target — a third of the 0.22 floor —
-     * on top of an already-saturated proportional term, and it is what kept
-     * the 4 Hz cycle alive at the end of each reversal. The deadband kS was
-     * meant to fix is better fixed by the floor (see PROFILE_MIN_POWER).
-     */
+    /** Error (deg) at which {@link #kS} reaches full strength; tapers linearly to 0 at target. */
     public static double KS_RAMP_DEG = 4.0;
-    /**
-     * kS engages on |error| beyond this epsilon (deg), decoupled from the PID
-     * output magnitude (see §12.14 — the old |out| gate silently scaled with
-     * kP). The taper already fades kS to 0 at the target; the epsilon only
-     * prevents direction churn on numeric noise. <b>REVERTED to 0.25 in
-     * §12.26</b> with the ramp above.
-     */
+    /** Deadband (deg) below which {@link #kS} is turned off to prevent chatter at target. */
     public static double KS_ENGAGE_DEG = 0.25;
-    /**
-     * Settled-hold: inside {@link #POSITION_TOLERANCE_DEG} AND slower than
-     * this (deg/s), the output goes to 0 and the 5203's BRAKE zero-power
-     * behavior holds position. Chasing the last couple of degrees through the
-     * loop + filter lag is what made the turret bounce after arriving.
-     *
-     * <p><b>REVERTED to 15.0 in §12.26.</b> §12.25 lowered this to 4.0 so the
-     * hold would not discharge a creep. But the hold is what finally STOPS a
-     * bad arrival, and at 4.0 it never engaged: capture 20261028-012540 shows
-     * the cycle still running at 20-74 deg/s for 3.4 s with the hold unable to
-     * trip. Velocity has to fall below this for the hold to take over, so it
-     * must stay above the chatter speed, not below it.
-     */
+    /** Maximum speed (deg/s) inside tolerance before {@link #IN_BAND_HOLD} cuts motor power to 0. */
     public static double SETTLE_VEL_DPS = 15.0;
-    /** Enable/disable the settled-hold cutoff (see {@link #SETTLE_VEL_DPS}). */
+    /** When true, cuts power inside {@link #POSITION_TOLERANCE_DEG} when stationary so motor BRAKE holds without buzzing. */
     public static boolean IN_BAND_HOLD = true;
 
-    // ---- Profile-lite approach cap (§12.16 fix A) ----
     /**
-     * Error-scaled power cap: the position output is additionally clamped to
-     * {@code |error| * PROFILE_GAIN_PER_DEG}, floored at
-     * {@link #PROFILE_MIN_POWER} and capped by the edge/mode caps. Without it
-     * the turret arrives at the setpoint at full power, overshoots, and rocks
-     * on the backlash.
-     *
-     * <p><b>0.050 since §12.25.</b> At 0.020 this was tuned against
-     * MAX_POWER 0.50, where terminal velocity was ~290 deg/s and 0.020*err
-     * happened to be enough braking power. At MAX_POWER 1.00 the turret enters
-     * the braking zone at 576-601 deg/s and 0.020*err became a curve the
-     * mechanism physically could not follow: capture 20261028-011309 shows the
-     * cap permitting 0.100 at 3.1 deg of error while the turret was still doing
-     * 301 deg/s (measured decel at that power ~1900 deg/s^2, so stopping needed
-     * ~24 deg and it had 3), which produced the +15.0 deg overshoot on move E.
-     * 0.050 gives 0.35 at 7 deg and 0.70 at 14 deg — braking authority that
-     * scales with entry speed. Full power still applies beyond 20 deg.
-     *
-     * <p><b>0.040 since §12.35 — SOFTENED at the user's request</b> (was
-     * 0.050). 0.050 was tuned to kill a 15 deg overshoot, and it did (§12.28:
-     * mean overshoot 3.96 deg), but it also made the last stretch of every
-     * move feel over-damped: the cap starts throttling at 0.050*err, so a
-     * 20 deg approach was already down to 0.70 and a 7 deg one to 0.35. The
-     * user is willing to trade a little slam for responsiveness. 0.040 keeps
-     * the same shape (linear in error, saturating at MAX_POWER) with the
-     * braking band moved outward: full power beyond 25 deg (was 20), 0.70 at
-     * 17.5 deg (was 14), 0.35 at 8.75 deg (was 7). The §12.30 brake override
-     * still skips the cap whenever it would oppose the current motion, so
-     * this does NOT withhold brakes on a fast arrival — it only lets the
-     * approach run hotter than before.
-     *
-     * <p><b>Why 0.040 and not lower:</b> the gain is bounded from BELOW by the
-     * §12.26 stability rule, not chosen by feel. Sweeping {@code kP*|err| +
-     * kS*ramp} against {@code max(gain*|err|, floor)} over 0–20 deg, the worst
-     * saturation ratio is 0.700 at 0.050, <b>0.875 at 0.040</b>, and 1.000
-     * (relay control) at 0.035. 0.040 is the last value that keeps a
-     * meaningful margin under 1.0 — go lower and the loop saturates in the
-     * 2.5–4.5 deg band, which is precisely the capture 20261028-012540
-     * limit-cycle mechanism.
+     * Profile-lite approach cap slope (power per deg of error) when {@link #PROFILE_LITE_ENABLED} is true.
+     * Keep higher than {@link #kP} so the cap shapes deceleration without saturating the PID loop.
      */
-    public static double PROFILE_GAIN_PER_DEG = 0.040;
-    /**
-     * Floor on the profile cap (power) — must exceed the mesh's breakaway
-     * friction so small corrections still move: 0.060 (= kS) stalled the
-     * turret 2.7 deg off target (capture 030728); 0.10 breaks away.
-     *
-     * <p><b>REVERTED to 0.100 in §12.26.</b> §12.25 raised this to 0.220 to
-     * give the last degrees braking authority. That was the single most
-     * damaging change: the floor is applied UNCONDITIONALLY below the error
-     * where {@code 0.050*err} crosses it (4.4 deg), so the controller lost all
-     * proportional resolution there and commanded 0.22 whether the requirement
-     * was 0.22 or 0.02. Combined with the raised kP it pinned the output at the
-     * cap in BOTH directions — the 4 Hz, +-5.5 deg limit cycle in capture
-     * 20261028-012540. Braking authority belongs in the GAIN (which scales with
-     * error and so cannot saturate near target), not in the floor.
-     *
-     * <p><b>0.120 since §12.35</b> (was 0.100). This is the power the last few
-     * degrees are allowed, and it is the term that decides whether the turret
-     * finishes a move or stalls short of it: the mesh's breakaway is ~0.10
-     * and 0.10 sat exactly on it, so small corrections crawled or stuck. The
-     * user asked for a more responsive start and is willing to tolerate a
-     * firmer final approach, so the floor is lifted 20 % — still 0.55x of the
-     * §12.26 lesson (0.220 caused a hard limit cycle) and still well under
-     * the 0.60 edge cap.
-     *
-     * <p><b>Verified against the §12.26 stability rule before raising:</b>
-     * with {@code kP*|err| + kS*ramp} swept 0–20 deg against
-     * {@code max(0.040*|err|, floor)}, the worst saturation ratio is
-     * <b>0.875</b> at both 0.100 and 0.120, so the lift costs nothing in
-     * margin. The ratio is dominated by the gain, not the floor: 0.130 (the
-     * first value tried) already pushes it to 1.000. Do not raise this
-     * further without re-running that check.
-     */
+    public static double PROFILE_GAIN_PER_DEG = 0.065;
+    /** Minimum power floor for the profile-lite cap so small final corrections still break friction. */
     public static double PROFILE_MIN_POWER = 0.120;
-    /**
-     * Enable/disable the profile-lite cap (true = shaped approach).
-     *
-     * <p><b>true since §12.35</b> (was false). It had been left off after the
-     * §12.34 simplification, so every approach ran at the full mode cap and
-     * the only things shaping a move were the gains — which is why the turret
-     * felt sluggish off the start and over-braked near the target. The user
-     * asked for the opposite trade: a livelier start and a slightly wider
-     * slam tolerance. The cap is the correct place for that because it
-     * bounds the COMMAND (a shaped approach), not the safety envelope.
-     *
-     * <p><b>The §12.26 stability rule still holds and is what was checked
-     * before turning this on:</b> {@code kP*|err| + kS*ramp < cap(|err|)}
-     * across the whole approach. With the §12.35 values (gain 0.040, floor
-     * 0.120) the worst saturation ratio is 0.875, flat across 3–4 deg —
-     * linear everywhere, never relay control. Do NOT raise kP or the floor, or
-     * lower the gain, without re-checking that ratio; that is exactly what
-     * produced the 4 Hz limit cycle in capture 20261028-012540.
-     */
+    /** Enables error-scaled power limiting on approach (bypassed when braking). */
     public static boolean PROFILE_LITE_ENABLED = false;
 
-    /**
-     * Velocity feedforward — power per deg/s of DESIRED turret velocity
-     * (FRC kV analog). Enables continuous tracking while the chassis spins.
-     *
-     * <p><b>0.0020 since §12.29</b> (was 0.000, i.e. dormant). Without it the
-     * position loop has to sit on a constant error to generate the power
-     * needed to move at all, so tracking a spinning chassis left a fixed
-     * angular offset that no amount of setpoint lead could remove — capture
-     * 20261028-020743 shows the turret velocity matching the spin 1:1
-     * (median |vel|/|yaw| = 1.03) while carrying a persistent ~16 deg of aim
-     * error at 127 deg/s.
-     *
-     * <p><b>How 0.0020 was derived (not guessed):</b> from that capture, 155
-     * samples of genuine steady tracking (|yaw| 106–318 deg/s, turret
-     * velocity magnitude matched the spin within 30 %, power outside
-     * saturation) give power/rate directly:
-     * <ul>
-     *   <li>median {@code |pw|/|vel|} = <b>0.00197</b>, mean 0.00193, range
-     *       0.00028–0.00317 (the low tail is deceleration transients);</li>
-     *   <li>checked against the trace: 0.0020 × 140 deg/s = <b>0.28</b>
-     *       power, matching the observed 0.24–0.34 in those rows;</li>
-     *   <li>sign checked: chassis +117 deg/s â†’ {@code desiredVelocityDps} =
-     *       âˆ’117 â†’ ff = âˆ’0.234, and the observed power there was âˆ’0.225.</li>
-     * </ul>
-     *
-     * <p>Interaction with the profile cap is benign: during tracking the error
-     * is ~15–20 deg, so the cap sits near 0.85 and a 0.28 feedforward fits
-     * inside it. The cap still owns the approach and the kS/friction term is
-     * unchanged. Raising this value above the measured ratio would command
-     * more power than the mechanism needs and cause the turret to run ahead.
-     */
+    /** Velocity feedforward (power per deg/s of desired turret rotation) for tracking while chassis spins. */
     public static double kV = 0.0020;
-    /** Integral only accumulates within this error (deg). */
+    /** Max |error| (deg) where integral term {@link #kI} accumulates. */
     public static double I_ZONE_DEG = 5.0;
-    /** Integral contribution clamp (power). */
+    /** Maximum allowed magnitude of the integral power contribution. */
     public static double I_MAX = 0.15;
 
     // =========================================================================
     // Watchdogs
     // =========================================================================
 
-    /** Stuck watchdog arms when |applied power| exceeds this. */
+    /** Minimum |power| that arms the stuck-turret watchdog. */
     public static double STUCK_POWER_THRESHOLD = 0.15;
-    /** ...and stays armed this long without meaningful motion. */
+    /** Time (s) with power above threshold and no motion before latching STUCK fault. */
     public static double STUCK_TIME_S = 0.75;
-    /** "Meaningful motion" floor for the stuck watchdog (deg/s). */
+    /** Speed (deg/s) below which the turret counts as not moving for the stuck watchdog. */
     public static double STUCK_VEL_DEG_PER_S = 2.0;
-    // NOTE: FEEDBACK_FAIL_LIMIT and every tracker tuning constant (ABS_*,
-    // MOTOR_ENC_*, VELOCITY_EMA_ALPHA, ...) moved to {@link TurretTracker}.
 
     // =========================================================================
     // Live state
@@ -493,9 +213,8 @@ public class TurretPivot extends SubsystemBase {
     /** Latched: 5203 motor channel reported an over-current condition (Lynx alert latch). */
     private boolean faultOverCurrent = false;
     /**
-     * Latched: the tracked position stopped agreeing with encoder A (§12.28).
-     * The estimate is what the PID, the soft limits and OUT_OF_SCOPE all read,
-     * so this is a "stop driving" condition, not a hint.
+     * Latched when tracked position diverges from encoder A beyond tolerance;
+     * brakes the turret until agreement returns.
      */
     private boolean faultPositionDiverged = false;
 
@@ -503,19 +222,15 @@ public class TurretPivot extends SubsystemBase {
     private double lastAppliedPower = 0;
     private double lastWrittenPower;
     private DcMotor.ZeroPowerBehavior cachedZeroBehavior;
-    /** Last 5203 channel current (NaN on failed read) — telemetry. */
     private double lastMotorAmps = Double.NaN;
     private long lastMonitorNs = 0L;
     private static final long CURRENT_POLL_INTERVAL_NS = 150_000_000L;
 
     /**
-     * Builds the turret from the RC config. REQUIRES the 5203 motor
-     * ({@code IronConstants.TurretMotorName}) and the OctoQuad
-     * ({@code IronConstants.TurretOctoQuadName}) — use {@link #tryCreate} to
-     * get null instead of a throw on rigs without them.
+     * Builds the turret subsystem. Use {@link #tryCreate(OpMode)} instead if the
+     * turret might be absent from the RC config.
      */
     public TurretPivot(OpMode opMode) {
-        // ---- Drive: the goBILDA 5203 ----
         DcMotorEx m;
         try {
             m = opMode.hardwareMap.get(DcMotorEx.class, IronConstants.TurretMotorName);
@@ -524,12 +239,7 @@ public class TurretPivot extends SubsystemBase {
                     + IronConstants.TurretMotorName + "' in the RC config", e);
         }
         motor = m;
-        // RUN_WITHOUT_ENCODER: no hub-side velocity PID — power comes straight
-        // from the software PID. BRAKE zero-power behavior = active holding.
-        // The built-in encoder is still counted in hardware between loops and
-        // read via getCurrentPosition() (the 4-pin JST-XH cable must be seated
-        // in the motor port's encoder header — an unseated cable is what
-        // caused the 020255 thrash).
+        // Run open-loop power driven by our software PID (4-pin motor encoder cable must stay plugged in).
         motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         cachedZeroBehavior = DcMotor.ZeroPowerBehavior.BRAKE;
@@ -886,17 +596,21 @@ public class TurretPivot extends SubsystemBase {
         return requestedPosition;
     }
 
-    /** True if the turret is at the setpoint within tolerance continuously for {@link #POSITION_DWELL_S}. Also updates {@link #State} (FRC behavior). BRAKED always reads true. */
+    /** True if the turret is at the setpoint within tolerance continuously for {@link #POSITION_DWELL_S} (with hysteresis). Also updates {@link #State} (FRC behavior). BRAKED always reads true. */
     public boolean atSetpoint() {
         if (State == SubSystemState.BRAKED) {
             return true;
         }
-        // Continuous dwell check: must stay within POSITION_TOLERANCE_DEG continuously for
-        // POSITION_DWELL_S (default 0.10s). This rejects fast fly-through sweeps (e.g. at 300 deg/s,
-        // a 7 deg window is traversed in 0.023s) while avoiding single-loop derivative velocity spikes.
-        boolean inBand = Math.abs(setPointPosition - currentPosition) <= POSITION_TOLERANCE_DEG;
+        // Enter INPOSITION inside POSITION_TOLERANCE_DEG once velocity has settled;
+        // stay INPOSITION until error exceeds POSITION_TOLERANCE_DEG + POSITION_HYST_EXIT_MARGIN_DEG
+        // so small at-rest anchor trims and tracking steps do not bounce readiness.
+        boolean wasAt = (State == SubSystemState.INPOSITION);
+        double err = Math.abs(setPointPosition - currentPosition);
+        double exitTol = POSITION_TOLERANCE_DEG + Math.max(0.0, POSITION_HYST_EXIT_MARGIN_DEG);
+        boolean inBand = wasAt ? (err <= exitTol) : (err <= POSITION_TOLERANCE_DEG);
+        boolean velOk = wasAt || Math.abs(tracker.velocityDegPerSec() - desiredVelocityDps) <= SETTLE_VEL_DPS;
         long nowNs = System.nanoTime();
-        if (inBand) {
+        if (inBand && velOk) {
             if (inToleranceSinceNs == 0L) {
                 inToleranceSinceNs = nowNs;
             }
@@ -905,7 +619,7 @@ public class TurretPivot extends SubsystemBase {
         }
 
         long dwellNs = (long) (Math.max(0.0, POSITION_DWELL_S) * 1.0e9);
-        boolean at = inBand && (inToleranceSinceNs != 0L) && (nowNs - inToleranceSinceNs >= dwellNs);
+        boolean at = inBand && velOk && (inToleranceSinceNs != 0L) && (nowNs - inToleranceSinceNs >= dwellNs);
         State = at ? SubSystemState.INPOSITION : SubSystemState.MOVINGTOPOSITION;
         return at;
     }
@@ -931,34 +645,26 @@ public class TurretPivot extends SubsystemBase {
         GotoPositionDeg(safeAngle, velocityDps);
     }
 
-    /** Relative jog of the tracked setpoint, clamped to the soft limits (debug OpMode + KeyBindings helper). */
+    /** Relative jog of the tracked setpoint, clamped to the soft limits. */
     public void NudgeDeg(double deltaDeg) {
-        // When position mode is not engaged, the stored setpoint is a stale
-        // default (0) — jogging from it while the turret sits elsewhere
-        // commands a huge move at full power (the 2026-10-23 spin: boot at
-        // +88 deg, first dpad tap aimed at -4 deg = a 92-degree blast-off).
-        // Jog from wherever the turret actually is instead.
+        // Jog from the current position if no setpoint is active yet.
         double base = setpointActive ? setPointPosition : getPosition();
         GotoSafeAngle(base + deltaDeg);
     }
 
-    /**
-     * FRC GotoPosition / GotoPositionWithFeedForward analog: command an
-     * (already safety-selected) angle and engage the PID hold. The hold keeps
-     * running in periodic() until BRAKE — same as the TalonFX holding its last
-     * MotionMagic setpoint.
-     */
+    /** Commands a safety-clamped target angle and engages active BRAKE + PID holding. */
     private void GotoPositionDeg(double wantedDeg, double velocityDps) {
-        if (Math.abs(wantedDeg - setPointPosition) > 0.05) {
+        boolean bigJump = !setpointActive || Math.abs(wantedDeg - setPointPosition) > 5.0;
+        if (bigJump) {
             inToleranceSinceNs = 0L;
+            State = SubSystemState.MOVINGTOPOSITION;
+        } else if (State == SubSystemState.IDLE || State == SubSystemState.BRAKED) {
+            State = SubSystemState.MOVINGTOPOSITION;
         }
-        State = SubSystemState.MOVINGTOPOSITION;
         requestedPosition = wantedDeg;
         setPointPosition = wantedDeg;
         desiredVelocityDps = velocityDps;
         setpointActive = true;
-        // Re-engage active holding: BRAKE() left the drive in FLOAT (neutral),
-        // so the first goto after a release has to put BRAKE back on.
         if (cachedZeroBehavior != DcMotor.ZeroPowerBehavior.BRAKE) {
             motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
             cachedZeroBehavior = DcMotor.ZeroPowerBehavior.BRAKE;
@@ -966,13 +672,8 @@ public class TurretPivot extends SubsystemBase {
     }
 
     /**
-     * FRC BRAKE (kept name): release the PID and return the drive to NEUTRAL —
-     * 0 power AND the 5203's FLOAT zero-power behavior, so nothing is
-     * electrically holding the turret any more. This is what runs when the aim
-     * command ends (trigger release): before, the command ended but the motor
-     * was left in BRAKE with the PID still latched, so the turret stayed
-     * actively locked wherever the driver had been aiming and had to be
-     * pushed to move. The next goto switches back to BRAKE + PID.
+     * Releases the PID and puts the turret motor into neutral (0 power, FLOAT)
+     * so it can move freely when not actively aiming.
      */
     public void BRAKE() {
         State = SubSystemState.BRAKED;
@@ -994,10 +695,7 @@ public class TurretPivot extends SubsystemBase {
         faultOutOfScope = false;
         faultOverCurrent = false;
         faultAbsBootUnstable = false;
-        // §12.28: divergence is re-evaluated from live data every loop, so a
-        // clear is legitimate once the estimate agrees with A again.
         faultPositionDiverged = false;
-        // Clear the tracker's faults and re-arm the hybrid.
         tracker.clearFaults();
         Log.i("IronLog", "TurretPivot faults cleared");
     }
@@ -1102,22 +800,13 @@ public class TurretPivot extends SubsystemBase {
         refreshMotorDirection(); // live-tune support: Panels edits apply without restart
         tracker.update(dtSec);   // SENSING: the tracker advances the position estimate
 
-        // Feedback-loss reaction stays HERE (the tracker never drives):
-        // sustained loss of both streams = no motion. Same philosophy as the
-        // FRC encoder checks — but single I2C hiccups are tolerated.
+        // Brake immediately if feedback is lost or tracked position diverges.
         if (tracker.feedbackLost() && setpointActive) {
             Log.e("IronLog", "TurretPivot feedback lost for " + tracker.feedbackFailureCount()
                     + " consecutive reads — braking");
             BRAKE();
         }
 
-        // ---- §12.28: runaway guard ----
-        // The tracked position and encoder A independently disagreed by more
-        // than half an A-revolution. That means the stream that the PID, the
-        // soft limits and OUT_OF_SCOPE all trust is no longer describing the
-        // real turret — the capture that motivated this had the turret spin
-        // past ±180 while currentPosition never left [-91, +4]. Stop driving
-        // immediately and latch so the driver/readiness logic sees it.
         if (tracker.isPositionDiverged() && !faultPositionDiverged) {
             faultPositionDiverged = true;
             Log.e("IronLog", "TurretPivot POSITION DIVERGED from encoder A — braking "
@@ -1125,33 +814,16 @@ public class TurretPivot extends SubsystemBase {
                     + " deg, A-vs-tracked error "
                     + String.format(Locale.US, "%+.1f", tracker.crtCrosscheckErrDeg()) + " deg)");
         } else if (!tracker.isPositionDiverged() && faultPositionDiverged) {
-            // Both channels agree again (wire nudged, or a re-zero re-anchored):
-            // release the brake rather than stranding the turret until a manual
-            // clearFaults().
             faultPositionDiverged = false;
             Log.i("IronLog", "TurretPivot position agrees with encoder A again — divergence cleared");
         }
         if (faultPositionDiverged) {
-            // Hard brake every loop while diverged: the estimate cannot be
-            // trusted to drive ANY correction, in either direction.
             BRAKE();
         }
 
         currentPosition = tracker.position();
         ENCODER_OK = !tracker.feedbackLost();
 
-        // ---- Out-of-scope sanity (FRC OutofScopeAlert analog) ----
-        // The continuous angle escaping the soft limits means the boot window
-        // was wrong (turret wasn't actually forward) or the limits are — flag
-        // it loudly; the output guard below still refuses to push outward.
-        //
-        // §12.30: this now CLEARS once the turret is back inside. It used to be
-        // a sticky latch, so a momentary overshoot to ±186.2 deg (6 samples out
-        // of 375 in capture 20261028-021810) left the fault showing for the
-        // rest of the match even though the turret had returned to +101.8.
-        // A fault that cannot clear is indistinguishable from a live one, and
-        // it trains the driver to ignore the indicator. The boot-assumption
-        // case still deserves a loud log every time it re-triggers.
         boolean outOfScopeNow = currentPosition > MAX_ANGLE_DEG + POSITION_TOLERANCE_DEG
                 || currentPosition < MIN_ANGLE_DEG - POSITION_TOLERANCE_DEG;
         if (outOfScopeNow) {
@@ -1167,29 +839,23 @@ public class TurretPivot extends SubsystemBase {
                     + "] — OUT_OF_SCOPE cleared");
         }
 
-        atSetpoint(); // keep State fresh every loop (FRC SetCurrentState analog)
+        atSetpoint();
         driveOutput(dtSec);
         monitorDrive();
 
         TurretPivot_OK = ENCODER_OK && !faultEncoderStuck && !tracker.isEncoderDeadAtBoot()
                 && !faultPositionDiverged
-                // §12.30: OUT_OF_SCOPE was excluded here, so the turret reported
-                // OK for all 375 samples of capture 20261028-021810 while
-                // sitting 6 deg past the soft limit. Anything that gates
-                // readiness/aim on OK was blind to it.
                 && !faultOutOfScope;
 
-        // Driver-station failure board: one heartbeat or one fault line per
-        // loop; the full per-loop diagnostics stay on the Panels telemetry
-        // below. The latched fault string is exactly the "critical" set.
         String faultStr = faultString();
         HardwareHealth.get().report("TURRET",
                 faultStr.equals("none") ? null : faultStr);
 
-        // NOTE: addData only, no update() here. Panels TelemetryManager sends AND
-        // clears its line buffer on every update(), so >1 update per loop sends
-        // partial frames (flicker) and drops lines. RobotMain.flushTelemetry()
-        // does the single end-of-loop flush.
+        if (!RobotMain.DASHBOARD) {
+            return;
+        }
+
+        // Add lines only; RobotMain.flushTelemetry() flushes once per loop.
         telemetry.addData("Turret heading (robot rel)", String.format(Locale.US, "%+.2f deg", currentPosition));
         telemetry.addData("Turret setpoint deg", String.format(Locale.US, "%+.2f (req %+.2f)", setPointPosition, requestedPosition));
         telemetry.addData("Turret state", State);
@@ -1216,12 +882,7 @@ public class TurretPivot extends SubsystemBase {
                     ? "n/a" : String.valueOf(src.getCrossRawUs()));
             telemetry.addData("Turret CRT A OOR/crc",
                     src.oorEventsA + " / " + src.crcFailEventsA);
-            // §12.27 staleness proof: how long each channel's raw width has
-            // been unchanged. A crosscheck excursion while A's age is ~100 ms
-            // or more is PWM staleness (benign, ~10 Hz refresh), NOT a slip.
-            // An excursion with A's age near one loop (~50 ms) is real
-            // divergence between the two encoders — that is the slipped
-            // magnet / drifting chain the crosscheck exists to catch.
+            // Age > ~100 ms indicates normal ~10 Hz PWM refresh staleness rather than sensor slip.
             double ageA = src.getCrossFreshnessAgeSec();
             double ageB = src.getFreshnessAgeSec();
             telemetry.addData("Turret CRC A age (ms)",
@@ -1253,17 +914,13 @@ public class TurretPivot extends SubsystemBase {
         telemetry.addData("Turret mot-enc", tracker.modeText());
         telemetry.addData("Turret mot-enc ticks", tracker.motorEncTicksText());
         telemetry.addData("Turret anchor corr", tracker.anchorCorrText());
-        telemetry.addData("Turret boot dir (motor)", tracker.bootDirMotText());
         telemetry.addData("Turret faults", faultStr);
         telemetry.addData("Turret OK", TurretPivot_OK);
     }
 
     /**
-     * The power cap that actually applies. Hybrid ACTIVE lifts the ~10 Hz
-     * PWM-refresh ceiling (the motor encoder tracks per loop, the PWM absolute
-     * is wrap-resolved against it); every other mode puts the encoder-B
-     * PWM-only tracker back in charge, so the refresh ceiling —
-     * {@link #PWM_ONLY_MAX_POWER} — returns.
+     * Returns {@link #MAX_POWER} in hybrid ACTIVE mode, or {@link #PWM_ONLY_MAX_POWER}
+     * when running in PWM-only fallback mode.
      */
     private double effectiveMaxPower() {
         return tracker.hybridActive()
@@ -1298,16 +955,9 @@ public class TurretPivot extends SubsystemBase {
             double ff = kV * desiredVelocityDps;
 
             out = kP * error + iAccum + dTerm + ff;
-            // Fade kS out near the target — a full-size static-friction kick at
-            // every output sign reversal around the setpoint is a sustained
-            // limit cycle ("bouncing after arriving"). Full kS for real moves,
-            // tapered to 0 at the target.
+            // Engage static-friction feedforward outside KS_ENGAGE_DEG, tapered to 0 at target.
             double ksEff = KS_RAMP_DEG > 0
                     ? kS * clamp(Math.abs(error) / KS_RAMP_DEG, 0, 1) : kS;
-            // Engage kS on real commanded motion (error-based), not on PID
-            // output magnitude — the old |out| gate made kS vanish whenever
-            // kP was small (§12.14). At target the taper has already faded
-            // kS to ~0, so no chatter is re-introduced.
             if (Math.abs(error) > KS_ENGAGE_DEG) {
                 double ksSign = Math.signum(out);
                 if (ksSign == 0.0) {
@@ -1315,9 +965,7 @@ public class TurretPivot extends SubsystemBase {
                 }
                 out += ksSign * ksEff;
             }
-            // ---- Edge slow zone (MotionMagic replacement) ----
-            // Hybrid-ACTIVE lifts the PWM-refresh cap; every other mode
-            // re-applies PWM_ONLY_MAX_POWER (encoder-B-only tracker).
+            // Edge slow zone near soft limits.
             double cap = effectiveMaxPower();
             if (EDGE_SLOW_ZONE_DEG > 0) {
                 double toMax = MAX_ANGLE_DEG - currentPosition;
@@ -1328,33 +976,12 @@ public class TurretPivot extends SubsystemBase {
                 }
             }
 
-            // ---- Profile-lite approach cap ----
-            // Error-scaled power limit (see PROFILE_GAIN_PER_DEG): bounds the
-            // arrival speed so the backlash+stiction stage is never hit at
-            // full power. The edge-zone cap above feeds in as the ceiling.
-            //
-            // §12.30 BRAKE OVERRIDE: the cap exists to shape an APPROACH, and
-            // it is sized off |error| alone — which silently assumes low
-            // speed. When the turret is already moving fast and is close to
-            // the target (the "suddenly stopped spinning" case), |error| is
-            // small so the cap collapses to ~0.10-0.15 exactly when the
-            // hardest braking is needed. Capture 20261028-021810: 17 of 58
-            // high-speed samples had the brake request exceeding the cap; at
-            // t=4.75 the turret arrived at 271 deg/s with err 0.7 and kD
-            // asked for -0.27 but was handed 0.10, and at t=13.44 err -3.1 at
-            // -357 deg/s asked for 0.36 and got 0.15 — the visible
-            // stop-overshoot. A cap that OPPOSES the current motion is not
-            // shaping an approach, it is withholding brakes, so it is skipped
-            // in that direction. Note the profile need not brake: kD already
-            // supplies the full opposing request, and the overall power cap
-            // (effectiveMaxPower) still bounds everything.
+            // Profile-lite approach cap (never limits braking output opposing current velocity).
             if (PROFILE_LITE_ENABLED) {
                 double profCap = Math.abs(error) * PROFILE_GAIN_PER_DEG;
                 if (profCap < PROFILE_MIN_POWER) {
                     profCap = PROFILE_MIN_POWER;
                 }
-                // Only apply the cap when it does not fight the current
-                // velocity: braking authority is never limited by it.
                 boolean capIsBraking = velocityDegPerSec != 0.0
                         && Math.signum(profCap) != 0
                         && Math.signum(out) != 0
@@ -1364,10 +991,7 @@ public class TurretPivot extends SubsystemBase {
                 }
             }
 
-            // ---- Soft limit output guard (TalonFX Forward/ReverseSoftLimit analog) ----
-            // Refuse to push beyond the limits; turning back toward range (or
-            // holding) is always allowed — this is the "knowing when to turn
-            // back around" stage at the boundary itself.
+            // Soft limit output guard: refuse to push outward beyond MIN/MAX limits.
             if (currentPosition >= MAX_ANGLE_DEG && out > 0) {
                 out = 0;
             }
@@ -1377,14 +1001,11 @@ public class TurretPivot extends SubsystemBase {
 
             out = clamp(out, -cap, cap);
 
-            // ---- Settled-hold ----
-            // Inside the position tolerance AND no longer moving: stop driving
-            // and let the 5203's BRAKE zero-power behavior hold. Chasing the
-            // last couple of degrees through the loop + filter lag is what
-            // made the turret bounce around the setpoint after arriving. Leave
-            // the band or speed up and the PID re-engages (kS ramp gives
-            // breakaway torque for the correction).
-            if (IN_BAND_HOLD && Math.abs(error) <= POSITION_TOLERANCE_DEG
+            // Settled-hold: cut power when stationary and settled so motor BRAKE holds without buzzing.
+            // Keep PID + kV feedforward alive when tracking a moving/turning target (desiredVelocityDps != 0).
+            if (IN_BAND_HOLD
+                    && Math.abs(desiredVelocityDps) < 2.0
+                    && Math.abs(error) <= POSITION_TOLERANCE_DEG
                     && (Math.abs(velocityDegPerSec) <= SETTLE_VEL_DPS || State == SubSystemState.INPOSITION)) {
                 out = 0;
             }
@@ -1468,7 +1089,6 @@ public class TurretPivot extends SubsystemBase {
         if (tracker.isCrtCrosscheckFaulted()) sb.append("CRT_CROSSCHECK ");
         if (tracker.isEncoderDirectionFaulted()) sb.append("B_DIR_MISMATCH ");
         if (tracker.isMotorEncFaulted()) sb.append("MOTOR_ENC ");
-        if (tracker.isMotorEncDirFaulted()) sb.append("MOTOR_ENC_DIR ");
         if (tracker.isAbsStreamLost()) sb.append("ABS_STREAM_LOST ");
         if (faultPositionDiverged) sb.append("POSITION_DIVERGED ");
         if (sb.length() == 0) return "none";

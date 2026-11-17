@@ -12,151 +12,87 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
-import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.HardwareHealth;
 import org.firstinspires.ftc.teamcode.WattageLib.pedroHelpers.PedroFieldBridge;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 
 /**
- * Limelight3A MegaTag pose source: MT2-XY + MT1-yaw split solver.
+ * Limelight3A MegaTag pose source using a split solver: MT2 for XY position
+ * (gyro-seeded, stable while moving) and MT1 for yaw (independent 6DOF solve).
  *
- * <p>Each loop the caller seeds the Limelight with the current field-relative yaw
- * (from the fused Pedro pose) and reads back BOTH solves the Limelight computes
- * from the same frame: MT2 ({@code getBotpose_MT2()}, gyro-seeded, stable XY
- * while moving) and MT1 ({@code getBotpose()}, full 6DOF from tag geometry alone).
- * MT2 yaw is NEVER fused — it is ~90% the seed echoed back, and fusing it
- * double-counts the gyro in a feedback loop (the rotation warping seen on
- * down-facing tag geometry, where yaw is weakly observed). MT2 supplies XY;
- * MT1 supplies yaw only, under strict gates downstream (multi-tag, slow, small
- * residual) so a flipped single-tag solve can never snap the heading.
- *
- * <p>Limelight reports SI units (meters). Positions are converted to inches and
- * mapped into the FIRST field frame (center origin, +X east/right, +Y
- * north/up-field, heading 0 = +Y, CCW+), then into Pedro's corner-origin frame
+ * <p>Limelight reports meters; this class converts positions to inches, maps them
+ * into the FIRST field frame, and shifts them into Pedro's corner-origin frame
  * via {@link PedroFieldBridge#fieldToPedro}.
  *
- * <p><b>Frame mapping is a GUESS until verified on your field.</b> Defaults assume
- * Limelight field X = FIRST +X, Y = +Y, and Limelight yaw 0 = facing +Y (CCW+).
- * Verify once: place the robot at field center facing up-field (+Y, away from the
- * red wall) with 2+ tags visible, then check Panels telemetry
- * {@code Fusion/visionX/Y/Hdeg} reads ~(72, 72, ~90deg Pedro). If X/Y are
- * mirrored, flip {@link #LL_X_SIGN}/{@link #LL_Y_SIGN}; if heading is off by a
- * constant, set {@link #LL_YAW_OFFSET_DEG} (and the same offset automatically
- * applies to the yaw seeded back via {@code updateRobotOrientation}).
- *
- * <p><b>BIOBUZZ: clusters ARE the map.</b> All 16 tags (IDs 30-45, 4 per cell,
- * 30deg-rest entries in {@code ftc2026BiobuzzTest.fmap}) ride on tipping hive
- * cells. MT2 XY off a rest cell is a first-class measurement; tipped-cell solves
- * are biased and handled downstream: {@code TipSanityFilter} (wired in, ON) drops
- * tilted/underground/teleport solves, {@code TipCompensator} (DISABLED until
- * field-tested) will rest-project them. Frame-map verification = park level in
- * front of a KNOWN-REST cell and check {@code Fusion/visionX/Y} vs Pinpoint.
+ * <p>All 16 BIOBUZZ tags (IDs 30-45, 4 per hive cell) sit on tipping hive cells
+ * whose 30-degree rest angle is stored in the {@code .fmap}. Downstream filters
+ * ({@link TipSanityFilter}) reject tilted solves when a cell is knocked off rest.
  */
 @Configurable
 public class Vision {
-    //SET THE CAMERA POSITION IN ROBOT SPACE VIA WEB GUI! this is for reference only!!
-    //this does not work.
-    /** Camera offset forward (robot +X), meters. Set before first poll. */
+    // Reference values only — configure the actual camera mount pose in the Limelight Web UI.
+    /** Camera offset forward from robot center (meters). */
     public static double CAM_X_M = 0.110;
-    /** Camera offset left (robot +Y), meters. */
+    /** Camera offset left from robot center (meters). */
     public static double CAM_Y_M = 0.0;
-    /** Camera height above the floor, meters. */
+    /** Camera height above the floor (meters). */
     public static double CAM_Z_M = 0.5;
-    /** Camera roll (deg).  • Roll: Rotation around the X-axis (tilting the horizon side-to-side).*/
+    /** Camera roll around X-axis (degrees). */
     public static double CAM_ROLL_DEG = 0.0;
-    /** Camera pitch (deg). • Pitch: Rotation around the Y-axis. Tilting the camera downward toward the floor is a negative pitch (e.g., -20.0), while angling it up is positive. */
+    /** Camera pitch around Y-axis (degrees, positive tilts up, negative tilts down). */
     public static double CAM_PITCH_DEG = 50.0;
-    /** Camera yaw (deg). ccw+? • Yaw: Rotation around the Z-axis (turning left or right). */
+    /** Camera yaw around Z-axis (degrees, CCW+). */
     public static double CAM_YAW_DEG = 5.0;
-    //
 
-    // ---- Frame mapping (Panels -> Vision). See class javadoc VERIFY step. ----
-    /** Sign applied to Limelight X (meters) before inches conversion. */
+    // ---- Field Frame Mapping (Panels -> Vision) ----
+    /** Sign multiplier for Limelight X before inches conversion (+1 or -1). */
     public static double LL_X_SIGN = 1.0;
-    /** Sign applied to Limelight Y (meters) before inches conversion. */
+    /** Sign multiplier for Limelight Y before inches conversion (+1 or -1). */
     public static double LL_Y_SIGN = 1.0;
     /**
-     * TRUE when the Limelight field frame is rotated -90deg vs the FTC frame
-     * this class assumes (LL +X = field south, LL +Y = field east).
-     *
-     * <p>Verified 2026-09-29 against {@code fiducials(4).fmap} + a stationary
-     * log: (1) mapped visY matched the robot's true Pedro X (55.36) to 0.1 in
-     * — the transposition signature; (2) under the rotation, the fmap's 34/35
-     * positions resolve to a physically-correct east-west tag row ~49.5 in
-     * ahead of the robot; (3) MT1 raw yaw read ~±180deg for a north-facing
-     * robot = facing the fmap frame's −X. Applies AFTER the per-axis
-     * signs/offsets: field_x = ll_y, field_y = −ll_x. Yaw is untouched (it has
-     * its own offset below), and the seed path carries yaw only, so seeding is
-     * unaffected by the swap itself.
+     * Set true when the Limelight .fmap frame is rotated -90 deg from the FTC field frame
+     * (maps field_x = ll_y, field_y = -ll_x after signs and offsets).
      */
     public static boolean LL_SWAP_XY = true;
-    /** Fine trim added to Limelight X after conversion, inches. */
+    /** Fine offset added to Limelight X before frame swap (inches). */
     public static double LL_X_OFFSET_IN = 0.0;
-    /** Fine trim added to Limelight Y after conversion, inches. */
+    /** Fine offset added to Limelight Y before frame swap (inches). */
     public static double LL_Y_OFFSET_IN = 0.0;
     /**
-     * Constant added to the Limelight yaw (degrees, CCW+) to get FIRST field
-     * heading (0 = +Y). CALIBRATE ONCE, in code only — leave the Limelight web
-     * UI yaw offset at 0. Procedure: park at a KNOWN field heading H (e.g.
-     * facing +Y => H=0, facing +X/east => H=90), read {@code Fusion/mt1LlRawDeg}
-     * (raw MT1 yaw straight off the tag solve, no mapping), then set this to
-     * norm180(H − raw). The same offset round-trips through seedYaw()
-     * (subtracted before sending the seed) and toPedroPose() (added on return),
-     * so one value serves both MT1-yaw and the MT2 seed.
-     *
-     * <p>Ships at 180 (2026-09-29): the {@code fiducials(4).fmap} frame's yaw
-     * zero faces the fmap +X axis (physical south under the {@link #LL_SWAP_XY}
-     * rotation), so a north-facing robot reads raw ≈ ±180. field = raw + 180
-     * maps both ±180 modes to 0 ✓, and the seed inverse (field − 180) sends
-     * −180 = facing north ✓. Re-verify with the procedure above after any map
-     * re-authoring.
+     * Constant added to Limelight yaw (degrees, CCW+) to match FIRST field heading (0 = +Y).
+     * Keep the Limelight Web UI yaw offset at 0 and tune only this value; it is also
+     * subtracted automatically when seeding gyro yaw back to the Limelight.
      */
     public static double LL_YAW_OFFSET_DEG = 180;
-    /** Sign of the Limelight yaw (1 = CCW+, -1 = CW+). */
+    /** Sign multiplier for Limelight yaw (+1 = CCW+, -1 = CW+). */
     public static double LL_YAW_SIGN = 1.0;
     /**
-     * Allow the MT1 yaw path (independent 6DOF heading). False = XY-only fusion
-     * from MT2, heading rides on Pinpoint/gyro alone. Renamed semantics: this no
-     * longer selects an either/or fallback — both solves are read every frame.
+     * True = allow MT1 independent 6DOF heading fusion (and MT1 XY fallback when MT2 is absent).
+     * False = XY-only vision fusion; heading relies solely on Pinpoint/gyro.
      */
     public static boolean MT1_FALLBACK = true;
     /**
-     * Source of the botpose pitch / roll / Z used by the tilt + height sanity
-     * gates ({@link TipSanityFilter}, VisionFusion backstop, TipCompensator).
-     * True (default) = MT1 when present (MT1 solves all 6DOF, so its attitude
-     * and Z are real measurements). MT2 pins the robot to the floor and always
-     * reports pitch = roll = Z = 0, which made those gates dead. False =
-     * legacy behaviour (attitude read from the XY source, i.e. MT2 -> always 0).
-     * MT1 attitude is ALWAYS logged ({@code Fusion/mt1*}) regardless of this flag.
+     * True = read botpose pitch, roll, and Z height from MT1 (full 6DOF) for tilt/height gates.
+     * False = read from the XY source (MT2 pins robot to the floor and reports 0/0/0).
      */
     public static boolean ATTITUDE_FROM_MT1 = true;
-    /** Minimum ms between updateRobotOrientation seeds (network POST throttle). */
+    /** Minimum time between gyro orientation seeds sent to the Limelight (ms). */
     public static double SEED_INTERVAL_MS = 100.0;
-    /** Re-seed early if the yaw moved more than this (degrees) since last seed. */
+    /** Re-seed immediately if robot yaw changed by at least this many degrees since the last seed. */
     public static double SEED_YAW_DELTA_DEG = 0.5;
 
-    // ---- Corner Hive Pipelines (Whitelist 4 tags per corner) ----
-    /**
-     * Automatically switch Limelight pipeline to whitelist only the hive in the robot's current corner.
-     * Set to false by default until Pipelines 0, 1, 2, and 3 are all configured on the Limelight Web UI
-     * with the 3D field map (.fmap) and their respective fiducial ID filters.
-     */
+    // ---- Corner Hive Pipelines (whitelist 4 tags per field corner) ----
+    /** Automatically switch Limelight pipeline to match the hive in the robot's current quadrant. */
     public static boolean AUTO_CORNER_PIPELINE = true;
     public static int PIPELINE_RED_SCORING = 0;   // Tags 30-33 (X < 72, Y >= 72)
     public static int PIPELINE_RED_AUDIENCE = 1;  // Tags 34-37 (X < 72, Y < 72)
     public static int PIPELINE_BLUE_AUDIENCE = 2; // Tags 38-41 (X >= 72, Y < 72)
     public static int PIPELINE_BLUE_SCORING = 3;  // Tags 42-45 (X >= 72, Y >= 72)
 
-    // ---- BIOBUZZ cluster IDs (from SDK 12.0 AprilTagGameDatabase) ----
-    // All 16 tags live on 4 tipping hive cells (30deg-rest poses in the .fmap):
+    // BIOBUZZ cluster tags (IDs 30-45):
     // 30-33 RED SCORING, 34-37 RED AUDIENCE, 38-41 BLUE AUDIENCE, 42-45 BLUE SCORING.
-    // poll() returns both solves per frame; TipSanityFilter drops the off-rest ones.
     /** True when this tag ID belongs to a moving BIOBUZZ hive-cell cluster. */
     public static boolean isClusterId(int id) {
         return id >= 30 && id <= 45;
@@ -180,97 +116,50 @@ public class Vision {
         }
     }
 
-    /** One split-solver frame: MT2 XY + MT1 yaw, same Limelight packet.
-     * Raw per-solve Pedro poses for the dashboard live in
-     * {@link #mt1Pedro}/{@link #mt2Pedro} (full solves, Pedro frame).
-     * The fused measurement in {@link #pedroPose} is: MT2-conditioned XY + MT1 heading (or NaN).
-     */
+    /** One split-solver Limelight measurement (MT2 XY + MT1 yaw) in Pedro coordinates. */
     public static final class Reading {
-        /**
-         * Fused measurement pose in Pedro frame (inches, corner origin).
-         * XY: from MT2 when present (gyro-seeded, stable XY in motion), else MT1 fallback.
-         * Heading: ALWAYS from MT1 independent 6DOF solve, or NaN when absent.
-         * NEVER MT2 heading (it is seed-echo, not a measurement). This ensures
-         * the heading fed to the Kalman filter is a true independent measurement,
-         * not gyro-seeded feedback that would double-count rotation.
-         */
+        /** Measurement pose in Pedro frame (inches). XY from MT2 (or MT1 fallback); heading from MT1 when present. */
         public final Pose pedroPose;
-        /**
-         * MT1 yaw in Pedro frame, radians, or NaN when MT1 was unavailable.
-         * This is the ONLY heading source: independent 6DOF solve, no gyro in.
-         */
+        /** Independent MT1 6DOF heading in Pedro frame (radians), or NaN when MT1 was absent. */
         public final double mt1HeadingRad;
-        /** True when the MT2 solve existed this frame (XY source). */
+        /** True when the MT2 solve existed this frame. */
         public final boolean hasMt2;
-        /** True when the MT1 solve existed this frame (yaw source). */
+        /** True when the MT1 solve existed this frame. */
         public final boolean hasMt1;
-        /**
-         * Raw MT1 full solve in Pedro frame (independent 6DOF: own XY + yaw),
-         * or null when MT1 was absent/disabled. Dashboard-only: the fused XY
-         * comes from {@link #pedroPose} (MT2-conditioned, gyro-seeded); this
-         * is the untouched tag-geometry solve. Yellow on the Field widget.
-         */
+        /** Raw MT1 solve in Pedro frame (independent 6DOF), or null when absent. */
         @Nullable
         public final Pose mt1Pedro;
-        /**
-         * Raw MT2 full solve in Pedro frame (gyro-seeded: XY + echo yaw),
-         * or null when MT2 was absent. Dashboard-only. Green on the Field
-         * widget.
-         */
+        /** Raw MT2 solve in Pedro frame (gyro-seeded), or null when absent. */
         @Nullable
         public final Pose mt2Pedro;
         public final int tagCount;
-        /** Mean distance to the tags used, meters (from Limelight). */
+        /** Mean distance to visible tags (meters). */
         public final double avgDistM;
-        /** Mean tag area, percent of image (from Limelight). */
+        /** Mean tag image area (% of frame). */
         public final double avgAreaPct;
-        /** Max baseline between tags used, meters (from Limelight). */
+        /** Max baseline distance between visible tags (meters). */
         public final double spanM;
-        /**
-         * Limelight self-reported XY stddev, inches (-1 when unavailable).
-         * Converted from meters with a magnitude heuristic (values &lt; 5 are
-         * treated as meters, else inches) — see {@link Vision#parseStddevXY}.
-         */
+        /** Limelight self-reported XY standard deviation (inches), or -1 if unavailable. */
         public final double stddevXYIn;
-        /** Capture + targeting latency, ms. Used to back-date the measurement. */
+        /** Capture + targeting pipeline latency (ms), used for timestamp back-dating. */
         public final double latencyMs;
-        /** ms since the Limelight last published (staleness gate lives downstream). */
+        /** Time since Limelight published this frame (ms). */
         public final long stalenessMs;
-        /** IDs seen in this frame (from per-fiducial results; empty if LL omitted them). */
+        /** AprilTag IDs seen in this frame. */
         public final int[] fiducialIds;
-        /** True when every seen ID is a BIOBUZZ moving-cluster tag (30-45). */
+        /** True when all visible tags are BIOBUZZ hive-cell cluster tags (30-45). */
         public final boolean clusterOnly;
-        /** Botpose pitch/roll (deg) + camera height (m). Tilt sanity lives downstream. */
+        /** Botpose pitch/roll (degrees) and Z height (meters) used by sanity gates. */
         public final double botPitchDeg;
         public final double botRollDeg;
         public final double botZMeters;
-        /**
-         * Untouched Limelight yaw (deg, LL map frame) behind pedroPose. Lets
-         * VisionFusion compare seed-vs-return yaw agreement on Panels — the
-         * MT2 yaw health signal on down-facing tag geometry.
-         */
+        /** Raw Limelight yaw (degrees) behind {@link #pedroPose}. */
         public final double llYawDeg;
-        /**
-         * Raw MT1 yaw straight off the tag solve (deg, LL map frame) BEFORE
-         * any LL_* mapping. Calibration reference: park at a known field
-         * heading H and read this — offset = norm180(H − this). Panels:
-         * {@code Fusion/mt1LlRawDeg}. NaN when MT1 absent.
-         */
+        /** Raw MT1 yaw in Limelight map frame before offsets (degrees), or NaN. */
         public final double mt1LlRawDeg;
-        /**
-         * Raw MT2 yaw straight off the tag solve (deg, LL map frame) BEFORE
-         * any mapping. Normally ~= the seed echoed back (MT2's yaw output is
-         * dominated by the gyro seed, NOT an independent measurement) — the
-         * Panels {@code Fusion/seedAgrDeg} line is |this − seed|. NaN when
-         * MT2 absent.
-         */
+        /** Raw MT2 yaw in Limelight map frame before offsets (degrees), or NaN. */
         public final double mt2LlRawDeg;
-        /**
-         * MT1's own botpose pitch / roll (deg) and Z (m) — an independent 6DOF
-         * measurement (NaN when MT1 absent). MT1 Z is the discriminator between
-         * a wrong tag-Z in the .fmap (Z offset ~= map-vs-true tag height) and a
-         * wrong camera pitch (pitch error, Z ~ 0). Logged as {@code Fusion/mt1*}.
-         */
+        /** MT1's own 6DOF pitch/roll (degrees) and Z height (meters), or NaN when absent. */
         public final double mt1PitchDeg;
         public final double mt1RollDeg;
         public final double mt1ZMeters;
@@ -314,6 +203,7 @@ public class Vision {
     private final Limelight3A limelight;
     private long lastSeedNs = 0L;
     private double lastSeedDeg = Double.NaN;
+    private boolean polledThisLoop = false;
 
     /** Legacy constructor: throws if no Limelight3A is configured. */
     public Vision(HardwareMap hardwareMap) {
@@ -426,85 +316,26 @@ public class Vision {
 
 
 
-    /**
-     * This does not work. there is no rest api for this. as not seen here https://docs.limelightvision.io/docs/docs-limelight/apis/rest-http-api
-     * Push the cameraPoseRobotSpace transform to the Limelight over HTTP
-     * (POST /api/configset, port 5807) so the mounting geometry is set
-     * programmatically each time the OpMode boots — no web-UI step.
-     * Blocking (network round-trip): call from init(), never the hot loop.
-     * Values come from the CAM_* configurables above; inch-based helpers
-     * {@link #setCameraPoseInches} are available too.
-     */
-//    public boolean pushCameraPoseToLimelight() {
-//        String json = String.format(Locale.US,
-//                "{\"camerapose_robotspace\":[%.6f,%.6f,%.6f,%.6f,%.6f,%.6f]}", //Old:cameraPoseRobotSpace
-//                CAM_X_M, CAM_Y_M, CAM_Z_M, CAM_ROLL_DEG, CAM_PITCH_DEG, CAM_YAW_DEG);
-//        return postConfig(json);
-//    }
-
-    /** Convenience: set the CAM_* constants from inches/degrees and push. */
-//    public boolean setCameraPoseInches(double xIn, double yIn, double zIn,
-//                                       double rollDeg, double pitchDeg, double yawDeg) {
-//        CAM_X_M = xIn * 0.0254;
-//        CAM_Y_M = yIn * 0.0254;
-//        CAM_Z_M = zIn * 0.0254;
-//        CAM_ROLL_DEG = rollDeg;
-//        CAM_PITCH_DEG = pitchDeg;
-//        CAM_YAW_DEG = yawDeg;
-//        return pushCameraPoseToLimelight();
-//    }
-
-    /** Fire one POST /api/configset request at the Limelight web server. */
-    private boolean postConfig(String json) {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL("http://limelight:5807/api/configset").openConnection();
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(1000);
-            conn.setReadTimeout(1000);
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(json.getBytes(StandardCharsets.UTF_8));
-            }
-            return conn.getResponseCode() == 200;
-        } catch (Exception e) {
-            return false;
-        } finally {
-            if (conn != null) conn.disconnect();
-        }
-    }
-
-    /**
-     * Frames older than this (ms) count as "no new pictures" for the
-     * driver-station failure board. The Limelight publishes frames at its
-     * pipeline FPS (staleness normally well under 300 ms); a dead/unplugged
-     * camera keeps serving its LAST result forever, so the staleness growing
-     * past this is the actual death signal.
-     */
+    /** Frames older than this (ms) trigger a stale-camera warning on HardwareHealth. */
     public static final long LIMELIGHT_FRESH_MAX_MS = 1000;
 
-    /**
-     * HardwareHealth heartbeat for the driver-station failure board — call
-     * once per loop from RobotMain (both periodic paths), INDEPENDENT of the
-     * VisionFusion gates: a disabled filter or a diverged fused pose must not
-     * starve the liveness check. getLatestResult() is a cached read (the
-     * Limelight SDK polls in its own thread), so this costs nothing
-     * measurable.
-     *
-     * <p>Any frame young enough proves the camera is publishing — even one
-     * with no tags (aiming having no solution is gameplay, not a hardware
-     * failure, and never alarms). A null result reports nothing and lets the
-     * heartbeat go silent instead (HardwareHealth flags "no data" after its
-     * own window).
-     */
+    /** Reports Limelight frame freshness to {@link HardwareHealth} once per loop (reuses poll() packet if already read). */
     public void healthPing() {
         if (limelight == null) return;
+        if (polledThisLoop) {
+            polledThisLoop = false;
+            return;
+        }
         final LLResult r;
         try {
             r = limelight.getLatestResult();
         } catch (Exception e) {
             return;
         }
+        updateHealthFromResult(r);
+    }
+
+    private void updateHealthFromResult(@Nullable LLResult r) {
         if (r == null) return;
         final long staleMs;
         try {
@@ -521,30 +352,26 @@ public class Vision {
     }
 
     /**
-     * Seed + poll. Call once per loop with the CURRENT field-relative yaw in
-     * degrees (0 = facing +Y/up-field, CCW+, -180..180 or 0..360 — normalized
-     * internally). Returns null when NEITHER solve exists this loop. Both solves
-     * come from the same Limelight packet: MT2 supplies XY (gyro-seeded, stable
-     * in motion), MT1 supplies yaw (independent 6DOF). Either may be absent —
-     * downstream NaN-masks the missing axis, so a partial Reading still fuses.
+     * Seeds MT2 with the robot's current field heading (degrees, 0 = +Y, CCW+) and
+     * reads both MT2 (XY) and MT1 (yaw) from the latest Limelight packet.
+     * Returns null if no tags were seen or neither solve is valid.
      */
     @Nullable
     public Reading poll(double fieldYawDeg) {
         if (limelight == null) return null;
         seedYaw(fieldYawDeg);
 
+        polledThisLoop = true;
         final LLResult r;
         try {
             r = limelight.getLatestResult();
         } catch (Exception e) {
             return null;
         }
+        updateHealthFromResult(r);
         if (r == null || !r.isValid()) return null;
 
-        // CRITICAL GATE: If no AprilTags were used in the botpose solve,
-        // Limelight returns a dummy (0,0,0) Pose3D object with 0 tags.
-        // Reject immediately if tagCount <= 0 so we never feed dummy (72, 72)
-        // coordinates into VisionFusion or compute seed-agreement against dummy yaw.
+        // Reject if no AprilTags were used (Limelight returns a dummy 0,0,0 pose when tagCount == 0).
         int tags = 0;
         try {
             tags = r.getBotposeTagCount();
@@ -552,8 +379,6 @@ public class Vision {
         }
         if (tags <= 0) return null;
 
-        // BOTH solves, same frame, no either/or. MT2 = XY source (its yaw is
-        // seed echo). MT1 = yaw source (no gyro in). Each may be null.
         Pose3D mt2 = null;
         Pose3D mt1 = null;
         try {
@@ -564,43 +389,31 @@ public class Vision {
             mt1 = r.getBotpose();
         } catch (Exception ignored) {
         }
-        // MT1 disabled via tunable = pretend it was absent (XY-only fusion).
         if (!MT1_FALLBACK) mt1 = null;
-        // Empty-pose guard: with too few usable tags the LL can return an all-zero
-        // MT2 pose (LL (0,0) -> Pedro (72,72)) even though tags > 0. It is not a
-        // measurement; treat it as absent so it can never be fused as XY.
         if (isEmptyPose(mt2)) mt2 = null;
         if (isEmptyPose(mt1)) mt1 = null;
         if (mt2 == null && mt1 == null) return null;
 
-        // XY comes from MT2 when present, else MT1 position as fallback.
-        Pose3D xySource = mt2 != null ? mt2 : mt1;
-        Pose3D yawSource = mt1;
-        Pose pedro;
+        Pose mt1Pedro = null;
+        Pose mt2Pedro = null;
         try {
-            pedro = toPedroPose(xySource);
-        } catch (Exception e) {
-            return null;
+            if (mt1 != null) mt1Pedro = toPedroPose(mt1);
+        } catch (Exception ignored) {
         }
+        try {
+            if (mt2 != null) mt2Pedro = toPedroPose(mt2);
+        } catch (Exception ignored) {
+        }
+
+        // XY prefers MT2 (gyro-seeded), falling back to MT1 if MT2 is absent.
+        Pose pedro = mt2Pedro != null ? mt2Pedro : mt1Pedro;
         if (pedro == null) return null;
 
-        // MT1 yaw through the SAME mapping (offset + sign + Pedro shift) as
-        // positions, so both axes share one frame. NaN when MT1 absent.
-        // NOTE: Heading fusing is handled entirely in VisionFusion via mt1HeadingRad.
-        // pedroPose heading is not used for fusion (it's overridden per-axis in fuse()).
-        // MT2 heading (seed-echo) must NEVER fuse — that's ensured by the NaN-mask
-        // in VisionFusion.fuse() which builds yaw from mt1HeadingRad only.
-        double mt1Heading = Double.NaN;
-        if (yawSource != null) {
-            try {
-                mt1Heading = toPedroPose(yawSource).heading();
-            } catch (Exception ignored) {
-                mt1Heading = Double.NaN;
-            }
-        }
-        final double mt1HeadingRad = mt1Heading;
-        final boolean hasMt2 = mt2 != null;
-        final boolean hasMt1 = yawSource != null && Double.isFinite(mt1HeadingRad);
+        Pose3D xySource = mt2 != null ? mt2 : mt1;
+        // MT1 provides the independent heading (MT2 heading is seed-echo and never fused).
+        final double mt1HeadingRad = mt1Pedro != null ? mt1Pedro.heading() : Double.NaN;
+        final boolean hasMt2 = mt2Pedro != null;
+        final boolean hasMt1 = mt1Pedro != null && Double.isFinite(mt1HeadingRad);
 
         double dist = 0, area = 0, span = 0, latMs = 0;
         long staleMs = 0;
@@ -626,14 +439,10 @@ public class Vision {
         } catch (Exception ignored) {
         }
         try {
-            // Stddev tracks the XY SOURCE: MT2 stddev when MT2 present, else MT1.
             stdXY = parseStddevXY(mt2 != null ? r.getStddevMt2() : r.getStddevMt1());
         } catch (Exception ignored) {
         }
 
-        // Per-fiducial IDs: every BIOBUZZ tag is a cluster tag (IDs 30-45, level
-        // poses in the .fmap). clusterOnly is normally true; it goes false only
-        // if a foreign/test tag appears — still fused, but no longer "pure cluster".
         int[] ids = new int[0];
         boolean clusterOnly = false;
         try {
@@ -653,8 +462,6 @@ public class Vision {
             }
         } catch (Exception ignored) {
         }
-        // Botpose attitude sanity off the XY source; seed-agreement yaw likewise.
-        // GOOD (cell at rest, map holding the 30deg) reports flat ~= 0.
         double botPitchDeg = 0, botRollDeg = 0, botZM = 0, llYawDeg = Double.NaN;
         double mt1RawDeg = Double.NaN, mt2RawDeg = Double.NaN;
         double mt1PitchDeg = Double.NaN, mt1RollDeg = Double.NaN, mt1ZM = Double.NaN;
@@ -665,9 +472,6 @@ public class Vision {
             botZM = xySource.getPosition().toUnit(DistanceUnit.METER).z;
         } catch (Exception ignored) {
         }
-        // MT1's own attitude + Z: a real 6DOF measurement (MT2 always reports
-        // 0/0/0 here). Always captured for telemetry; also drives the tilt/height
-        // gates when ATTITUDE_FROM_MT1 (default) so they are no longer dead.
         try {
             if (mt1 != null) {
                 mt1PitchDeg = mt1.getOrientation().getPitch(AngleUnit.DEGREES);
@@ -685,8 +489,6 @@ public class Vision {
             botRollDeg = mt1RollDeg;
             botZM = mt1ZM;
         }
-        // Raw yaw off EACH solve before mapping — the calibration reference.
-        // mt2 yaw is normally seed echo; mt1 yaw is the independent solve.
         try {
             if (mt1 != null) mt1RawDeg = mt1.getOrientation().getYaw(AngleUnit.DEGREES);
         } catch (Exception ignored) {
@@ -696,23 +498,6 @@ public class Vision {
         } catch (Exception ignored) {
         }
 
-        // Raw per-solve Pedro poses for the dashboard overlay: EACH solve mapped
-        // independently through the same LL_* mapping (no axis mixing). Null when
-        // that solve was absent/disabled — the renderer skips nulls. Cheap
-        // (two pose mappings per frame, same math poll() already does).
-        Pose mt1Pedro = null;
-        Pose mt2Pedro = null;
-        try {
-            if (mt1 != null) mt1Pedro = toPedroPose(mt1);
-        } catch (Exception ignored) {
-        }
-        try {
-            if (mt2 != null) mt2Pedro = toPedroPose(mt2);
-        } catch (Exception ignored) {
-        }
-
-        // Ensure the reading's pedroPose has heading from MT1 (independent 6DOF solve)
-        // rather than echoing MT2 gyro seed.
         Pose measurementPose = new Pose(
                 pedro.x(),
                 pedro.y(),
@@ -737,23 +522,6 @@ public class Vision {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    /**
-     * Raw per-tag detections for relative aiming (HiveCellMonitor). Empty list
-     * when the Limelight has nothing. Same cluster tags the global pose uses —
-     * aim with their goal-point poses, localize with the filtered botpose.
-     */
-    public List<LLResultTypes.FiducialResult> getLatestFiducials() {
-        try {
-            LLResult r = limelight.getLatestResult();
-            if (r != null && r.isValid()) {
-                List<LLResultTypes.FiducialResult> frs = r.getFiducialResults();
-                if (frs != null) return frs;
-            }
-        } catch (Exception ignored) {
-        }
-        return new ArrayList<>();
     }
 
     /**
@@ -819,35 +587,6 @@ public class Vision {
         // Convert Pedro frame -> Field frame: field = pedro - π/2
         double fieldHeadingRad = wrapPi(pedroHeadingRad - Math.PI / 2.0);
         seedYaw(Math.toDegrees(fieldHeadingRad));
-    }
-
-    // ---- legacy API (kept for compatibility) ----
-
-    /** Raw MT1 field botpose, meters. Prefer {@link #poll(double)}. */
-    @Nullable
-    public Pose3D getBotpose() {
-        try {
-            LLResult result = limelight.getLatestResult();
-            if (result != null && result.isValid()) {
-                return result.getBotpose();
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    /** Legacy: seed from FTC orientation, return raw MT2 botpose. Prefer {@link #poll(double)}. */
-    @Nullable
-    public Pose3D updateRobotOrientation(YawPitchRollAngles orientation) {
-        try {
-            limelight.updateRobotOrientation(orientation.getYaw(AngleUnit.DEGREES));
-            LLResult result = limelight.getLatestResult();
-            if (result != null && result.isValid()) {
-                return result.getBotpose_MT2();
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
     }
 
     private static double norm180(double deg) {

@@ -17,7 +17,7 @@ import java.util.function.BooleanSupplier;
  * CommandGamepad controller = new CommandGamepad(opMode.gamepad1);
  *
  * controller.a().whenActive(robot.PosServ.toggleCmd());
- * controller.leftBumper().whenActive(robot.flywheel.holdTunable())
+ * controller.leftBumper().whenActive(robot.flywheel.toRpm(2000))
  *                        .whenInactive(robot.flywheel.stopCmd());
  * controller.leftTrigger().whileActiveOnce(aimCmd, true);  // default 0.5 threshold
  * controller.leftTrigger(0.3).whileActiveOnce(aimCmd, true);
@@ -43,11 +43,6 @@ import java.util.function.BooleanSupplier;
  *       per-method javadoc before porting FRC bindings verbatim.</li>
  * </ul>
  *
- * <p>Xbox controllers: use {@link CommandXboxController}, a drop-in subclass of
- * this class that remaps the right-stick/trigger axes (Xbox-BLE axis order puts
- * the right stick on the trigger fields and vice versa), adds a configurable
- * stick deadband, share/options buttons, and rumble/LED helpers.
- *
  * <p>Trigger methods available on every returned {@link Trigger}:
  * {@code whenActive} (press), {@code whenInactive} (release),
  * {@code whileActiveOnce} (hold; interrupts on release),
@@ -72,8 +67,7 @@ public class CommandGamepad {
     /** Default stick activation threshold for {@code leftStick(...)}-style overloads. */
     public static final double DEFAULT_STICK_THRESHOLD = 0.5;
 
-    /** Protected so the {@link CommandXboxController} subclass can remap axes for Xbox hardware
-     *  and (via refreshPad) re-point this at the Panels+DS merged pad each loop. */
+    /** Wrapped FTC SDK gamepad reference. */
     protected Gamepad gp;
 
     /** Wrap an SDK gamepad (typically {@code opMode.gamepad1} or {@code gamepad2}). */
@@ -210,7 +204,7 @@ public class CommandGamepad {
         return trig(() -> Math.abs(axisValue(axis)) > threshold);
     }
 
-    /** Protected hook so {@link CommandXboxController} can remap axis indices (see axisValueRemap). */
+    /** Returns the raw axis value for the given WPILib-style axis index. */
     protected double axisValue(int axis) {
         switch (axis) {
             case AXIS_LEFT_X:      return gp.left_stick_x;

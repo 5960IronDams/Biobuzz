@@ -15,8 +15,6 @@ import org.firstinspires.ftc.teamcode.WattageLib.lib.PPAssets;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PPFile;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.VisionFusion;
 
-import java.util.function.Supplier;
-
 //@Autonomous(name = "Red_AutoOpMode", group = "Autos")
 @Disabled
 public abstract class AutoOpModeBase extends OpMode {
@@ -33,32 +31,12 @@ public abstract class AutoOpModeBase extends OpMode {
     public PPFile pp;//loads and manages our pathFiles we create in the pedro path visualizer. (visualizer.pedropathing.com)
     private long lastDsTelemetryMs = 0L;
 
-    // The left-trigger toggle's latched state is owned by the COMMAND itself:
-    // toggleWhenActive() schedules/cancels the same instance, so "is it on" is
-    // simply isScheduled(). That keeps the button and the robot in lockstep
-    // even if something else (an auto, the panic button) ends the command.
-    //
-    // NOT the command object itself — that single instance is OWNED by TeleOp's
-    // toggleWhenActive() (KeyBindings) and can only ever belong to one command
-    // group. Pulling it into the auto routine's group throws
-    // "Commands cannot be added to more than one CommandGroup".
-    // Call autoShoot() to get a FRESH AutoShootAtGoal for this auto's group.
-    public Supplier<Command> autoShoot;
-
     /**
-     *  <em>Must</em> be overridden for auton to have any actions!
+     * Must be overridden to return the autonomous command sequence.
      */
-    public abstract Command autoRoutine();//Must be overridden, this is the command that runs, this is your auto.
+    public abstract Command autoRoutine();
 
-    /**
-     * A FRESH auto-shoot command for this auto's command group (null when the
-     * turret is absent from the RC config).
-     *
-     * <p>Never reuse {@code CommandFactory.getAutoShootCommand()}'s instance
-     * here: it is bound to TeleOp's trigger via {@code toggleWhenActive()}, so
-     * {@code withTimeout()} on it wraps an already-grouped command and throws
-     * at START. This builds a new, independent instance owned only by the auto.
-     */
+    /** Returns a fresh auto-shoot command for this auto's command group (null if turret is absent). */
     public Command autoShoot() {
         return robot == null ? null : robot.CommandF.AutoShootAtGoal();
     }
@@ -114,19 +92,8 @@ public abstract class AutoOpModeBase extends OpMode {
 
     @Override
     public void init_loop() {
-        // init_loop runs every cycle while sitting on the init screen.
-        // Vision ticks here (LL connect + solve + fuse) so the drivers see the
-        // real fused pose on the Field widget BEFORE pressing play.
         robot.InitRunPeriodic();
-
-        // Launch-pose policy, applied AFTER the vision tick:
-        // - Vision ENABLED: accept the vision-corrected fused pose the drivers
-        //   verified on the Field widget — re-asserting the path start would
-        //   throw those corrections away.
-        // - Vision DISABLED (Pinpoint-only): nothing external to trust, so
-        //   keep re-asserting the path start — the auto always launches from
-        //   the pose its paths were drawn against, even if another auto was
-        //   previewed before, or the parked odometry drifted while waiting.
+        // When vision is disabled, keep re-asserting the path start pose during init.
         if (!VisionFusion.ENABLED) {
             robot.follower.setPose(pp.startPoint());
         }
@@ -135,23 +102,18 @@ public abstract class AutoOpModeBase extends OpMode {
         robot.flushTelemetry();
     }
 
-
-
     @Override
     public void start() {
-        // SESSION 5d: re-anchor the turret's CRT solve at PLAY — the turret can
-        // be hand-spun between init and start (the tracker is not running).
+        // Re-solve turret angle at PLAY in case the turret was moved during init.
         if (robot != null && robot.turret != null) {
             robot.turret.rezeroAtStart();
         }
         CommandScheduler.getInstance().schedule(autoRoutine());
     }
+
     @Override
     public void stop() {
         if (robot != null) {
-            // Fused end pose -> Pinpoint device (+ autonomousEndPose fallback,
-            // sanity-gated inside): TeleOp then seeds from where the auto
-            // actually ended, not from raw drifted odometry.
             robot.saveFusedPoseToPinpoint();
             robot.shutdown();
         }
@@ -161,36 +123,25 @@ public abstract class AutoOpModeBase extends OpMode {
 
     @Override
     public void loop() {
-        // Shoot-readiness sensing, same as KeyBindings.update() does in TeleOp:
-        // advances the debounce/warmup timers and samples the chassis motion
-        // from the follower pose, so the isReadyToShoot()-gated auto-fire
-        // (CommandFactory.AutoShootAtGoal) behaves identically in autos.
-        // Without this the debouncers never tick and the motion checks would
-        // read a permanent "stable".
-        robot.CommandF.readinessPeriodic();
         robot.RobotRunPeriodic();
         UpdateTelemetry(false);
-        robot.flushTelemetry(); // single flush LAST — see RobotMain.flushTelemetry()
+        robot.flushTelemetry();
     }
-
 
     private void UpdateTelemetry(boolean force)
     {
         long nowMs = System.currentTimeMillis();
-        // DS screen: rate-limit to ~10 Hz (every 100 ms) so fast loops aren't throttled by DS Wi-Fi updates
+        // Rate-limit Driver Station updates to ~10 Hz.
         if (force || nowMs - lastDsTelemetryMs >= 100L) {
             telemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
             telemetry.addData("X", robot.follower.pose().x());
             telemetry.addData("Y", robot.follower.pose().y());
             telemetry.addData("Heading", Math.toDegrees(robot.follower.pose().heading()));
             telemetry.addData("Follower Mode", robot.follower.mode());
-            // DS failure board (see HardwareHealth) — same screen, one more line.
             telemetry.addData("HW", HardwareHealth.get().dsLine());
             telemetry.update();
             lastDsTelemetryMs = nowMs;
         }
-        // Mirror to Panels (addData only — flushTelemetry() draws the field once
-        // at the end of the tick, so init()/init_loop() paint too).
         if (RobotMain.DASHBOARD) {
             RobotMain.DashTelemetry.addData("Current Alliance", RobotMain.CurrentAlliance.toString());
             RobotMain.DashTelemetry.addData("X", robot.follower.pose().x());
@@ -199,25 +150,4 @@ public abstract class AutoOpModeBase extends OpMode {
             RobotMain.DashTelemetry.addData("Follower Mode", robot.follower.mode());
         }
     }
-
-
-
-//    private void setupPathPoints() {//this exist to ensure Blue works. this pattern needs to be changed. //blue requires posefactory to be mirrored.
-//        start = poseFactory.of(55, 9, 90);
-//        path1 = poseFactory.of(36.0, 9.75, 60);
-//        point2 = poseFactory.of(36.0, 27.0, 0);
-//    }
-//    //points used in this auton.
-//    private Pose start = null;
-//    private Pose path1 = null;
-//    private Pose point2 = null;
-//
-//    //path creators.
-//    public Path path1() {
-//        return line(start, path1).linear(path1,start );//why is linear backwards !?
-//    }
-//
-//    public Path path2() {
-//        return line(path1, point2).linear(point2,path1);//why is linear backwards !?
-//    }
 }

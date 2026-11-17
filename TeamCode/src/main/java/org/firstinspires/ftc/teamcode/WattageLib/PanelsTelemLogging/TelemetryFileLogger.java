@@ -39,19 +39,9 @@ import java.util.Locale;
  * app runs as its own UID and gets {@code Permission denied} there (SELinux +
  * Unix perms). App-private dirs are always writable with no extra permission.
  *
- * <p><b>File naming / when is a log safe to pull:</b> while writing, the file
- * is {@code ftc_telemetry_<timestamp>.log.open}; {@link #close()} renames it
- * to {@code ftc_telemetry_<timestamp>.log}. Only {@code .log} files are
- * complete (they end with the "Log Ended" marker) — {@code .open} files are
- * mid-write or were abandoned (app killed before {@code stop()}).
- *
- * <p>Why the rename dance: the Hub runs Android 7, whose FUSE layer serves
- * STALE file sizes to other processes (adb/MTP) for freshly written or
- * recently closed files — pulling seconds after {@code close()} truncates the
- * copy at an old size (verified via logcat 2026-09-29: file closed 22:19:39,
- * copy cut at its size from ~22:19:19). The rename creates a fresh directory
- * entry with fresh attributes, so pulls of {@code .log} files are complete.
- * Even so, give a just-closed file a few seconds before pulling.
+ * <p>Files are named {@code ftc_telemetry_<timestamp>.log.open} while recording and
+ * renamed to {@code .log} on {@link #close()} so partial files are easy to spot and
+ * closed files flush cleanly for ADB pulls.
  */
 public class TelemetryFileLogger {
     private static final String TAG = "FtcTelemetryLogger";

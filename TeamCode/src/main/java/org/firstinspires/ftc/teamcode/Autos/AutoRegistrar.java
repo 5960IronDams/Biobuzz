@@ -25,19 +25,12 @@ public final class AutoRegistrar {
     /** Every concrete Red auto. The Blue mirror is generated, not written. */
     @SuppressWarnings("unchecked")
     private static final Class<? extends AutoOpModeBase>[] RED_AUTOS = new Class[]{
-            //RightAuto.class,//shoot and turn
             R_ShootPark.class,//shoot Right, then go park.
             L_ShootPark.class,//shoot Left, then go park.
             R_waitShootPark.class, //wait then R_ShootPark
             R_Shoot_Under_Park.class,//twisted devils auton.
-            //L_ShootLFlowerShootL.class,
             R_Shoot_Flower_LShoot.class,
             L_Shoot_Flower_LShoot.class,
-            //R_ShootR_Garden_ShootR_Park.class,
-            //ShootAndParkFlowerSide.class,
-            //TwoTipSingle.class,
-            //TwoPointFiveTipAuto.class,
-            //TwoPointFiveTipUnderneathAuto.class
     };
 
     @OpModeRegistrar

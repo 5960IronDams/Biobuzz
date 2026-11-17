@@ -6,13 +6,8 @@ import com.pedropathing.tuning.autotune.Tuner;
 
 import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.ForesightTuner;
 import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.MecanumTuner;
-import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.OTOSTuner;
-import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.OctoQuadTuner;
 import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.PinpointTuner;
 import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.Tests;
-import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.ThreeWheelIMUTuner;
-import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.ThreeWheelTuner;
-import org.firstinspires.ftc.teamcode.Subsystems.pedro.procedures.TwoWheelTuner;
 
 /**
  * AutoTune registration for Pedro Pathing 3.
@@ -48,31 +43,6 @@ public class Tuning {
     @Tuner(name = "Pinpoint Tuner")
     public static Procedure pinpointTuner() {
         return new PinpointTuner();
-    }
-
-    @Tuner(name = "OTOS Tuner")
-    public static Procedure otosTuner() {
-        return new OTOSTuner();
-    }
-
-    @Tuner(name = "OctoQuad Tuner")
-    public static Procedure octoQuadTuner() {
-        return new OctoQuadTuner();
-    }
-
-    @Tuner(name = "Two Wheel Tuner")
-    public static Procedure twoWheelTuner() {
-        return new TwoWheelTuner();
-    }
-
-    @Tuner(name = "Three Wheel Tuner")
-    public static Procedure threeWheelTuner() {
-        return new ThreeWheelTuner();
-    }
-
-    @Tuner(name = "Three Wheel + IMU Tuner")
-    public static Procedure threeWheelIMUTuner() {
-        return new ThreeWheelIMUTuner();
     }
 
     // ---- Enable AFTER Constants wires drivetrain + localizer (post Mecanum + Pinpoint) ----
