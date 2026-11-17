@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "timestamp": "2026-11-06T20:28:57.606Z",
+  "timestamp": "2026-11-15T16:33:32.338Z",
   "startPoint": {
     "x": 60.87931034482759,
     "y": 133.3834900731452,
-    "headingDeg": 270,
-	"name": "start",
-    "locked": false
+    "name": "start",
+    "locked": false,
+    "headingDeg": 270
   },
   "lines": [
     {
@@ -20,8 +20,8 @@
       "waitAfterName": "",
       "kind": "atomic",
       "endPoint": {
-        "x": 58.217868338558,
-        "y": 108.7460815047022
+        "x": 59.69644723092999,
+        "y": 117.32183908045978
       },
       "controlPoints": [],
       "heading": {
@@ -31,11 +31,18 @@
       }
     },
     {
-      "kind": "atomic",
       "id": "line-mw5feixp-cig2cp",
+      "color": "#b07aa1",
+      "name": "Topark",
+      "locked": false,
+      "waitBeforeMs": 0,
+      "waitAfterMs": 0,
+      "waitBeforeName": "",
+      "waitAfterName": "",
+      "kind": "atomic",
       "endPoint": {
-        "x": 11.252645655008271,
-        "y": 114.35234049302781
+        "x": 11.99193510119427,
+        "y": 117.60521405624618
       },
       "controlPoints": [],
       "heading": {
@@ -58,14 +65,7 @@
             }
           ]
         }
-      },
-      "color": "#b07aa1",
-      "locked": false,
-      "waitBeforeMs": 0,
-      "waitAfterMs": 0,
-      "waitBeforeName": "",
-      "waitAfterName": "",
-      "name": "Topark"
+      }
     }
   ],
   "shapes": [
@@ -242,15 +242,15 @@
   ],
   "fieldPoints": [],
   "robot": {
-    "forwardVelocity": 75,
-    "strafeVelocity": 65,
-    "aVelocity": 3.141592653589793,
+    "forwardVelocity": 50,
+    "strafeVelocity": 40,
+    "aVelocity": 2.5132741228718345,
     "kFriction": 0.1,
-    "rLength": 16,
-    "rWidth": 16,
+    "rLength": 18,
+    "rWidth": 18,
     "safetyMargin": 1,
-    "maxAcceleration": 50,
-    "maxDeceleration": 50
+    "maxAcceleration": 40,
+    "maxDeceleration": 40
   },
   "activePaths": []
 }

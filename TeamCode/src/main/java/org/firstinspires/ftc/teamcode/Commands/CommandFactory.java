@@ -588,6 +588,7 @@ public class CommandFactory {
     /** Builds the latched compound (called once, from the constructor). */
     private Command buildAutoShoot() {
         return new ParallelCommandGroup(
+                //intake.runCmd(),//reserves the intake and this causes issues in tele op for some reason.
                 TrackTarget(),
                 FireAtGoal()
         ).setName("AutoShootAtGoal");

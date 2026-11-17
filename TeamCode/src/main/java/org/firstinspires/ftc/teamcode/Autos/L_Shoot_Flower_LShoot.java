@@ -20,19 +20,19 @@ public class L_Shoot_Flower_LShoot extends AutoOpModeBase {
     @Override
     public Command autoRoutine() {
         return new SequentialCommandGroup(
-                new WaitCommand(9000),
+                new WaitCommand(10000),
                 //goto easier shot
-                follow(robot.follower, pp.path("Toshoot")),
+                follow(robot.follower, pp.path("Toshoot")).withTimeout(3000),
                 //fire or whatever.
-                autoShoot().withTimeout(5000),
+                autoShoot().withTimeout(3500),
                 //goto flower and intake
                 new ParallelCommandGroup(
                         rampDown(),
                         robot.intake.runCmd(),
-                        follow(robot.follower, pp.path("ToFlower")).withTimeout(5000)
+                        follow(robot.follower, pp.path("ToFlower")).withTimeout(2500)
                 ),
                 //intake at flower for a bit
-                new WaitCommand(3500),
+                new WaitCommand(3000),
                 //turn off intake, ramp up, and goto left shoot.
                 new ParallelCommandGroup(
                         rampUp(),

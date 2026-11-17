@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "timestamp": "2026-11-14T20:19:04.222Z",
+  "timestamp": "2026-11-15T14:59:48.259Z",
   "startPoint": {
     "x": 60.8734851209179,
     "y": 132.36167726733916,
@@ -57,31 +57,53 @@
       "waitAfterName": "",
       "kind": "atomic",
       "endPoint": {
-        "x": 46.79702194357366,
+        "x": 46.64916405433646,
         "y": 130.85423197492162
       },
       "controlPoints": [
         {
-          "x": 43.50096965752852,
-          "y": 102.07690755860358
+          "x": 44.83169066066331,
+          "y": 100.45047077699438
         }
       ],
       "heading": {
-        "type": "constant",
+        "type": "piecewise",
         "reverse": false,
         "degrees": 90,
-        "startDeg": 0,
-        "endDeg": 0,
+        "startDeg": 270,
+        "endDeg": 90,
         "piecewiseHeading": {
           "segments": [
             {
               "startProgress": 0,
-              "endProgress": 1,
+              "endProgress": 0.1517412935323383,
               "interpolationType": "linear",
               "reversed": false,
+              "continueFromPrevious": false,
               "parameters": {
-                "startDeg": 0,
-                "endDeg": 0
+                "startDeg": 270,
+                "endDeg": 180
+              }
+            },
+            {
+              "startProgress": 0.1517412935323383,
+              "endProgress": 0.5373134328358209,
+              "interpolationType": "linear",
+              "reversed": false,
+              "continueFromPrevious": false,
+              "parameters": {
+                "startDeg": 180,
+                "endDeg": 90
+              }
+            },
+            {
+              "startProgress": 0.5373134328358209,
+              "endProgress": 1,
+              "interpolationType": "constant",
+              "reversed": false,
+              "continueFromPrevious": false,
+              "parameters": {
+                "degrees": 90
               }
             }
           ]
