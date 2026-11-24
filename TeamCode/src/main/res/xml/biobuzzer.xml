@@ -26,5 +26,5 @@
             <REV_VL53L0X_RANGE_SENSOR name="uppersense" port="0" bus="1" />
         </LynxModule>
     </LynxUsbDevice>
-    <EthernetDevice name="Ethernet Device" serialNumber="EthernetOverUsb:eth0:172.29.0.27" name="Ethernet Device" port="-1" ipAddress="172.29.0.1" />
+    <EthernetDevice name="Ethernet Device" serialNumber="EthernetOverUsb:eth0:172.29.0.27" port="-1" ipAddress="172.29.0.1" />
 </Robot>

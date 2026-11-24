@@ -18,6 +18,7 @@ import org.firstinspires.ftc.teamcode.Subsystems.Intake;
 import org.firstinspires.ftc.teamcode.Subsystems.Ramp;
 import org.firstinspires.ftc.teamcode.Subsystems.ShootGateServo;
 import org.firstinspires.ftc.teamcode.Subsystems.Transfer;
+import org.firstinspires.ftc.teamcode.Subsystems.TransferSensors;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.ALLIANCE_COLOR;
 import org.firstinspires.ftc.teamcode.WattageLib.lib.PanelsFieldRenderer;
 import org.firstinspires.ftc.teamcode.Subsystems.Vision.Vision;
@@ -48,6 +49,7 @@ public class RobotMain {
     public Follower follower;
     public Intake intake;
     public Transfer transfer;
+    public TransferSensors transferSensors;
     public Flywheel flywheel;
     public ShootGateServo PosServ;
     /** Front ramp (null if not in RC config). */
@@ -94,6 +96,7 @@ public class RobotMain {
 
         intake = new Intake(opmode);
         transfer = new Transfer(opmode);
+        transferSensors = new TransferSensors(opmode);
         flywheel = new Flywheel(opmode);
         PosServ = new ShootGateServo(opmode);
         ramp = Ramp.tryCreate(opmode);

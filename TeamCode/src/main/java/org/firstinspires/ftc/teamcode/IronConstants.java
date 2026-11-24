@@ -23,6 +23,7 @@ public class IronConstants {
     public static final String TurretOctoQuadName = CompBot? "octoquad" :"octoquad"; //octoquad MK1
     public static final String DriverSideServoName = CompBot? "CHservo5" :"DSServo";
     public static final String PassengerSideServoName = CompBot? "EHservo0" :"PSServo";
+    public static final String UpperTransferSensorName = "uppersense";
     // ---- Motor encoder constants ----
     /**
      * goBILDA 5203-series Yellow Jacket encoder: 28 ticks (PPR) per MOTOR-shaft
