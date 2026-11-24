@@ -6,6 +6,7 @@
             <goBILDA5202SeriesMotor name="ehm1" port="1" />
             <goBILDA5202SeriesMotor name="ehm2" port="2" />
             <goBILDA5202SeriesMotor name="ehm3" port="3" />
+            <Servo name="EHservo0" port="0" />
             <ContinuousRotationServo name="turret_servo" port="5" />
         </LynxModule>
         <LynxModule name="Control Hub" port="173">
@@ -13,10 +14,17 @@
             <goBILDA5202SeriesMotor name="m1" port="1" />
             <goBILDA5202SeriesMotor name="m2" port="2" />
             <goBILDA5202SeriesMotor name="m3" port="3" />
-            <Servo name="shootgate" port="0" />
+            <Servo name="CHservo0" port="0" />
+            <Servo name="shootgate" port="1" />
+            <Servo name="chservo2" port="2" />
+            <Servo name="hoodServo" port="3" />
+            <Servo name="chservo4" port="4" />
+            <Servo name="CHservo5" port="5" />
             <goBILDAPinpoint name="odo" port="0" bus="3" />
             <ControlHubImuBHI260AP name="imu" port="0" bus="0" />
             <OctoQuadFTC name="octoquad" port="0" bus="2" />
+            <REV_VL53L0X_RANGE_SENSOR name="uppersense" port="0" bus="1" />
         </LynxModule>
     </LynxUsbDevice>
+    <EthernetDevice name="Ethernet Device" serialNumber="EthernetOverUsb:eth0:172.29.0.27" name="Ethernet Device" port="-1" ipAddress="172.29.0.1" />
 </Robot>
